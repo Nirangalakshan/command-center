@@ -21,6 +21,7 @@ export interface Tenant {
   industry: string;
   status: 'active' | 'inactive';
   brandColor: string;
+  didNumbers: string[];
 }
 
 export interface Queue {
