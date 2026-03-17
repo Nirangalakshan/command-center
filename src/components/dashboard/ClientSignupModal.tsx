@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { NewClientForm } from '@/services/types';
+import { isValidEmail, isValidPhone } from '@/utils/onboardingValidation';
 
 const INDUSTRIES = ['Trades', 'Healthcare', 'Property', 'Finance', 'Other'];
 const BRAND_COLORS = ['#00d4f5', '#34d399', '#a78bfa', '#fb923c', '#f43f5e', '#3b82f6', '#fbbf24', '#64748b'];
@@ -22,7 +23,7 @@ const INITIAL: NewClientForm = {
 
 export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
   const [form, setForm] = useState<NewClientForm>({ ...INITIAL });
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState<string[]>([]);
 
   if (!open) return null;
 
@@ -30,23 +31,44 @@ export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
     setForm((f) => ({ ...f, [key]: value }));
 
   const handleSubmit = () => {
+    const validationErrors: string[] = [];
+
     if (!form.businessName.trim()) {
-      setError('Business name is required');
+      validationErrors.push('Business name is required');
+    } else if (form.businessName.trim().length > 100) {
+      validationErrors.push('Business name must be less than 100 characters');
+    }
+
+    if (!form.contactName.trim()) {
+      validationErrors.push('Contact name is required');
+    }
+
+    if (!form.contactPhone.trim() && !form.contactEmail.trim()) {
+      validationErrors.push('At least one contact method (phone or email) is required');
+    }
+
+    if (form.contactPhone.trim() && !isValidPhone(form.contactPhone)) {
+      validationErrors.push('Phone number format is invalid');
+    }
+
+    if (form.contactEmail.trim() && !isValidEmail(form.contactEmail)) {
+      validationErrors.push('Email address format is invalid');
+    }
+
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors);
       return;
     }
-    if (form.businessName.trim().length > 100) {
-      setError('Business name must be less than 100 characters');
-      return;
-    }
+
     onSubmit(form);
     setForm({ ...INITIAL });
-    setError('');
+    setErrors([]);
     onClose();
   };
 
   const handleClose = () => {
     setForm({ ...INITIAL });
-    setError('');
+    setErrors([]);
     onClose();
   };
 
@@ -59,7 +81,13 @@ export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
         </div>
 
         <div className="cc-modal-body">
-          {error && <div className="cc-form-error">{error}</div>}
+          {errors.length > 0 && (
+            <div className="cc-form-error">
+              {errors.map((err, i) => (
+                <div key={i}>{err}</div>
+              ))}
+            </div>
+          )}
 
           <label className="cc-form-label">Business Name *</label>
           <input
@@ -70,7 +98,7 @@ export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
             maxLength={100}
           />
 
-          <label className="cc-form-label">Industry</label>
+          <label className="cc-form-label">Industry *</label>
           <select
             className="cc-form-select"
             value={form.industry}
@@ -81,7 +109,7 @@ export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
             ))}
           </select>
 
-          <label className="cc-form-label">Contact Name</label>
+          <label className="cc-form-label">Contact Name *</label>
           <input
             className="cc-form-input"
             value={form.contactName}

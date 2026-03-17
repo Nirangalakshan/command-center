@@ -1,15 +1,16 @@
 import type { OnboardingStage } from '@/services/types';
 
 const STAGE_CONFIG: Record<OnboardingStage, { label: string; color: string }> = {
-  'signup':          { label: 'Signup',         color: 'var(--cc-color-cyan)' },
-  'tenant-created':  { label: 'Tenant Created', color: '#3b82f6' },
-  'phone-setup':     { label: 'Phone Setup',    color: 'var(--cc-color-purple)' },
-  'business-config': { label: 'Biz Config',     color: 'var(--cc-color-amber)' },
-  'call-flow-design':{ label: 'Call Flow',       color: 'var(--cc-color-orange)' },
-  'agent-training':  { label: 'Training',        color: 'var(--cc-color-slate)' },
-  'soft-launch':     { label: 'Soft Launch',     color: 'var(--cc-color-amber)' },
-  'go-live':         { label: 'Go Live',         color: 'var(--cc-color-green)' },
-  'monitoring':      { label: 'Monitoring',      color: 'var(--cc-color-green)' },
+  'new':                  { label: 'New',                color: 'var(--cc-color-cyan)' },
+  'contacted':            { label: 'Contacted',          color: '#3b82f6' },
+  'discovery-complete':   { label: 'Discovery',          color: 'var(--cc-color-purple)' },
+  'tenant-created':       { label: 'Tenant Created',     color: 'var(--cc-color-amber)' },
+  'queue-setup-complete': { label: 'Queues Ready',       color: 'var(--cc-color-orange)' },
+  'script-setup-complete':{ label: 'Scripts Ready',      color: 'var(--cc-color-slate)' },
+  'testing':              { label: 'Testing',            color: '#8b5cf6' },
+  'awaiting-approval':    { label: 'Awaiting Approval',  color: '#f59e0b' },
+  'live':                 { label: 'Live',               color: 'var(--cc-color-green)' },
+  'needs-revision':       { label: 'Needs Revision',     color: '#ef4444' },
 };
 
 interface Props {
@@ -27,7 +28,7 @@ export function OnboardingStageBadge({ stage }: Props) {
         border: `1px solid color-mix(in srgb, ${cfg.color} 25%, transparent)`,
       }}
     >
-      {stage === 'monitoring' && <span className="cc-live-dot-inline" />}
+      {stage === 'live' && <span className="cc-live-dot-inline" />}
       {cfg.label.toUpperCase()}
     </span>
   );

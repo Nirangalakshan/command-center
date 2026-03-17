@@ -1,16 +1,26 @@
 import type {
   Tenant, Queue, Agent, Call, SipLine, DashboardSummary, UserSession,
   AgentStatus, CallResult, TranscriptStatus, SipLineStatus,
-  TenantOnboarding, NewClientForm, OnboardingStage,
+  TenantOnboarding, NewClientForm, OnboardingStage, StageTransitionResult,
+  ClientDetails, BusinessRules, QueueSetup, ScriptKnowledgeBase,
+  BookingRules, TestingGoLive,
 } from './types';
 import { getCurrentSession } from './mockSession';
+import { logStageChange, logClientCreation } from './activityLog';
+import {
+  ONBOARDING_STAGES,
+  validateStageTransition,
+  getNextStage,
+  getGoLiveBlockers,
+  getGoLiveWarnings,
+} from '@/utils/onboardingValidation';
 
 /* ═══════════════════════════════════════════════════════════════
    Mock API Service Layer
-   
+
    Each function mirrors a real REST endpoint.
    Replace function bodies with fetch() calls to your backend.
-   
+
    GET /api/session
    GET /api/tenants
    GET /api/dashboard/summary?tenantId=xxx
@@ -22,6 +32,114 @@ import { getCurrentSession } from './mockSession';
 
 const API_LATENCY = 200;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/* ─── Default Section Data Factories ─── */
+
+function createDefaultClientDetails(name: string, industry: string, contactName: string, contactPhone: string, contactEmail: string): ClientDetails {
+  return {
+    businessName: name,
+    abn: '',
+    industry,
+    timezone: '',
+    primaryContactName: contactName,
+    primaryContactPhone: contactPhone,
+    primaryContactEmail: contactEmail,
+    billingContactName: '',
+    billingContactEmail: '',
+    primaryManagerName: '',
+    primaryManagerPhone: '',
+    primaryManagerEmail: '',
+    afterHoursPhone: '',
+    businessHours: [],
+    locations: [],
+    serviceArea: '',
+    website: '',
+  };
+}
+
+function createDefaultBusinessRules(): BusinessRules {
+  return {
+    urgentKeywords: [],
+    escalationContactName: '',
+    escalationContactPhone: '',
+    escalationContactEmail: '',
+    afterHoursEnabled: false,
+    afterHoursAction: 'none',
+    afterHoursTransferNumber: '',
+    afterHoursVoicemailGreeting: '',
+    approvalRequired: false,
+    approverName: '',
+    approverPhone: '',
+    approverEmail: '',
+    complaintEscalationEnabled: false,
+    complaintEscalationPath: '',
+    complaintEscalationContact: '',
+    transferRules: [],
+    allowedServices: [],
+    excludedServices: [],
+  };
+}
+
+function createDefaultQueueSetup(): QueueSetup {
+  return { queues: [] };
+}
+
+function createDefaultScriptKnowledgeBase(): ScriptKnowledgeBase {
+  return {
+    greeting: '',
+    faqAnswers: [],
+    objectionHandling: '',
+    complianceWording: '',
+    escalationWording: '',
+    pricingNotes: '',
+    servicesScript: '',
+    closingScript: '',
+    approvedByClient: false,
+    approvedAt: '',
+    approvedBy: '',
+  };
+}
+
+function createDefaultBookingRules(): BookingRules {
+  return {
+    requiredCallerFields: [],
+    requiredJobFields: [],
+    depositRequired: false,
+    depositAmount: '',
+    depositWorkflow: '',
+    managerApprovalRequired: false,
+    managerContactName: '',
+    managerContactPhone: '',
+    calendarIntegrationEnabled: false,
+    calendarConnected: false,
+    calendarProvider: '',
+    smsConfirmationEnabled: false,
+    smsSenderConfigured: false,
+    smsSenderId: '',
+    cancellationPolicy: '',
+    rescheduleRules: '',
+    allowBookingsOutsideHours: false,
+    outsideHoursBookingRule: '',
+  };
+}
+
+function createDefaultTestingGoLive(): TestingGoLive {
+  return {
+    testCalls: [],
+    allTestsPassed: false,
+    routingVerified: false,
+    queueConfigVerified: false,
+    clientApprovalReceived: false,
+    clientApprovalTimestamp: '',
+    clientApprovalBy: '',
+    scriptApprovalReceived: false,
+    scriptApprovalTimestamp: '',
+    rollbackPlan: '',
+    handoverNotes: '',
+    assignedLiveOpsTeam: '',
+    goLiveDate: '',
+  };
+}
 
 /* ─── Seed Data ─── */
 
@@ -134,16 +252,59 @@ const SIP_LINES: SipLine[] = [
 
 /* ─── Client Onboarding Data ─── */
 
-const ONBOARDING_STAGES: OnboardingStage[] = [
-  'signup', 'tenant-created', 'phone-setup', 'business-config',
-  'call-flow-design', 'agent-training', 'soft-launch', 'go-live', 'monitoring',
-];
-
 const clientsStore: TenantOnboarding[] = [
-  { ...TENANTS[0], onboardingStage: 'monitoring', contactName: 'Mark Brown', contactPhone: '0412000001', contactEmail: 'mark@melbplumbing.com.au', createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 90 * 86400000).toISOString(), notes: 'First client onboarded' },
-  { ...TENANTS[1], onboardingStage: 'go-live', contactName: 'Dr Sarah Lin', contactPhone: '0412000002', contactEmail: 'sarah@sunrisedental.com.au', createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 45 * 86400000).toISOString(), notes: '' },
-  { ...TENANTS[2], onboardingStage: 'agent-training', contactName: 'Tom Reid', contactPhone: '0412000003', contactEmail: 'tom@apexre.com.au', createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 20 * 86400000).toISOString(), notes: 'Waiting on IVR script approval' },
-  { ...TENANTS[3], onboardingStage: 'phone-setup', contactName: 'Lisa Tran', contactPhone: '0412000004', contactEmail: 'lisa@coastalins.com.au', createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), notes: 'Yeastar provisioning in progress' },
+  {
+    ...TENANTS[0],
+    onboardingStage: 'live' as OnboardingStage,
+    contactName: 'Mark Brown', contactPhone: '0412000001', contactEmail: 'mark@melbplumbing.com.au',
+    createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 90 * 86400000).toISOString(), notes: 'First client onboarded',
+    clientDetails: { ...createDefaultClientDetails('Melbourne Plumbing Co', 'Trades', 'Mark Brown', '0412000001', 'mark@melbplumbing.com.au'), timezone: 'Australia/Melbourne', billingContactName: 'Mark Brown', billingContactEmail: 'mark@melbplumbing.com.au', businessHours: [{ day: 'monday', open: '08:00', close: '17:00', closed: false }, { day: 'tuesday', open: '08:00', close: '17:00', closed: false }, { day: 'wednesday', open: '08:00', close: '17:00', closed: false }, { day: 'thursday', open: '08:00', close: '17:00', closed: false }, { day: 'friday', open: '08:00', close: '17:00', closed: false }, { day: 'saturday', open: '09:00', close: '13:00', closed: false }, { day: 'sunday', open: '00:00', close: '00:00', closed: true }] },
+    businessRules: { ...createDefaultBusinessRules(), urgentKeywords: ['emergency', 'burst pipe', 'flood'], escalationContactName: 'Mark Brown', escalationContactPhone: '0412000001', afterHoursEnabled: true, afterHoursAction: 'transfer', afterHoursTransferNumber: '0412000099' },
+    queueSetup: { queues: [{ id: 'oq-1', name: 'General', purpose: 'General enquiries', businessHoursRule: 'ring-all', afterHoursRule: 'transfer-mobile', fallbackAction: 'voicemail', fallbackNumber: '0412000001', priority: 1, assignedAgentIds: ['a-01', 'a-02'], routingPath: 'round-robin' }, { id: 'oq-2', name: 'Emergency', purpose: 'Urgent/emergency plumbing calls', businessHoursRule: 'priority-ring', afterHoursRule: 'transfer-mobile', fallbackAction: 'transfer', fallbackNumber: '0412000099', priority: 2, assignedAgentIds: ['a-01'], routingPath: 'priority' }] },
+    scriptKnowledgeBase: { greeting: 'Thank you for calling Melbourne Plumbing Co, this is [agent name], how can I help you today?', faqAnswers: [{ question: 'What areas do you service?', answer: 'We service all of Melbourne metro.' }], objectionHandling: 'I understand your concern. Let me see what options we have for you.', complianceWording: '', escalationWording: 'I can see this is urgent. Let me transfer you to our emergency line right away.', pricingNotes: 'Callout fee starts at $120. Quote required for larger jobs.', servicesScript: 'We offer general plumbing, emergency repairs, hot water, and drainage.', closingScript: 'Thank you for calling Melbourne Plumbing Co.', approvedByClient: true, approvedAt: new Date(Date.now() - 85 * 86400000).toISOString(), approvedBy: 'Mark Brown' },
+    bookingRules: { requiredCallerFields: ['name', 'phone', 'address'], requiredJobFields: ['description', 'urgency'], depositRequired: false, depositAmount: '', depositWorkflow: '', managerApprovalRequired: false, managerContactName: '', managerContactPhone: '', calendarIntegrationEnabled: false, calendarConnected: false, calendarProvider: '', smsConfirmationEnabled: true, smsSenderConfigured: true, smsSenderId: 'MelbPlumb', cancellationPolicy: '24 hours notice required', rescheduleRules: 'Call to reschedule', allowBookingsOutsideHours: false, outsideHoursBookingRule: '' },
+    testingGoLive: { testCalls: [{ id: 'tc-1', timestamp: new Date(Date.now() - 88 * 86400000).toISOString(), testerName: 'Admin', scenario: 'General enquiry', result: 'pass', notes: 'Answered correctly', queueTested: 'General' }, { id: 'tc-2', timestamp: new Date(Date.now() - 88 * 86400000).toISOString(), testerName: 'Admin', scenario: 'Emergency call', result: 'pass', notes: 'Transferred to mobile', queueTested: 'Emergency' }], allTestsPassed: true, routingVerified: true, queueConfigVerified: true, clientApprovalReceived: true, clientApprovalTimestamp: new Date(Date.now() - 87 * 86400000).toISOString(), clientApprovalBy: 'Mark Brown', scriptApprovalReceived: true, scriptApprovalTimestamp: new Date(Date.now() - 87 * 86400000).toISOString(), rollbackPlan: 'Revert to voicemail-only if issues arise', handoverNotes: 'Client prefers SMS for booking confirmations', assignedLiveOpsTeam: 'Team Alpha', goLiveDate: new Date(Date.now() - 86 * 86400000).toISOString() },
+    activityLog: [{ id: 'log-001', timestamp: new Date(Date.now() - 90 * 86400000).toISOString(), userId: 'u-sa-001', userName: 'Admin', action: 'client_created', section: 'Client Details', details: 'Client created', previousValue: '', newValue: '' }],
+  },
+  {
+    ...TENANTS[1],
+    onboardingStage: 'awaiting-approval' as OnboardingStage,
+    contactName: 'Dr Sarah Lin', contactPhone: '0412000002', contactEmail: 'sarah@sunrisedental.com.au',
+    createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 45 * 86400000).toISOString(), notes: '',
+    clientDetails: createDefaultClientDetails('Sunrise Dental Group', 'Healthcare', 'Dr Sarah Lin', '0412000002', 'sarah@sunrisedental.com.au'),
+    businessRules: createDefaultBusinessRules(),
+    queueSetup: createDefaultQueueSetup(),
+    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
+    bookingRules: createDefaultBookingRules(),
+    testingGoLive: createDefaultTestingGoLive(),
+    activityLog: [],
+  },
+  {
+    ...TENANTS[2],
+    onboardingStage: 'discovery-complete' as OnboardingStage,
+    contactName: 'Tom Reid', contactPhone: '0412000003', contactEmail: 'tom@apexre.com.au',
+    createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 20 * 86400000).toISOString(), notes: 'Waiting on IVR script approval',
+    clientDetails: createDefaultClientDetails('Apex Real Estate', 'Property', 'Tom Reid', '0412000003', 'tom@apexre.com.au'),
+    businessRules: createDefaultBusinessRules(),
+    queueSetup: createDefaultQueueSetup(),
+    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
+    bookingRules: createDefaultBookingRules(),
+    testingGoLive: createDefaultTestingGoLive(),
+    activityLog: [],
+  },
+  {
+    ...TENANTS[3],
+    onboardingStage: 'new' as OnboardingStage,
+    contactName: 'Lisa Tran', contactPhone: '0412000004', contactEmail: 'lisa@coastalins.com.au',
+    createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), notes: 'Yeastar provisioning in progress',
+    clientDetails: createDefaultClientDetails('Coastal Insurance', 'Finance', 'Lisa Tran', '0412000004', 'lisa@coastalins.com.au'),
+    businessRules: createDefaultBusinessRules(),
+    queueSetup: createDefaultQueueSetup(),
+    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
+    bookingRules: createDefaultBookingRules(),
+    testingGoLive: createDefaultTestingGoLive(),
+    activityLog: [],
+  },
 ];
 
 /* ─── API Functions ─── */
@@ -237,25 +398,102 @@ export async function createClient(data: NewClientForm, createdBy: string): Prom
     industry: data.industry,
     status: 'active',
     brandColor: data.brandColor,
-    onboardingStage: 'signup',
+    onboardingStage: 'new',
     contactName: data.contactName.trim(),
     contactPhone: data.contactPhone.trim(),
     contactEmail: data.contactEmail.trim(),
     createdBy,
     createdAt: new Date().toISOString(),
     notes: data.notes.trim(),
+    clientDetails: createDefaultClientDetails(data.businessName.trim(), data.industry, data.contactName.trim(), data.contactPhone.trim(), data.contactEmail.trim()),
+    businessRules: createDefaultBusinessRules(),
+    queueSetup: createDefaultQueueSetup(),
+    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
+    bookingRules: createDefaultBookingRules(),
+    testingGoLive: createDefaultTestingGoLive(),
+    activityLog: [],
   };
   clientsStore.push(tenant);
+  logClientCreation(tenant, createdBy, 'System');
   return tenant;
 }
 
-export async function advanceClientStage(clientId: string): Promise<TenantOnboarding | null> {
+export { ONBOARDING_STAGES };
+
+export async function advanceClientStage(
+  clientId: string,
+  userId: string = 'unknown',
+  userName: string = 'Unknown',
+): Promise<{ client: TenantOnboarding | null; transition: StageTransitionResult | null }> {
+  await wait(API_LATENCY);
+  const client = clientsStore.find((c) => c.id === clientId);
+  if (!client) return { client: null, transition: null };
+
+  const nextStage = getNextStage(client.onboardingStage);
+  if (!nextStage) {
+    return {
+      client: { ...client },
+      transition: {
+        allowed: false,
+        blockers: [{ section: 'Stage', field: 'onboardingStage', message: 'No next stage available', severity: 'blocker' }],
+        warnings: [],
+        targetStage: client.onboardingStage,
+      },
+    };
+  }
+
+  const transition = validateStageTransition(client, nextStage);
+
+  if (transition.allowed) {
+    const previousStage = client.onboardingStage;
+    client.onboardingStage = nextStage;
+    logStageChange(client, userId, userName, previousStage, nextStage);
+  }
+
+  return { client: { ...client }, transition };
+}
+
+export async function regressClientStage(
+  clientId: string,
+  userId: string = 'unknown',
+  userName: string = 'Unknown',
+  reason: string = '',
+): Promise<TenantOnboarding | null> {
   await wait(API_LATENCY);
   const client = clientsStore.find((c) => c.id === clientId);
   if (!client) return null;
-  const idx = ONBOARDING_STAGES.indexOf(client.onboardingStage);
-  if (idx < ONBOARDING_STAGES.length - 1) {
-    client.onboardingStage = ONBOARDING_STAGES[idx + 1];
+
+  const previousStage = client.onboardingStage;
+  client.onboardingStage = 'needs-revision';
+  logStageChange(client, userId, userName, previousStage, 'needs-revision');
+
+  if (reason) {
+    client.activityLog.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId,
+      userName,
+      action: 'revision_reason',
+      section: 'Onboarding Stage',
+      details: `Revision reason: ${reason}`,
+      previousValue: previousStage,
+      newValue: 'needs-revision',
+    });
   }
+
   return { ...client };
+}
+
+export async function getClientValidation(clientId: string): Promise<{
+  blockers: ReturnType<typeof getGoLiveBlockers>;
+  warnings: ReturnType<typeof getGoLiveWarnings>;
+} | null> {
+  await wait(API_LATENCY);
+  const client = clientsStore.find((c) => c.id === clientId);
+  if (!client) return null;
+
+  return {
+    blockers: getGoLiveBlockers(client),
+    warnings: getGoLiveWarnings(client),
+  };
 }

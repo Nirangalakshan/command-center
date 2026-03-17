@@ -104,16 +104,187 @@ export interface DashboardSummary {
   slaPercent: number;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Onboarding Stages — 10-Stage Workflow
+   ═══════════════════════════════════════════════════════════════ */
+
 export type OnboardingStage =
-  | 'signup'
+  | 'new'
+  | 'contacted'
+  | 'discovery-complete'
   | 'tenant-created'
-  | 'phone-setup'
-  | 'business-config'
-  | 'call-flow-design'
-  | 'agent-training'
-  | 'soft-launch'
-  | 'go-live'
-  | 'monitoring';
+  | 'queue-setup-complete'
+  | 'script-setup-complete'
+  | 'testing'
+  | 'awaiting-approval'
+  | 'live'
+  | 'needs-revision';
+
+/* ═══════════════════════════════════════════════════════════════
+   Onboarding Section Data Models
+   ═══════════════════════════════════════════════════════════════ */
+
+export interface BusinessHours {
+  day: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+  open: string;   // HH:mm
+  close: string;  // HH:mm
+  closed: boolean;
+}
+
+export interface ClientLocation {
+  name: string;
+  address: string;
+  phone: string;
+  businessHours: BusinessHours[];
+}
+
+export interface ClientDetails {
+  businessName: string;
+  abn: string;
+  industry: string;
+  timezone: string;
+  primaryContactName: string;
+  primaryContactPhone: string;
+  primaryContactEmail: string;
+  billingContactName: string;
+  billingContactEmail: string;
+  primaryManagerName: string;
+  primaryManagerPhone: string;
+  primaryManagerEmail: string;
+  afterHoursPhone: string;
+  businessHours: BusinessHours[];
+  locations: ClientLocation[];
+  serviceArea: string;
+  website: string;
+}
+
+export type AfterHoursAction = 'voicemail' | 'transfer' | 'message' | 'none';
+
+export interface BusinessRules {
+  urgentKeywords: string[];
+  escalationContactName: string;
+  escalationContactPhone: string;
+  escalationContactEmail: string;
+  afterHoursEnabled: boolean;
+  afterHoursAction: AfterHoursAction;
+  afterHoursTransferNumber: string;
+  afterHoursVoicemailGreeting: string;
+  approvalRequired: boolean;
+  approverName: string;
+  approverPhone: string;
+  approverEmail: string;
+  complaintEscalationEnabled: boolean;
+  complaintEscalationPath: string;
+  complaintEscalationContact: string;
+  transferRules: TransferRule[];
+  allowedServices: string[];
+  excludedServices: string[];
+}
+
+export interface TransferRule {
+  trigger: string;
+  destination: string;
+  destinationNumber: string;
+}
+
+export interface OnboardingQueue {
+  id: string;
+  name: string;
+  purpose: string;
+  businessHoursRule: string;
+  afterHoursRule: string;
+  fallbackAction: string;
+  fallbackNumber: string;
+  priority: number;
+  assignedAgentIds: string[];
+  routingPath: string;
+}
+
+export interface QueueSetup {
+  queues: OnboardingQueue[];
+}
+
+export interface ScriptKnowledgeBase {
+  greeting: string;
+  faqAnswers: FaqEntry[];
+  objectionHandling: string;
+  complianceWording: string;
+  escalationWording: string;
+  pricingNotes: string;
+  servicesScript: string;
+  closingScript: string;
+  approvedByClient: boolean;
+  approvedAt: string;
+  approvedBy: string;
+}
+
+export interface FaqEntry {
+  question: string;
+  answer: string;
+}
+
+export interface BookingRules {
+  requiredCallerFields: string[];
+  requiredJobFields: string[];
+  depositRequired: boolean;
+  depositAmount: string;
+  depositWorkflow: string;
+  managerApprovalRequired: boolean;
+  managerContactName: string;
+  managerContactPhone: string;
+  calendarIntegrationEnabled: boolean;
+  calendarConnected: boolean;
+  calendarProvider: string;
+  smsConfirmationEnabled: boolean;
+  smsSenderConfigured: boolean;
+  smsSenderId: string;
+  cancellationPolicy: string;
+  rescheduleRules: string;
+  allowBookingsOutsideHours: boolean;
+  outsideHoursBookingRule: string;
+}
+
+export interface TestCall {
+  id: string;
+  timestamp: string;
+  testerName: string;
+  scenario: string;
+  result: 'pass' | 'fail' | 'partial';
+  notes: string;
+  queueTested: string;
+}
+
+export interface TestingGoLive {
+  testCalls: TestCall[];
+  allTestsPassed: boolean;
+  routingVerified: boolean;
+  queueConfigVerified: boolean;
+  clientApprovalReceived: boolean;
+  clientApprovalTimestamp: string;
+  clientApprovalBy: string;
+  scriptApprovalReceived: boolean;
+  scriptApprovalTimestamp: string;
+  rollbackPlan: string;
+  handoverNotes: string;
+  assignedLiveOpsTeam: string;
+  goLiveDate: string;
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  action: string;
+  section: string;
+  details: string;
+  previousValue: string;
+  newValue: string;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Onboarding Entity — Full Model
+   ═══════════════════════════════════════════════════════════════ */
 
 export interface TenantOnboarding extends Tenant {
   onboardingStage: OnboardingStage;
@@ -123,6 +294,13 @@ export interface TenantOnboarding extends Tenant {
   createdBy: string;
   createdAt: string;
   notes: string;
+  clientDetails: ClientDetails;
+  businessRules: BusinessRules;
+  queueSetup: QueueSetup;
+  scriptKnowledgeBase: ScriptKnowledgeBase;
+  bookingRules: BookingRules;
+  testingGoLive: TestingGoLive;
+  activityLog: ActivityLogEntry[];
 }
 
 export interface NewClientForm {
@@ -147,6 +325,9 @@ export interface Permissions {
   canViewClientsTab: boolean;
   canSignUpClients: boolean;
   canAdvanceOnboarding: boolean;
+  canEditClientDetails: boolean;
+  canApproveGoLive: boolean;
+  canRegressStage: boolean;
   allowedTenantId: string | null;
   allowedQueueIds: string[];
 }
@@ -155,4 +336,30 @@ export interface TabDef {
   key: string;
   label: string;
   icon: string;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Validation Types
+   ═══════════════════════════════════════════════════════════════ */
+
+export type ValidationSeverity = 'blocker' | 'warning';
+
+export interface ValidationResult {
+  valid: boolean;
+  blockers: ValidationIssue[];
+  warnings: ValidationIssue[];
+}
+
+export interface ValidationIssue {
+  section: string;
+  field: string;
+  message: string;
+  severity: ValidationSeverity;
+}
+
+export interface StageTransitionResult {
+  allowed: boolean;
+  blockers: ValidationIssue[];
+  warnings: ValidationIssue[];
+  targetStage: OnboardingStage;
 }

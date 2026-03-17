@@ -2,11 +2,7 @@ import { useState } from 'react';
 import type { TenantOnboarding, Permissions, NewClientForm, OnboardingStage } from '@/services/types';
 import { OnboardingStageBadge } from '@/components/dashboard/OnboardingStageBadge';
 import { ClientSignupModal } from '@/components/dashboard/ClientSignupModal';
-
-const STAGES: OnboardingStage[] = [
-  'signup', 'tenant-created', 'phone-setup', 'business-config',
-  'call-flow-design', 'agent-training', 'soft-launch', 'go-live', 'monitoring',
-];
+import { ONBOARDING_STAGES } from '@/utils/onboardingValidation';
 
 interface Props {
   clients: TenantOnboarding[];
@@ -53,8 +49,8 @@ export function ClientsTab({ clients, permissions, onCreateClient, onAdvanceStag
             </thead>
             <tbody>
               {visibleClients.map((c) => {
-                const stageIdx = STAGES.indexOf(c.onboardingStage);
-                const isLast = stageIdx >= STAGES.length - 1;
+                const isLive = c.onboardingStage === 'live';
+                const isNeedsRevision = c.onboardingStage === 'needs-revision';
                 return (
                   <tr key={c.id}>
                     <td>
@@ -79,15 +75,17 @@ export function ClientsTab({ clients, permissions, onCreateClient, onAdvanceStag
                     </td>
                     {permissions.canAdvanceOnboarding && (
                       <td>
-                        {!isLast ? (
+                        {isLive ? (
+                          <span className="cc-table-muted">✓ Live</span>
+                        ) : isNeedsRevision ? (
+                          <span className="cc-table-muted" style={{ color: '#ef4444' }}>⚠ Revision Required</span>
+                        ) : (
                           <button
                             className="cc-btn cc-btn-small cc-btn-ghost"
                             onClick={() => onAdvanceStage(c.id)}
                           >
                             Advance →
                           </button>
-                        ) : (
-                          <span className="cc-table-muted">✓ Live</span>
                         )}
                       </td>
                     )}
