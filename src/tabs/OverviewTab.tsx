@@ -19,9 +19,9 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ summary, queues, agents, tenants, permissions, now }: OverviewTabProps) {
-  if (!summary) return <LoadingSkeleton />;
-
   const liveAgents = useMemo(() => agents.filter((a) => a.status === 'on-call'), [agents]);
+
+  if (!summary) return <LoadingSkeleton />;
 
   return (
     <div className="cc-fade-in">
