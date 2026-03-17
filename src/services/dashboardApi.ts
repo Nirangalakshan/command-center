@@ -1,6 +1,7 @@
 import type {
   Tenant, Queue, Agent, Call, SipLine, DashboardSummary, UserSession,
   AgentStatus, CallResult, TranscriptStatus, SipLineStatus,
+  TenantOnboarding, NewClientForm, OnboardingStage,
 } from './types';
 import { getCurrentSession } from './mockSession';
 
