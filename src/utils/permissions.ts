@@ -9,23 +9,24 @@ export function derivePermissions(session: UserSession): Permissions {
 
   const isSuperAdmin = role === 'super-admin';
   const isClientAdmin = role === 'client-admin';
+  const isSupervisor = role === 'supervisor';
   const isAgent = role === 'agent';
 
   return {
     canViewAllTenants: isSuperAdmin,
     canSwitchTenant: isSuperAdmin,
     canViewSipInfrastructure: isSuperAdmin,
-    canViewTenantNames: isSuperAdmin,
-    canViewCallsTab: isSuperAdmin || isClientAdmin,
-    canViewAgentsTab: isSuperAdmin || isClientAdmin,
+    canViewTenantNames: isSuperAdmin || isSupervisor,
+    canViewCallsTab: isSuperAdmin || isClientAdmin || isSupervisor,
+    canViewAgentsTab: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewOverviewTab: true,
     canViewSipTab: isSuperAdmin,
-    canViewClientsTab: isSuperAdmin || isClientAdmin,
-    canSignUpClients: isSuperAdmin || isClientAdmin, // agents must NOT create clients
+    canViewClientsTab: isSuperAdmin || isClientAdmin || isSupervisor,
+    canSignUpClients: isSuperAdmin || isClientAdmin,
     canAdvanceOnboarding: isSuperAdmin,
-    canEditClientDetails: isSuperAdmin || isClientAdmin,
-    canApproveGoLive: isSuperAdmin,                   // only super-admin can approve go-live
-    canRegressStage: isSuperAdmin || isClientAdmin,    // both can send back to revision
+    canEditClientDetails: isSuperAdmin || isClientAdmin || isSupervisor,
+    canApproveGoLive: isSuperAdmin,
+    canRegressStage: isSuperAdmin || isClientAdmin || isSupervisor,
     allowedTenantId: tenantId,
     allowedQueueIds: allowedQueueIds,
   };

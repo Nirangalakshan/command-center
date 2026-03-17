@@ -3,7 +3,7 @@
    Every entity carries tenantId for strict isolation.
    ═══════════════════════════════════════════════════════════════ */
 
-export type UserRole = 'super-admin' | 'client-admin' | 'agent';
+export type UserRole = 'super-admin' | 'client-admin' | 'supervisor' | 'agent';
 
 export type AgentStatus = 'on-call' | 'available' | 'wrap-up' | 'break' | 'offline';
 

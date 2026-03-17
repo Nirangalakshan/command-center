@@ -9,6 +9,7 @@ interface RoleSwitcherProps {
 const ROLE_LABELS: Record<UserRole, string> = {
   'super-admin': '⚡ Super Admin',
   'client-admin': '🏢 Client Admin',
+  'supervisor': '👁 Supervisor',
   'agent': '🎧 Agent',
 };
 
