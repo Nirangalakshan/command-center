@@ -48,7 +48,7 @@ export default function DashboardPage() {
   }, [d.selectedTenant]);
 
   return (
-    <div className="cc-root" key={d.session?.role || 'loading'}>
+    <div className="cc-root">
       <DashboardHeader
         tenants={d.tenants}
         selectedTenant={d.selectedTenant}
