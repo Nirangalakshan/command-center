@@ -3,7 +3,7 @@ import type {
   AgentStatus, CallResult, TranscriptStatus, SipLineStatus,
   TenantOnboarding, NewClientForm, OnboardingStage, StageTransitionResult,
   ClientDetails, BusinessRules, QueueSetup, ScriptKnowledgeBase,
-  BookingRules, TestingGoLive,
+  BookingRules, TestingGoLive, AgentGroup, DIDMapping, IncomingCall,
 } from './types';
 import { getCurrentSession } from './mockSession';
 import { logStageChange, logClientCreation } from './activityLog';
