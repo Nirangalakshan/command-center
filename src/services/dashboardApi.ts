@@ -459,6 +459,7 @@ export async function createClient(data: NewClientForm, createdBy: string): Prom
     industry: data.industry,
     status: 'active',
     brandColor: data.brandColor,
+    didNumbers: [],
     onboardingStage: 'new',
     contactName: data.contactName.trim(),
     contactPhone: data.contactPhone.trim(),

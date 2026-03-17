@@ -21,6 +21,7 @@ export function usePermissions(session: UserSession | null): Permissions {
         canEditClientDetails: false,
         canApproveGoLive: false,
         canRegressStage: false,
+        canViewShiftPanel: false,
         allowedTenantId: null,
         allowedQueueIds: [],
       };

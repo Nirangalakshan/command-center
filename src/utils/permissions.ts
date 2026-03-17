@@ -17,7 +17,7 @@ export function derivePermissions(session: UserSession): Permissions {
     canSwitchTenant: isSuperAdmin,
     canViewSipInfrastructure: isSuperAdmin,
     canViewTenantNames: isSuperAdmin || isSupervisor,
-    canViewCallsTab: isSuperAdmin || isClientAdmin || isSupervisor,
+    canViewCallsTab: isSuperAdmin || isClientAdmin || isSupervisor || isAgent,
     canViewAgentsTab: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewOverviewTab: true,
     canViewSipTab: isSuperAdmin,
@@ -27,6 +27,7 @@ export function derivePermissions(session: UserSession): Permissions {
     canEditClientDetails: isSuperAdmin || isClientAdmin || isSupervisor,
     canApproveGoLive: isSuperAdmin,
     canRegressStage: isSuperAdmin || isClientAdmin || isSupervisor,
+    canViewShiftPanel: isAgent,
     allowedTenantId: tenantId,
     allowedQueueIds: allowedQueueIds,
   };
