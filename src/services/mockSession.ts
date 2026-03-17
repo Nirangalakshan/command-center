@@ -17,13 +17,13 @@ const SUPER_ADMIN_SESSION: UserSession = {
 };
 
 // ─── Client Admin (Melbourne Plumbing Co) ───
-// const CLIENT_ADMIN_SESSION: UserSession = {
-//   userId: 'u-ca-001',
-//   role: 'client-admin',
-//   tenantId: 't-001',
-//   allowedQueueIds: ['q-s1', 'q-h1', 'q-b1'],
-//   displayName: 'James Wilson',
-// };
+const CLIENT_ADMIN_SESSION: UserSession = {
+  userId: 'u-ca-001',
+  role: 'client-admin',
+  tenantId: 't-001',
+  allowedQueueIds: ['q-s1', 'q-h1', 'q-b1'],
+  displayName: 'James Wilson',
+};
 
 // ─── Agent (Sunrise Dental, limited queues) ───
 // const AGENT_SESSION: UserSession = {
@@ -36,7 +36,7 @@ const SUPER_ADMIN_SESSION: UserSession = {
 
 /** Returns the current mock session. Replace with real auth. */
 export function getCurrentSession(): UserSession {
-  return SUPER_ADMIN_SESSION;
-  // return CLIENT_ADMIN_SESSION;
+  // return SUPER_ADMIN_SESSION;
+  return CLIENT_ADMIN_SESSION;
   // return AGENT_SESSION;
 }
