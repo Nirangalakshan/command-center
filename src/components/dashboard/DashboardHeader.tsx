@@ -1,6 +1,7 @@
-import type { Tenant, Permissions, ConnectionStatus } from '@/services/types';
+import type { Tenant, Permissions, ConnectionStatus, UserRole } from '@/services/types';
 import { ConnectionBadge } from './ConnectionBadge';
 import { TenantSelector } from './TenantSelector';
+import { RoleSwitcher } from './RoleSwitcher';
 
 interface DashboardHeaderProps {
   tenants: Tenant[];
@@ -10,6 +11,8 @@ interface DashboardHeaderProps {
   clockStr: string;
   permissions: Permissions;
   displayName: string;
+  currentRole: UserRole;
+  onRoleChange: (role: UserRole) => void;
 }
 
 export function DashboardHeader({
@@ -20,6 +23,8 @@ export function DashboardHeader({
   clockStr,
   permissions,
   displayName,
+  currentRole,
+  onRoleChange,
 }: DashboardHeaderProps) {
   const currentTenant = tenants.find((t) => t.id === permissions.allowedTenantId);
 
@@ -35,6 +40,7 @@ export function DashboardHeader({
         </div>
       </div>
       <div className="cc-header-right">
+        <RoleSwitcher currentRole={currentRole} onRoleChange={onRoleChange} />
         <TenantSelector
           tenants={tenants}
           selectedTenant={selectedTenant}

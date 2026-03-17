@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import type {
   Tenant, Queue, Agent, Call, SipLine,
-  DashboardSummary, UserSession, ConnectionStatus,
+  DashboardSummary, UserSession, ConnectionStatus, UserRole,
 } from '@/services/types';
 import {
   fetchSession, fetchTenants, fetchSummary,
   fetchQueues, fetchAgents, fetchCalls, fetchSipLines,
 } from '@/services/dashboardApi';
+import { getSessionByRole } from '@/services/mockSession';
 
 const POLL_INTERVAL = 8000;
 
@@ -27,6 +28,7 @@ export interface DashboardData {
   error: string | null;
   now: number;
   refresh: () => void;
+  switchRole: (role: UserRole) => void;
 }
 
 export function useDashboardData(): DashboardData {
@@ -54,7 +56,6 @@ export function useDashboardData(): DashboardData {
   useEffect(() => {
     fetchSession().then((s) => {
       setSession(s);
-      // If the user is tenant-locked, auto-select their tenant
       if (s.tenantId) {
         setSelectedTenant(s.tenantId);
       }
@@ -103,6 +104,14 @@ export function useDashboardData(): DashboardData {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  const switchRole = useCallback((role: UserRole) => {
+    const newSession = getSessionByRole(role);
+    setSession(newSession);
+    setSelectedTenant(newSession.tenantId);
+    setSelectedTab('overview');
+    setLoading(true);
+  }, []);
+
   return {
     session,
     selectedTenant: effectiveTenant,
@@ -120,5 +129,6 @@ export function useDashboardData(): DashboardData {
     error,
     now,
     refresh: loadData,
+    switchRole,
   };
 }

@@ -144,6 +144,42 @@
   letter-spacing: 0.5px;
 }
 
+/* ─── Role Switcher ─── */
+.cc-role-switcher {
+  position: relative;
+}
+
+.cc-role-select {
+  appearance: none;
+  background: var(--cc-bg-elevated);
+  color: var(--cc-text-primary);
+  border: 1px solid var(--cc-border-default);
+  border-radius: var(--cc-radius-sm);
+  padding: 6px 28px 6px 10px;
+  font-family: var(--cc-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a99ad' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  transition: border-color 0.2s;
+}
+
+.cc-role-select:hover {
+  border-color: var(--cc-border-strong);
+}
+
+.cc-role-select:focus {
+  border-color: var(--cc-color-cyan);
+}
+
+.cc-role-select option {
+  background: var(--cc-bg-panel);
+  color: var(--cc-text-primary);
+}
+
 /* ─── Connection Badge ─── */
 .cc-conn-badge {
   display: flex;

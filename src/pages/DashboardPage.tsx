@@ -57,6 +57,8 @@ export default function DashboardPage() {
         clockStr={clockStr}
         permissions={permissions}
         displayName={d.session?.displayName || ''}
+        currentRole={d.session?.role || 'super-admin'}
+        onRoleChange={d.switchRole}
       />
 
       <DashboardTabs
