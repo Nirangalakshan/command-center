@@ -88,6 +88,9 @@ export default function DashboardPage() {
                 tenants={d.tenants}
                 permissions={permissions}
                 now={d.now}
+                session={d.session}
+                agentGroups={d.agentGroups}
+                incomingCalls={d.incomingCalls}
               />
             )}
             {d.selectedTab === 'agents' && (

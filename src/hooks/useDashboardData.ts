@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import type {
   Tenant, Queue, Agent, Call, SipLine,
   DashboardSummary, UserSession, ConnectionStatus, UserRole,
+  AgentGroup, IncomingCall,
 } from '@/services/types';
 import {
   fetchSession, fetchTenants, fetchSummary,
   fetchQueues, fetchAgents, fetchCalls, fetchSipLines,
+  fetchAgentGroups, fetchIncomingCalls,
 } from '@/services/dashboardApi';
 import { getSessionByRole } from '@/services/mockSession';
 
@@ -24,6 +26,8 @@ export interface DashboardData {
   agents: Agent[];
   calls: Call[];
   sipLines: SipLine[];
+  agentGroups: AgentGroup[];
+  incomingCalls: IncomingCall[];
   loading: boolean;
   error: string | null;
   now: number;
@@ -42,6 +46,8 @@ export function useDashboardData(): DashboardData {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [calls, setCalls] = useState<Call[]>([]);
   const [sipLines, setSipLines] = useState<SipLine[]>([]);
+  const [agentGroups, setAgentGroups] = useState<AgentGroup[]>([]);
+  const [incomingCalls, setIncomingCalls] = useState<IncomingCall[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -62,20 +68,23 @@ export function useDashboardData(): DashboardData {
     });
   }, []);
 
-  // Effective tenant: respect session lock
+  // Effective tenant: respect session lock (agents with null tenantId see multi-tenant)
   const effectiveTenant = session?.tenantId || selectedTenant;
 
   const loadData = useCallback(async () => {
     try {
       setError(null);
       const tid = effectiveTenant || null;
-      const [t, s, q, a, c, sl] = await Promise.all([
+      const isAgent = session?.role === 'agent';
+      const [t, s, q, a, c, sl, ag, ic] = await Promise.all([
         fetchTenants(),
         fetchSummary(tid),
         fetchQueues(tid),
         fetchAgents(tid),
         fetchCalls(tid),
         fetchSipLines(tid),
+        fetchAgentGroups(tid),
+        isAgent ? fetchIncomingCalls(session?.allowedQueueIds) : Promise.resolve([]),
       ]);
       setTenants(t);
       setSummary(s);
@@ -83,6 +92,8 @@ export function useDashboardData(): DashboardData {
       setAgents(a);
       setCalls(c);
       setSipLines(sl);
+      setAgentGroups(ag);
+      setIncomingCalls(ic);
       setConnectionStatus('connected');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
@@ -90,7 +101,7 @@ export function useDashboardData(): DashboardData {
     } finally {
       setLoading(false);
     }
-  }, [effectiveTenant]);
+  }, [effectiveTenant, session?.role, session?.allowedQueueIds]);
 
   // Load on mount and when tenant changes
   useEffect(() => {
@@ -125,6 +136,8 @@ export function useDashboardData(): DashboardData {
     agents,
     calls,
     sipLines,
+    agentGroups,
+    incomingCalls,
     loading,
     error,
     now,

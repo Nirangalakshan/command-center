@@ -3,7 +3,7 @@ import type {
   AgentStatus, CallResult, TranscriptStatus, SipLineStatus,
   TenantOnboarding, NewClientForm, OnboardingStage, StageTransitionResult,
   ClientDetails, BusinessRules, QueueSetup, ScriptKnowledgeBase,
-  BookingRules, TestingGoLive,
+  BookingRules, TestingGoLive, AgentGroup, DIDMapping, IncomingCall,
 } from './types';
 import { getCurrentSession } from './mockSession';
 import { logStageChange, logClientCreation } from './activityLog';
@@ -144,10 +144,10 @@ function createDefaultTestingGoLive(): TestingGoLive {
 /* ─── Seed Data ─── */
 
 const TENANTS: Tenant[] = [
-  { id: 't-001', name: 'Melbourne Plumbing Co', industry: 'Trades', status: 'active', brandColor: '#00d4f5' },
-  { id: 't-002', name: 'Sunrise Dental Group', industry: 'Healthcare', status: 'active', brandColor: '#34d399' },
-  { id: 't-003', name: 'Apex Real Estate', industry: 'Property', status: 'active', brandColor: '#a78bfa' },
-  { id: 't-004', name: 'Coastal Insurance', industry: 'Finance', status: 'active', brandColor: '#fb923c' },
+  { id: 't-001', name: 'Melbourne Plumbing Co', industry: 'Trades', status: 'active', brandColor: '#00d4f5', didNumbers: ['03 9000 1001', '03 9000 1002'] },
+  { id: 't-002', name: 'Sunrise Dental Group', industry: 'Healthcare', status: 'active', brandColor: '#34d399', didNumbers: ['03 9000 2001', '03 9000 2002'] },
+  { id: 't-003', name: 'Apex Real Estate', industry: 'Property', status: 'active', brandColor: '#a78bfa', didNumbers: ['03 9000 3001', '03 9000 3002'] },
+  { id: 't-004', name: 'Coastal Insurance', industry: 'Finance', status: 'active', brandColor: '#fb923c', didNumbers: ['03 9000 4001', '03 9000 4002'] },
 ];
 
 const QUEUES: Queue[] = [
@@ -163,25 +163,86 @@ const QUEUES: Queue[] = [
 ];
 
 const AGENTS: Agent[] = [
-  { id: 'a-01', tenantId: 't-001', queueIds: ['q-s1'], name: 'Liam Chen', extension: '1001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0412345678', callStartTime: Date.now() - 187000, allowedQueueIds: ['q-s1', 'q-h1'] },
-  { id: 'a-02', tenantId: 't-001', queueIds: ['q-h1'], name: 'Priya Sharma', extension: '1002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h1'] },
-  { id: 'a-03', tenantId: 't-001', queueIds: ['q-b1'], name: 'Jake Morrison', extension: '1003', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0398765432', callStartTime: Date.now() - 423000, allowedQueueIds: ['q-b1'] },
-  { id: 'a-04', tenantId: 't-001', queueIds: ['q-s1'], name: 'Anika Patel', extension: '1004', role: 'agent', status: 'wrap-up' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s1'] },
-  { id: 'a-05', tenantId: 't-001', queueIds: ['q-h1'], name: 'Tom Nguyen', extension: '1005', role: 'team-lead', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h1', 'q-b1'] },
-  { id: 'a-06', tenantId: 't-001', queueIds: ['q-b1'], name: 'Sara Kim', extension: '1006', role: 'agent', status: 'break' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-b1'] },
-  { id: 'a-07', tenantId: 't-002', queueIds: ['q-s2'], name: 'Ben Torres', extension: '2001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0423456789', callStartTime: Date.now() - 98000, allowedQueueIds: ['q-s2', 'q-h2'] },
-  { id: 'a-08', tenantId: 't-002', queueIds: ['q-h2'], name: 'Maya Singh', extension: '2002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h2'] },
-  { id: 'a-09', tenantId: 't-002', queueIds: ['q-s2'], name: 'Alex Cruz', extension: '2003', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0434567890', callStartTime: Date.now() - 312000, allowedQueueIds: ['q-s2'] },
-  { id: 'a-10', tenantId: 't-002', queueIds: ['q-h2'], name: 'Nina Volkov', extension: '2004', role: 'agent', status: 'offline' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h2'] },
-  { id: 'a-11', tenantId: 't-003', queueIds: ['q-s3'], name: 'Oscar Reyes', extension: '3001', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0445678901', callStartTime: Date.now() - 67000, allowedQueueIds: ['q-s3'] },
-  { id: 'a-12', tenantId: 't-003', queueIds: ['q-h3'], name: 'Isla Thompson', extension: '3002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h3'] },
-  { id: 'a-13', tenantId: 't-003', queueIds: ['q-s3'], name: 'Ryan O\'Brien', extension: '3003', role: 'team-lead', status: 'wrap-up' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s3', 'q-h3'] },
-  { id: 'a-14', tenantId: 't-003', queueIds: ['q-h3'], name: 'Zara Ahmed', extension: '3004', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h3'] },
-  { id: 'a-15', tenantId: 't-004', queueIds: ['q-s4'], name: 'Leo Park', extension: '4001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0456789012', callStartTime: Date.now() - 245000, allowedQueueIds: ['q-s4', 'q-h4'] },
-  { id: 'a-16', tenantId: 't-004', queueIds: ['q-h4'], name: 'Freya Walsh', extension: '4002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h4'] },
-  { id: 'a-17', tenantId: 't-004', queueIds: ['q-s4'], name: 'Kai Tanaka', extension: '4003', role: 'agent', status: 'break' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s4'] },
-  { id: 'a-18', tenantId: 't-004', queueIds: ['q-h4'], name: 'Ruby Santos', extension: '4004', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0467890123', callStartTime: Date.now() - 156000, allowedQueueIds: ['q-h4'] },
+  { id: 'a-01', tenantId: 't-001', queueIds: ['q-s1'], name: 'Liam Chen', extension: '1001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0412345678', callStartTime: Date.now() - 187000, allowedQueueIds: ['q-s1', 'q-h1'], assignedTenantIds: ['t-001'], groupIds: ['g-s1'] },
+  { id: 'a-02', tenantId: 't-001', queueIds: ['q-h1'], name: 'Priya Sharma', extension: '1002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h1'], assignedTenantIds: ['t-001'], groupIds: ['g-h1'] },
+  { id: 'a-03', tenantId: 't-001', queueIds: ['q-b1'], name: 'Jake Morrison', extension: '1003', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0398765432', callStartTime: Date.now() - 423000, allowedQueueIds: ['q-b1'], assignedTenantIds: ['t-001'], groupIds: ['g-b1'] },
+  { id: 'a-04', tenantId: 't-001', queueIds: ['q-s1'], name: 'Anika Patel', extension: '1004', role: 'agent', status: 'wrap-up' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s1'], assignedTenantIds: ['t-001'], groupIds: ['g-s1'] },
+  { id: 'a-05', tenantId: 't-001', queueIds: ['q-h1'], name: 'Tom Nguyen', extension: '1005', role: 'team-lead', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h1', 'q-b1'], assignedTenantIds: ['t-001'], groupIds: ['g-h1', 'g-b1'] },
+  { id: 'a-06', tenantId: 't-001', queueIds: ['q-b1'], name: 'Sara Kim', extension: '1006', role: 'agent', status: 'break' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-b1'], assignedTenantIds: ['t-001'], groupIds: ['g-b1'] },
+  { id: 'a-07', tenantId: 't-002', queueIds: ['q-s2'], name: 'Ben Torres', extension: '2001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0423456789', callStartTime: Date.now() - 98000, allowedQueueIds: ['q-s2', 'q-h2', 'q-s1'], assignedTenantIds: ['t-002', 't-001'], groupIds: ['g-s2', 'g-h2', 'g-s1'] },
+  { id: 'a-08', tenantId: 't-002', queueIds: ['q-h2'], name: 'Maya Singh', extension: '2002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h2'], assignedTenantIds: ['t-002'], groupIds: ['g-h2'] },
+  { id: 'a-09', tenantId: 't-002', queueIds: ['q-s2'], name: 'Alex Cruz', extension: '2003', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0434567890', callStartTime: Date.now() - 312000, allowedQueueIds: ['q-s2'], assignedTenantIds: ['t-002'], groupIds: ['g-s2'] },
+  { id: 'a-10', tenantId: 't-002', queueIds: ['q-h2'], name: 'Nina Volkov', extension: '2004', role: 'agent', status: 'offline' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h2'], assignedTenantIds: ['t-002'], groupIds: ['g-h2'] },
+  { id: 'a-11', tenantId: 't-003', queueIds: ['q-s3'], name: 'Oscar Reyes', extension: '3001', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0445678901', callStartTime: Date.now() - 67000, allowedQueueIds: ['q-s3'], assignedTenantIds: ['t-003'], groupIds: ['g-s3'] },
+  { id: 'a-12', tenantId: 't-003', queueIds: ['q-h3'], name: 'Isla Thompson', extension: '3002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h3'], assignedTenantIds: ['t-003'], groupIds: ['g-h3'] },
+  { id: 'a-13', tenantId: 't-003', queueIds: ['q-s3'], name: 'Ryan O\'Brien', extension: '3003', role: 'team-lead', status: 'wrap-up' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s3', 'q-h3'], assignedTenantIds: ['t-003'], groupIds: ['g-s3', 'g-h3'] },
+  { id: 'a-14', tenantId: 't-003', queueIds: ['q-h3'], name: 'Zara Ahmed', extension: '3004', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h3'], assignedTenantIds: ['t-003'], groupIds: ['g-h3'] },
+  { id: 'a-15', tenantId: 't-004', queueIds: ['q-s4'], name: 'Leo Park', extension: '4001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0456789012', callStartTime: Date.now() - 245000, allowedQueueIds: ['q-s4', 'q-h4'], assignedTenantIds: ['t-004'], groupIds: ['g-s4', 'g-h4'] },
+  { id: 'a-16', tenantId: 't-004', queueIds: ['q-h4'], name: 'Freya Walsh', extension: '4002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h4'], assignedTenantIds: ['t-004'], groupIds: ['g-h4'] },
+  { id: 'a-17', tenantId: 't-004', queueIds: ['q-s4'], name: 'Kai Tanaka', extension: '4003', role: 'agent', status: 'break' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s4'], assignedTenantIds: ['t-004'], groupIds: ['g-s4'] },
+  { id: 'a-18', tenantId: 't-004', queueIds: ['q-h4'], name: 'Ruby Santos', extension: '4004', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0467890123', callStartTime: Date.now() - 156000, allowedQueueIds: ['q-h4'], assignedTenantIds: ['t-004'], groupIds: ['g-h4'] },
 ];
+
+/* ─── DID Mappings ─── */
+
+const DID_MAPPINGS: DIDMapping[] = [
+  { did: '03 9000 1001', tenantId: 't-001', queueId: 'q-s1', label: 'Plumbing Sales' },
+  { did: '03 9000 1002', tenantId: 't-001', queueId: 'q-h1', label: 'Plumbing Support' },
+  { did: '03 9000 2001', tenantId: 't-002', queueId: 'q-s2', label: 'New Patients' },
+  { did: '03 9000 2002', tenantId: 't-002', queueId: 'q-h2', label: 'Existing Patients' },
+  { did: '03 9000 3001', tenantId: 't-003', queueId: 'q-s3', label: 'Buyer Enquiries' },
+  { did: '03 9000 3002', tenantId: 't-003', queueId: 'q-h3', label: 'Seller Support' },
+  { did: '03 9000 4001', tenantId: 't-004', queueId: 'q-s4', label: 'Insurance Quotes' },
+  { did: '03 9000 4002', tenantId: 't-004', queueId: 'q-h4', label: 'Claims Line' },
+];
+
+/* ─── Agent Groups ─── */
+
+const AGENT_GROUPS: AgentGroup[] = [
+  { id: 'g-s1', name: 'Plumbing Sales Team', tenantId: 't-001', queueId: 'q-s1', agentIds: ['a-01', 'a-04', 'a-07'], ringStrategy: 'ring-all' },
+  { id: 'g-h1', name: 'Plumbing Support Team', tenantId: 't-001', queueId: 'q-h1', agentIds: ['a-02', 'a-05'], ringStrategy: 'round-robin' },
+  { id: 'g-b1', name: 'Plumbing Bookings Team', tenantId: 't-001', queueId: 'q-b1', agentIds: ['a-03', 'a-05', 'a-06'], ringStrategy: 'ring-all' },
+  { id: 'g-s2', name: 'Dental Intake Team', tenantId: 't-002', queueId: 'q-s2', agentIds: ['a-07', 'a-09'], ringStrategy: 'ring-all' },
+  { id: 'g-h2', name: 'Dental Existing Team', tenantId: 't-002', queueId: 'q-h2', agentIds: ['a-07', 'a-08', 'a-10'], ringStrategy: 'longest-idle' },
+  { id: 'g-s3', name: 'RE Buyer Enquiries', tenantId: 't-003', queueId: 'q-s3', agentIds: ['a-11', 'a-13'], ringStrategy: 'ring-all' },
+  { id: 'g-h3', name: 'RE Seller Support', tenantId: 't-003', queueId: 'q-h3', agentIds: ['a-12', 'a-13', 'a-14'], ringStrategy: 'round-robin' },
+  { id: 'g-s4', name: 'Insurance Quotes Team', tenantId: 't-004', queueId: 'q-s4', agentIds: ['a-15', 'a-17'], ringStrategy: 'ring-all' },
+  { id: 'g-h4', name: 'Claims Team', tenantId: 't-004', queueId: 'q-h4', agentIds: ['a-15', 'a-16', 'a-18'], ringStrategy: 'longest-idle' },
+];
+
+/* ─── Incoming Calls (live ringing/queued) ─── */
+
+function buildIncomingCalls(): IncomingCall[] {
+  const now = Date.now();
+  return [
+    {
+      id: 'ic-001', did: '03 9000 1001', callerNumber: '0412 999 001', callerName: 'David Brown',
+      tenantId: 't-001', tenantName: 'Melbourne Plumbing Co', tenantBrandColor: '#00d4f5',
+      queueId: 'q-s1', queueName: 'Sales', groupId: 'g-s1', groupName: 'Plumbing Sales Team',
+      didLabel: 'Plumbing Sales', waitingSince: now - 28000, status: 'ringing',
+    },
+    {
+      id: 'ic-002', did: '03 9000 1001', callerNumber: '0413 888 002', callerName: null,
+      tenantId: 't-001', tenantName: 'Melbourne Plumbing Co', tenantBrandColor: '#00d4f5',
+      queueId: 'q-s1', queueName: 'Sales', groupId: 'g-s1', groupName: 'Plumbing Sales Team',
+      didLabel: 'Plumbing Sales', waitingSince: now - 54000, status: 'queued',
+    },
+    {
+      id: 'ic-003', did: '03 9000 2001', callerNumber: '0423 777 003', callerName: 'Sophie Lee',
+      tenantId: 't-002', tenantName: 'Sunrise Dental Group', tenantBrandColor: '#34d399',
+      queueId: 'q-s2', queueName: 'New Patients', groupId: 'g-s2', groupName: 'Dental Intake Team',
+      didLabel: 'New Patients', waitingSince: now - 12000, status: 'ringing',
+    },
+    {
+      id: 'ic-004', did: '03 9000 1002', callerNumber: '0414 666 004', callerName: 'Emma White',
+      tenantId: 't-001', tenantName: 'Melbourne Plumbing Co', tenantBrandColor: '#00d4f5',
+      queueId: 'q-h1', queueName: 'Support', groupId: 'g-h1', groupName: 'Plumbing Support Team',
+      didLabel: 'Plumbing Support', waitingSince: now - 41000, status: 'queued',
+    },
+  ];
+}
+
+const INCOMING_CALLS = buildIncomingCalls();
 
 function buildCallLog(): Call[] {
   const now = Date.now();
@@ -255,6 +316,7 @@ const SIP_LINES: SipLine[] = [
 const clientsStore: TenantOnboarding[] = [
   {
     ...TENANTS[0],
+    didNumbers: TENANTS[0].didNumbers,
     onboardingStage: 'live' as OnboardingStage,
     contactName: 'Mark Brown', contactPhone: '0412000001', contactEmail: 'mark@melbplumbing.com.au',
     createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 90 * 86400000).toISOString(), notes: 'First client onboarded',
@@ -398,6 +460,7 @@ export async function createClient(data: NewClientForm, createdBy: string): Prom
     industry: data.industry,
     status: 'active',
     brandColor: data.brandColor,
+    didNumbers: [],
     onboardingStage: 'new',
     contactName: data.contactName.trim(),
     contactPhone: data.contactPhone.trim(),
@@ -496,4 +559,22 @@ export async function getClientValidation(clientId: string): Promise<{
     blockers: getGoLiveBlockers(client),
     warnings: getGoLiveWarnings(client),
   };
+}
+
+export async function fetchAgentGroups(tenantId?: string | null): Promise<AgentGroup[]> {
+  await wait(API_LATENCY);
+  return tenantId ? AGENT_GROUPS.filter((g) => g.tenantId === tenantId) : [...AGENT_GROUPS];
+}
+
+export async function fetchIncomingCalls(allowedQueueIds?: string[]): Promise<IncomingCall[]> {
+  await wait(API_LATENCY);
+  if (allowedQueueIds && allowedQueueIds.length > 0) {
+    return INCOMING_CALLS.filter((c) => allowedQueueIds.includes(c.queueId));
+  }
+  return [...INCOMING_CALLS];
+}
+
+export async function fetchDIDMappings(): Promise<DIDMapping[]> {
+  await wait(API_LATENCY);
+  return [...DID_MAPPINGS];
 }

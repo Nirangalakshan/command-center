@@ -86,7 +86,7 @@ function createEmptyTestingGoLive(): TestingGoLive {
 
 function createTestClient(overrides: Partial<TenantOnboarding> = {}): TenantOnboarding {
   return {
-    id: 't-test', name: 'Test Business', industry: 'Trades', status: 'active', brandColor: '#00d4f5',
+    id: 't-test', name: 'Test Business', industry: 'Trades', status: 'active', brandColor: '#00d4f5', didNumbers: [],
     onboardingStage: 'new', contactName: 'Test Contact', contactPhone: '0400000000', contactEmail: 'test@test.com',
     createdBy: 'u-test', createdAt: new Date().toISOString(), notes: '',
     clientDetails: createEmptyClientDetails(),

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { DashboardSummary, Queue, Agent, Tenant, Permissions } from '@/services/types';
+import type { DashboardSummary, Queue, Agent, Tenant, Permissions, UserSession, AgentGroup, IncomingCall } from '@/services/types';
 import { formatDuration, formatPhone } from '@/utils/formatters';
 import { formatSeconds } from '@/utils/formatters';
 import { MetricCard } from '@/components/dashboard/MetricCard';
@@ -8,6 +8,7 @@ import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { LiveDot } from '@/components/dashboard/LiveDot';
 import { LoadingSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { EmptyState } from '@/components/dashboard/EmptyState';
+import { AgentShiftPanel } from '@/components/dashboard/AgentShiftPanel';
 
 interface OverviewTabProps {
   summary: DashboardSummary | null;
@@ -16,16 +17,29 @@ interface OverviewTabProps {
   tenants: Tenant[];
   permissions: Permissions;
   now: number;
+  session?: UserSession | null;
+  agentGroups?: AgentGroup[];
+  incomingCalls?: IncomingCall[];
 }
 
-export function OverviewTab({ summary, queues, agents, tenants, permissions, now }: OverviewTabProps) {
+export function OverviewTab({ summary, queues, agents, tenants, permissions, now, session, agentGroups, incomingCalls }: OverviewTabProps) {
   const liveAgents = useMemo(() => agents.filter((a) => a.status === 'on-call'), [agents]);
 
   if (!summary) return <LoadingSkeleton />;
 
   return (
     <div className="cc-fade-in">
-      {/* Metric Cards */}
+      {/* Agent Shift Panel */}
+      {permissions.canViewShiftPanel && session && (
+        <AgentShiftPanel
+          session={session}
+          tenants={tenants}
+          queues={queues}
+          agentGroups={agentGroups || []}
+          incomingCalls={incomingCalls || []}
+          now={now}
+        />
+      )}
       <div className="cc-metrics">
         <MetricCard label="Active Calls" value={summary.activeCalls} accent="var(--cc-color-red)" sub="live now" />
         <MetricCard label="Calls Waiting" value={summary.queuedCalls} accent="var(--cc-color-amber)" sub="in queue" />

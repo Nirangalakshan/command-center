@@ -25,8 +25,8 @@ const SESSIONS: Record<UserRole, UserSession> = {
   'agent': {
     userId: 'u-ag-001',
     role: 'agent',
-    tenantId: 't-002',
-    allowedQueueIds: ['q-s2'],
+    tenantId: null,
+    allowedQueueIds: ['q-s1', 'q-s2', 'q-h2'],
     displayName: 'Ben Torres',
   },
 };
