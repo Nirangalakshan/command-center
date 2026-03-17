@@ -1,6 +1,7 @@
 import type {
   Tenant, Queue, Agent, Call, SipLine, DashboardSummary, UserSession,
   AgentStatus, CallResult, TranscriptStatus, SipLineStatus,
+  TenantOnboarding, NewClientForm, OnboardingStage,
 } from './types';
 import { getCurrentSession } from './mockSession';
 
@@ -131,6 +132,20 @@ const SIP_LINES: SipLine[] = [
   { id: 'sip-12', label: 'SIP/12', trunkName: 'Trunk-D', status: 'idle' as SipLineStatus, tenantId: null, activeCaller: null, activeSince: null },
 ];
 
+/* ─── Client Onboarding Data ─── */
+
+const ONBOARDING_STAGES: OnboardingStage[] = [
+  'signup', 'tenant-created', 'phone-setup', 'business-config',
+  'call-flow-design', 'agent-training', 'soft-launch', 'go-live', 'monitoring',
+];
+
+const clientsStore: TenantOnboarding[] = [
+  { ...TENANTS[0], onboardingStage: 'monitoring', contactName: 'Mark Brown', contactPhone: '0412000001', contactEmail: 'mark@melbplumbing.com.au', createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 90 * 86400000).toISOString(), notes: 'First client onboarded' },
+  { ...TENANTS[1], onboardingStage: 'go-live', contactName: 'Dr Sarah Lin', contactPhone: '0412000002', contactEmail: 'sarah@sunrisedental.com.au', createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 45 * 86400000).toISOString(), notes: '' },
+  { ...TENANTS[2], onboardingStage: 'agent-training', contactName: 'Tom Reid', contactPhone: '0412000003', contactEmail: 'tom@apexre.com.au', createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 20 * 86400000).toISOString(), notes: 'Waiting on IVR script approval' },
+  { ...TENANTS[3], onboardingStage: 'phone-setup', contactName: 'Lisa Tran', contactPhone: '0412000004', contactEmail: 'lisa@coastalins.com.au', createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), notes: 'Yeastar provisioning in progress' },
+];
+
 /* ─── API Functions ─── */
 
 export async function fetchSession(): Promise<UserSession> {
@@ -204,4 +219,43 @@ export async function fetchSipLines(tenantId?: string | null): Promise<SipLine[]
     ...l,
     tenantName: l.tenantId ? TENANTS.find((t) => t.id === l.tenantId)?.name : undefined,
   }));
+}
+
+export async function fetchClients(tenantId?: string | null): Promise<TenantOnboarding[]> {
+  await wait(API_LATENCY);
+  return tenantId
+    ? clientsStore.filter((c) => c.id === tenantId)
+    : [...clientsStore];
+}
+
+export async function createClient(data: NewClientForm, createdBy: string): Promise<TenantOnboarding> {
+  await wait(API_LATENCY);
+  const id = `t-${String(TENANTS.length + clientsStore.length + 1).padStart(3, '0')}`;
+  const tenant: TenantOnboarding = {
+    id,
+    name: data.businessName.trim(),
+    industry: data.industry,
+    status: 'active',
+    brandColor: data.brandColor,
+    onboardingStage: 'signup',
+    contactName: data.contactName.trim(),
+    contactPhone: data.contactPhone.trim(),
+    contactEmail: data.contactEmail.trim(),
+    createdBy,
+    createdAt: new Date().toISOString(),
+    notes: data.notes.trim(),
+  };
+  clientsStore.push(tenant);
+  return tenant;
+}
+
+export async function advanceClientStage(clientId: string): Promise<TenantOnboarding | null> {
+  await wait(API_LATENCY);
+  const client = clientsStore.find((c) => c.id === clientId);
+  if (!client) return null;
+  const idx = ONBOARDING_STAGES.indexOf(client.onboardingStage);
+  if (idx < ONBOARDING_STAGES.length - 1) {
+    client.onboardingStage = ONBOARDING_STAGES[idx + 1];
+  }
+  return { ...client };
 }

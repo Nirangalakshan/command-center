@@ -104,6 +104,37 @@ export interface DashboardSummary {
   slaPercent: number;
 }
 
+export type OnboardingStage =
+  | 'signup'
+  | 'tenant-created'
+  | 'phone-setup'
+  | 'business-config'
+  | 'call-flow-design'
+  | 'agent-training'
+  | 'soft-launch'
+  | 'go-live'
+  | 'monitoring';
+
+export interface TenantOnboarding extends Tenant {
+  onboardingStage: OnboardingStage;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  createdBy: string;
+  createdAt: string;
+  notes: string;
+}
+
+export interface NewClientForm {
+  businessName: string;
+  industry: string;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  brandColor: string;
+  notes: string;
+}
+
 export interface Permissions {
   canViewAllTenants: boolean;
   canSwitchTenant: boolean;
@@ -113,6 +144,9 @@ export interface Permissions {
   canViewAgentsTab: boolean;
   canViewOverviewTab: boolean;
   canViewSipTab: boolean;
+  canViewClientsTab: boolean;
+  canSignUpClients: boolean;
+  canAdvanceOnboarding: boolean;
   allowedTenantId: string | null;
   allowedQueueIds: string[];
 }

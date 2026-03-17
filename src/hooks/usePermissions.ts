@@ -15,6 +15,9 @@ export function usePermissions(session: UserSession | null): Permissions {
         canViewAgentsTab: false,
         canViewOverviewTab: false,
         canViewSipTab: false,
+        canViewClientsTab: false,
+        canSignUpClients: false,
+        canAdvanceOnboarding: false,
         allowedTenantId: null,
         allowedQueueIds: [],
       };
