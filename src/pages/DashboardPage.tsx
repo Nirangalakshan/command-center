@@ -1,6 +1,7 @@
 import '@/styles/dashboard.css';
 
-import type { TabDef } from '@/services/types';
+import { useState, useCallback } from 'react';
+import type { TabDef, TenantOnboarding, NewClientForm } from '@/services/types';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useLiveClock } from '@/hooks/useLiveClock';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -11,18 +12,40 @@ import { OverviewTab } from '@/tabs/OverviewTab';
 import { AgentsTab } from '@/tabs/AgentsTab';
 import { CallsTab } from '@/tabs/CallsTab';
 import { SipLinesTab } from '@/tabs/SipLinesTab';
+import { ClientsTab } from '@/tabs/ClientsTab';
+import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
+import { useEffect } from 'react';
 
 const TABS: TabDef[] = [
   { key: 'overview', label: 'Overview', icon: '◉' },
   { key: 'agents', label: 'Agents', icon: '◎' },
   { key: 'calls', label: 'Calls', icon: '◈' },
   { key: 'sip', label: 'SIP Lines', icon: '◇' },
+  { key: 'clients', label: 'Clients', icon: '◆' },
 ];
 
 export default function DashboardPage() {
   const d = useDashboardData();
   const { formatted: clockStr } = useLiveClock();
   const permissions = usePermissions(d.session);
+  const [clients, setClients] = useState<TenantOnboarding[]>([]);
+
+  useEffect(() => {
+    fetchClients(d.selectedTenant).then(setClients);
+  }, [d.selectedTenant]);
+
+  const handleCreateClient = useCallback(async (data: NewClientForm) => {
+    if (!d.session) return;
+    await createClient(data, d.session.userId);
+    const updated = await fetchClients(d.selectedTenant);
+    setClients(updated);
+  }, [d.session, d.selectedTenant]);
+
+  const handleAdvanceStage = useCallback(async (clientId: string) => {
+    await advanceClientStage(clientId);
+    const updated = await fetchClients(d.selectedTenant);
+    setClients(updated);
+  }, [d.selectedTenant]);
 
   return (
     <div className="cc-root">
@@ -44,7 +67,6 @@ export default function DashboardPage() {
       />
 
       <main className="cc-main">
-        {/* Error Banner */}
         {d.error && (
           <div className="cc-error-banner">
             <span>⚠ {d.error}</span>
@@ -89,6 +111,14 @@ export default function DashboardPage() {
                 tenants={d.tenants}
                 permissions={permissions}
                 now={d.now}
+              />
+            )}
+            {d.selectedTab === 'clients' && (
+              <ClientsTab
+                clients={clients}
+                permissions={permissions}
+                onCreateClient={handleCreateClient}
+                onAdvanceStage={handleAdvanceStage}
               />
             )}
           </>
