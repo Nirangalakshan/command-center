@@ -95,6 +95,7 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
       setSipLines(sl);
       setAgentGroups(ag);
       setIncomingCalls(ic);
+      setAgentOnboarding(ao);
       setConnectionStatus('connected');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
