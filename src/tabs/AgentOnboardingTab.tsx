@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import type { AgentOnboarding, Tenant, Queue, AgentGroup, Permissions } from '@/services/types';
+import type { AgentOnboarding, AgentStatus, Tenant, Queue, AgentGroup, Permissions } from '@/services/types';
 import { AgentOnboardingStageBadge } from '@/components/dashboard/AgentOnboardingStageBadge';
 import { AgentTrainingChecklist } from '@/components/dashboard/AgentTrainingChecklist';
 import { CreateAgentModal, type CreateAgentData } from '@/components/dashboard/CreateAgentModal';
