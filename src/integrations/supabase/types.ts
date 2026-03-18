@@ -59,6 +59,59 @@ export type Database = {
           },
         ]
       }
+      agent_onboarding: {
+        Row: {
+          agent_id: string
+          created_at: string
+          id: string
+          invited_at: string
+          invited_by: string | null
+          notes: string
+          personal_email: string
+          phone: string
+          stage: Database["public"]["Enums"]["agent_onboarding_stage"]
+          training_checklist: Json
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          id?: string
+          invited_at?: string
+          invited_by?: string | null
+          notes?: string
+          personal_email?: string
+          phone?: string
+          stage?: Database["public"]["Enums"]["agent_onboarding_stage"]
+          training_checklist?: Json
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          id?: string
+          invited_at?: string
+          invited_by?: string | null
+          notes?: string
+          personal_email?: string
+          phone?: string
+          stage?: Database["public"]["Enums"]["agent_onboarding_stage"]
+          training_checklist?: Json
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_onboarding_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agents: {
         Row: {
           allowed_queue_ids: string[]
@@ -478,6 +531,12 @@ export type Database = {
       }
     }
     Enums: {
+      agent_onboarding_stage:
+        | "invited"
+        | "account-created"
+        | "training"
+        | "shadowing"
+        | "live"
       agent_role: "agent" | "senior-agent" | "team-lead"
       agent_status: "on-call" | "available" | "wrap-up" | "break" | "offline"
       app_role: "super-admin" | "client-admin" | "supervisor" | "agent"
@@ -623,6 +682,13 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      agent_onboarding_stage: [
+        "invited",
+        "account-created",
+        "training",
+        "shadowing",
+        "live",
+      ],
       agent_role: ["agent", "senior-agent", "team-lead"],
       agent_status: ["on-call", "available", "wrap-up", "break", "offline"],
       app_role: ["super-admin", "client-admin", "supervisor", "agent"],
