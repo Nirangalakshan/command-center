@@ -96,7 +96,7 @@ export function AgentOnboardingTab({ agentOnboarding, tenants, queues, agentGrou
                     </td>
                     <td>{ao.tenantName}</td>
                     <td><AgentOnboardingStageBadge stage={ao.stage} /></td>
-                    <td><StatusBadge status={ao.agentStatus} /></td>
+                    <td><StatusBadge status={ao.agentStatus as AgentStatus} /></td>
                     <td className="cc-table-mono">{ao.personalEmail}</td>
                     <td className="cc-table-mono">{new Date(ao.invitedAt).toLocaleDateString()}</td>
                     {canManage && (
