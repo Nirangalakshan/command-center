@@ -1,12 +1,9 @@
+import { supabase } from '@/integrations/supabase/client';
 import type {
-  Tenant, Queue, Agent, Call, SipLine, DashboardSummary, UserSession,
-  AgentStatus, CallResult, TranscriptStatus, SipLineStatus,
-  TenantOnboarding, NewClientForm, OnboardingStage, StageTransitionResult,
-  ClientDetails, BusinessRules, QueueSetup, ScriptKnowledgeBase,
-  BookingRules, TestingGoLive, AgentGroup, DIDMapping, IncomingCall,
+  Tenant, Queue, Agent, Call, SipLine, DashboardSummary,
+  TenantOnboarding, NewClientForm, StageTransitionResult,
+  AgentGroup, DIDMapping, IncomingCall,
 } from './types';
-import { getCurrentSession } from './mockSession';
-import { logStageChange, logClientCreation } from './activityLog';
 import {
   ONBOARDING_STAGES,
   validateStageTransition,
@@ -15,390 +12,48 @@ import {
   getGoLiveWarnings,
 } from '@/utils/onboardingValidation';
 
-/* ═══════════════════════════════════════════════════════════════
-   Mock API Service Layer
+export { ONBOARDING_STAGES };
 
-   Each function mirrors a real REST endpoint.
-   Replace function bodies with fetch() calls to your backend.
+/* ─── Tenants ─── */
 
-   GET /api/session
-   GET /api/tenants
-   GET /api/dashboard/summary?tenantId=xxx
-   GET /api/queues?tenantId=xxx
-   GET /api/agents?tenantId=xxx
-   GET /api/calls?tenantId=xxx
-   GET /api/sip-lines?tenantId=xxx
-   ═══════════════════════════════════════════════════════════════ */
-
-const API_LATENCY = 200;
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/* ─── Default Section Data Factories ─── */
-
-function createDefaultClientDetails(name: string, industry: string, contactName: string, contactPhone: string, contactEmail: string): ClientDetails {
-  return {
-    businessName: name,
-    abn: '',
-    industry,
-    timezone: '',
-    primaryContactName: contactName,
-    primaryContactPhone: contactPhone,
-    primaryContactEmail: contactEmail,
-    billingContactName: '',
-    billingContactEmail: '',
-    primaryManagerName: '',
-    primaryManagerPhone: '',
-    primaryManagerEmail: '',
-    afterHoursPhone: '',
-    businessHours: [],
-    locations: [],
-    serviceArea: '',
-    website: '',
-  };
-}
-
-function createDefaultBusinessRules(): BusinessRules {
-  return {
-    urgentKeywords: [],
-    escalationContactName: '',
-    escalationContactPhone: '',
-    escalationContactEmail: '',
-    afterHoursEnabled: false,
-    afterHoursAction: 'none',
-    afterHoursTransferNumber: '',
-    afterHoursVoicemailGreeting: '',
-    approvalRequired: false,
-    approverName: '',
-    approverPhone: '',
-    approverEmail: '',
-    complaintEscalationEnabled: false,
-    complaintEscalationPath: '',
-    complaintEscalationContact: '',
-    transferRules: [],
-    allowedServices: [],
-    excludedServices: [],
-  };
-}
-
-function createDefaultQueueSetup(): QueueSetup {
-  return { queues: [] };
-}
-
-function createDefaultScriptKnowledgeBase(): ScriptKnowledgeBase {
-  return {
-    greeting: '',
-    faqAnswers: [],
-    objectionHandling: '',
-    complianceWording: '',
-    escalationWording: '',
-    pricingNotes: '',
-    servicesScript: '',
-    closingScript: '',
-    approvedByClient: false,
-    approvedAt: '',
-    approvedBy: '',
-  };
-}
-
-function createDefaultBookingRules(): BookingRules {
-  return {
-    requiredCallerFields: [],
-    requiredJobFields: [],
-    depositRequired: false,
-    depositAmount: '',
-    depositWorkflow: '',
-    managerApprovalRequired: false,
-    managerContactName: '',
-    managerContactPhone: '',
-    calendarIntegrationEnabled: false,
-    calendarConnected: false,
-    calendarProvider: '',
-    smsConfirmationEnabled: false,
-    smsSenderConfigured: false,
-    smsSenderId: '',
-    cancellationPolicy: '',
-    rescheduleRules: '',
-    allowBookingsOutsideHours: false,
-    outsideHoursBookingRule: '',
-  };
-}
-
-function createDefaultTestingGoLive(): TestingGoLive {
-  return {
-    testCalls: [],
-    allTestsPassed: false,
-    routingVerified: false,
-    queueConfigVerified: false,
-    clientApprovalReceived: false,
-    clientApprovalTimestamp: '',
-    clientApprovalBy: '',
-    scriptApprovalReceived: false,
-    scriptApprovalTimestamp: '',
-    rollbackPlan: '',
-    handoverNotes: '',
-    assignedLiveOpsTeam: '',
-    goLiveDate: '',
-  };
-}
-
-/* ─── Seed Data ─── */
-
-const TENANTS: Tenant[] = [
-  { id: 't-001', name: 'Melbourne Plumbing Co', industry: 'Trades', status: 'active', brandColor: '#00d4f5', didNumbers: ['03 9000 1001', '03 9000 1002'] },
-  { id: 't-002', name: 'Sunrise Dental Group', industry: 'Healthcare', status: 'active', brandColor: '#34d399', didNumbers: ['03 9000 2001', '03 9000 2002'] },
-  { id: 't-003', name: 'Apex Real Estate', industry: 'Property', status: 'active', brandColor: '#a78bfa', didNumbers: ['03 9000 3001', '03 9000 3002'] },
-  { id: 't-004', name: 'Coastal Insurance', industry: 'Finance', status: 'active', brandColor: '#fb923c', didNumbers: ['03 9000 4001', '03 9000 4002'] },
-];
-
-const QUEUES: Queue[] = [
-  { id: 'q-s1', tenantId: 't-001', name: 'Sales', type: 'inbound', color: '#00d4f5', icon: '📞', activeCalls: 1, waitingCalls: 2, availableAgents: 2, totalAgents: 4, avgWaitSeconds: 28, slaPercent: 87 },
-  { id: 'q-h1', tenantId: 't-001', name: 'Support', type: 'inbound', color: '#a78bfa', icon: '🎧', activeCalls: 0, waitingCalls: 1, availableAgents: 2, totalAgents: 3, avgWaitSeconds: 18, slaPercent: 92 },
-  { id: 'q-b1', tenantId: 't-001', name: 'Bookings', type: 'inbound', color: '#34d399', icon: '📅', activeCalls: 1, waitingCalls: 0, availableAgents: 0, totalAgents: 2, avgWaitSeconds: 12, slaPercent: 95 },
-  { id: 'q-s2', tenantId: 't-002', name: 'New Patients', type: 'inbound', color: '#00d4f5', icon: '📞', activeCalls: 2, waitingCalls: 1, availableAgents: 1, totalAgents: 3, avgWaitSeconds: 22, slaPercent: 84 },
-  { id: 'q-h2', tenantId: 't-002', name: 'Existing Patients', type: 'inbound', color: '#a78bfa', icon: '🎧', activeCalls: 0, waitingCalls: 0, availableAgents: 1, totalAgents: 2, avgWaitSeconds: 14, slaPercent: 96 },
-  { id: 'q-s3', tenantId: 't-003', name: 'Buyer Enquiries', type: 'inbound', color: '#00d4f5', icon: '🏠', activeCalls: 1, waitingCalls: 1, availableAgents: 1, totalAgents: 3, avgWaitSeconds: 32, slaPercent: 78 },
-  { id: 'q-h3', tenantId: 't-003', name: 'Seller Support', type: 'inbound', color: '#34d399', icon: '📋', activeCalls: 0, waitingCalls: 0, availableAgents: 2, totalAgents: 2, avgWaitSeconds: 10, slaPercent: 98 },
-  { id: 'q-s4', tenantId: 't-004', name: 'Quotes', type: 'inbound', color: '#fb923c', icon: '📊', activeCalls: 1, waitingCalls: 2, availableAgents: 0, totalAgents: 2, avgWaitSeconds: 45, slaPercent: 72 },
-  { id: 'q-h4', tenantId: 't-004', name: 'Claims', type: 'inbound', color: '#f43f5e', icon: '🛡️', activeCalls: 1, waitingCalls: 1, availableAgents: 1, totalAgents: 3, avgWaitSeconds: 38, slaPercent: 76 },
-];
-
-const AGENTS: Agent[] = [
-  { id: 'a-01', tenantId: 't-001', queueIds: ['q-s1'], name: 'Liam Chen', extension: '1001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0412345678', callStartTime: Date.now() - 187000, allowedQueueIds: ['q-s1', 'q-h1'], assignedTenantIds: ['t-001'], groupIds: ['g-s1'] },
-  { id: 'a-02', tenantId: 't-001', queueIds: ['q-h1'], name: 'Priya Sharma', extension: '1002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h1'], assignedTenantIds: ['t-001'], groupIds: ['g-h1'] },
-  { id: 'a-03', tenantId: 't-001', queueIds: ['q-b1'], name: 'Jake Morrison', extension: '1003', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0398765432', callStartTime: Date.now() - 423000, allowedQueueIds: ['q-b1'], assignedTenantIds: ['t-001'], groupIds: ['g-b1'] },
-  { id: 'a-04', tenantId: 't-001', queueIds: ['q-s1'], name: 'Anika Patel', extension: '1004', role: 'agent', status: 'wrap-up' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s1'], assignedTenantIds: ['t-001'], groupIds: ['g-s1'] },
-  { id: 'a-05', tenantId: 't-001', queueIds: ['q-h1'], name: 'Tom Nguyen', extension: '1005', role: 'team-lead', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h1', 'q-b1'], assignedTenantIds: ['t-001'], groupIds: ['g-h1', 'g-b1'] },
-  { id: 'a-06', tenantId: 't-001', queueIds: ['q-b1'], name: 'Sara Kim', extension: '1006', role: 'agent', status: 'break' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-b1'], assignedTenantIds: ['t-001'], groupIds: ['g-b1'] },
-  { id: 'a-07', tenantId: 't-002', queueIds: ['q-s2'], name: 'Ben Torres', extension: '2001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0423456789', callStartTime: Date.now() - 98000, allowedQueueIds: ['q-s2', 'q-h2', 'q-s1'], assignedTenantIds: ['t-002', 't-001'], groupIds: ['g-s2', 'g-h2', 'g-s1'] },
-  { id: 'a-08', tenantId: 't-002', queueIds: ['q-h2'], name: 'Maya Singh', extension: '2002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h2'], assignedTenantIds: ['t-002'], groupIds: ['g-h2'] },
-  { id: 'a-09', tenantId: 't-002', queueIds: ['q-s2'], name: 'Alex Cruz', extension: '2003', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0434567890', callStartTime: Date.now() - 312000, allowedQueueIds: ['q-s2'], assignedTenantIds: ['t-002'], groupIds: ['g-s2'] },
-  { id: 'a-10', tenantId: 't-002', queueIds: ['q-h2'], name: 'Nina Volkov', extension: '2004', role: 'agent', status: 'offline' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h2'], assignedTenantIds: ['t-002'], groupIds: ['g-h2'] },
-  { id: 'a-11', tenantId: 't-003', queueIds: ['q-s3'], name: 'Oscar Reyes', extension: '3001', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0445678901', callStartTime: Date.now() - 67000, allowedQueueIds: ['q-s3'], assignedTenantIds: ['t-003'], groupIds: ['g-s3'] },
-  { id: 'a-12', tenantId: 't-003', queueIds: ['q-h3'], name: 'Isla Thompson', extension: '3002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h3'], assignedTenantIds: ['t-003'], groupIds: ['g-h3'] },
-  { id: 'a-13', tenantId: 't-003', queueIds: ['q-s3'], name: 'Ryan O\'Brien', extension: '3003', role: 'team-lead', status: 'wrap-up' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s3', 'q-h3'], assignedTenantIds: ['t-003'], groupIds: ['g-s3', 'g-h3'] },
-  { id: 'a-14', tenantId: 't-003', queueIds: ['q-h3'], name: 'Zara Ahmed', extension: '3004', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h3'], assignedTenantIds: ['t-003'], groupIds: ['g-h3'] },
-  { id: 'a-15', tenantId: 't-004', queueIds: ['q-s4'], name: 'Leo Park', extension: '4001', role: 'senior-agent', status: 'on-call' as AgentStatus, currentCaller: '0456789012', callStartTime: Date.now() - 245000, allowedQueueIds: ['q-s4', 'q-h4'], assignedTenantIds: ['t-004'], groupIds: ['g-s4', 'g-h4'] },
-  { id: 'a-16', tenantId: 't-004', queueIds: ['q-h4'], name: 'Freya Walsh', extension: '4002', role: 'agent', status: 'available' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-h4'], assignedTenantIds: ['t-004'], groupIds: ['g-h4'] },
-  { id: 'a-17', tenantId: 't-004', queueIds: ['q-s4'], name: 'Kai Tanaka', extension: '4003', role: 'agent', status: 'break' as AgentStatus, currentCaller: null, callStartTime: null, allowedQueueIds: ['q-s4'], assignedTenantIds: ['t-004'], groupIds: ['g-s4'] },
-  { id: 'a-18', tenantId: 't-004', queueIds: ['q-h4'], name: 'Ruby Santos', extension: '4004', role: 'agent', status: 'on-call' as AgentStatus, currentCaller: '0467890123', callStartTime: Date.now() - 156000, allowedQueueIds: ['q-h4'], assignedTenantIds: ['t-004'], groupIds: ['g-h4'] },
-];
-
-/* ─── DID Mappings ─── */
-
-const DID_MAPPINGS: DIDMapping[] = [
-  { did: '03 9000 1001', tenantId: 't-001', queueId: 'q-s1', label: 'Plumbing Sales' },
-  { did: '03 9000 1002', tenantId: 't-001', queueId: 'q-h1', label: 'Plumbing Support' },
-  { did: '03 9000 2001', tenantId: 't-002', queueId: 'q-s2', label: 'New Patients' },
-  { did: '03 9000 2002', tenantId: 't-002', queueId: 'q-h2', label: 'Existing Patients' },
-  { did: '03 9000 3001', tenantId: 't-003', queueId: 'q-s3', label: 'Buyer Enquiries' },
-  { did: '03 9000 3002', tenantId: 't-003', queueId: 'q-h3', label: 'Seller Support' },
-  { did: '03 9000 4001', tenantId: 't-004', queueId: 'q-s4', label: 'Insurance Quotes' },
-  { did: '03 9000 4002', tenantId: 't-004', queueId: 'q-h4', label: 'Claims Line' },
-];
-
-/* ─── Agent Groups ─── */
-
-const AGENT_GROUPS: AgentGroup[] = [
-  { id: 'g-s1', name: 'Plumbing Sales Team', tenantId: 't-001', queueId: 'q-s1', agentIds: ['a-01', 'a-04', 'a-07'], ringStrategy: 'ring-all' },
-  { id: 'g-h1', name: 'Plumbing Support Team', tenantId: 't-001', queueId: 'q-h1', agentIds: ['a-02', 'a-05'], ringStrategy: 'round-robin' },
-  { id: 'g-b1', name: 'Plumbing Bookings Team', tenantId: 't-001', queueId: 'q-b1', agentIds: ['a-03', 'a-05', 'a-06'], ringStrategy: 'ring-all' },
-  { id: 'g-s2', name: 'Dental Intake Team', tenantId: 't-002', queueId: 'q-s2', agentIds: ['a-07', 'a-09'], ringStrategy: 'ring-all' },
-  { id: 'g-h2', name: 'Dental Existing Team', tenantId: 't-002', queueId: 'q-h2', agentIds: ['a-07', 'a-08', 'a-10'], ringStrategy: 'longest-idle' },
-  { id: 'g-s3', name: 'RE Buyer Enquiries', tenantId: 't-003', queueId: 'q-s3', agentIds: ['a-11', 'a-13'], ringStrategy: 'ring-all' },
-  { id: 'g-h3', name: 'RE Seller Support', tenantId: 't-003', queueId: 'q-h3', agentIds: ['a-12', 'a-13', 'a-14'], ringStrategy: 'round-robin' },
-  { id: 'g-s4', name: 'Insurance Quotes Team', tenantId: 't-004', queueId: 'q-s4', agentIds: ['a-15', 'a-17'], ringStrategy: 'ring-all' },
-  { id: 'g-h4', name: 'Claims Team', tenantId: 't-004', queueId: 'q-h4', agentIds: ['a-15', 'a-16', 'a-18'], ringStrategy: 'longest-idle' },
-];
-
-/* ─── Incoming Calls (live ringing/queued) ─── */
-
-function buildIncomingCalls(): IncomingCall[] {
-  const now = Date.now();
-  return [
-    {
-      id: 'ic-001', did: '03 9000 1001', callerNumber: '0412 999 001', callerName: 'David Brown',
-      tenantId: 't-001', tenantName: 'Melbourne Plumbing Co', tenantBrandColor: '#00d4f5',
-      queueId: 'q-s1', queueName: 'Sales', groupId: 'g-s1', groupName: 'Plumbing Sales Team',
-      didLabel: 'Plumbing Sales', waitingSince: now - 28000, status: 'ringing',
-    },
-    {
-      id: 'ic-002', did: '03 9000 1001', callerNumber: '0413 888 002', callerName: null,
-      tenantId: 't-001', tenantName: 'Melbourne Plumbing Co', tenantBrandColor: '#00d4f5',
-      queueId: 'q-s1', queueName: 'Sales', groupId: 'g-s1', groupName: 'Plumbing Sales Team',
-      didLabel: 'Plumbing Sales', waitingSince: now - 54000, status: 'queued',
-    },
-    {
-      id: 'ic-003', did: '03 9000 2001', callerNumber: '0423 777 003', callerName: 'Sophie Lee',
-      tenantId: 't-002', tenantName: 'Sunrise Dental Group', tenantBrandColor: '#34d399',
-      queueId: 'q-s2', queueName: 'New Patients', groupId: 'g-s2', groupName: 'Dental Intake Team',
-      didLabel: 'New Patients', waitingSince: now - 12000, status: 'ringing',
-    },
-    {
-      id: 'ic-004', did: '03 9000 1002', callerNumber: '0414 666 004', callerName: 'Emma White',
-      tenantId: 't-001', tenantName: 'Melbourne Plumbing Co', tenantBrandColor: '#00d4f5',
-      queueId: 'q-h1', queueName: 'Support', groupId: 'g-h1', groupName: 'Plumbing Support Team',
-      didLabel: 'Plumbing Support', waitingSince: now - 41000, status: 'queued',
-    },
-  ];
-}
-
-const INCOMING_CALLS = buildIncomingCalls();
-
-function buildCallLog(): Call[] {
-  const now = Date.now();
-  const raw: Array<{
-    tenantId: string; queueId: string; agentId: string | null;
-    caller: string; callerName: string | null; result: CallResult; dur: number;
-    transcript: TranscriptStatus;
-  }> = [
-    { tenantId: 't-001', queueId: 'q-s1', agentId: 'a-01', caller: '0412345678', callerName: 'David Brown', result: 'answered', dur: 187, transcript: 'ready' },
-    { tenantId: 't-001', queueId: 'q-h1', agentId: 'a-02', caller: '0413456789', callerName: null, result: 'answered', dur: 342, transcript: 'processing' },
-    { tenantId: 't-001', queueId: 'q-b1', agentId: 'a-03', caller: '0398765432', callerName: 'Emma White', result: 'answered', dur: 423, transcript: 'ready' },
-    { tenantId: 't-001', queueId: 'q-s1', agentId: 'a-04', caller: '0414567890', callerName: null, result: 'abandoned', dur: 0, transcript: 'none' },
-    { tenantId: 't-001', queueId: 'q-h1', agentId: null, caller: '0415678901', callerName: 'Mark Taylor', result: 'missed', dur: 0, transcript: 'none' },
-    { tenantId: 't-001', queueId: 'q-b1', agentId: 'a-06', caller: '0416789012', callerName: null, result: 'answered', dur: 278, transcript: 'pending' },
-    { tenantId: 't-002', queueId: 'q-s2', agentId: 'a-07', caller: '0423456789', callerName: 'Sophie Lee', result: 'answered', dur: 98, transcript: 'ready' },
-    { tenantId: 't-002', queueId: 'q-h2', agentId: 'a-08', caller: '0424567890', callerName: null, result: 'answered', dur: 456, transcript: 'ready' },
-    { tenantId: 't-002', queueId: 'q-s2', agentId: 'a-09', caller: '0434567890', callerName: 'James Park', result: 'answered', dur: 312, transcript: 'processing' },
-    { tenantId: 't-002', queueId: 'q-h2', agentId: null, caller: '0425678901', callerName: null, result: 'voicemail', dur: 45, transcript: 'pending' },
-    { tenantId: 't-002', queueId: 'q-s2', agentId: 'a-07', caller: '0426789012', callerName: 'Lisa Chen', result: 'answered', dur: 189, transcript: 'ready' },
-    { tenantId: 't-003', queueId: 'q-s3', agentId: 'a-11', caller: '0445678901', callerName: null, result: 'answered', dur: 67, transcript: 'pending' },
-    { tenantId: 't-003', queueId: 'q-h3', agentId: 'a-12', caller: '0446789012', callerName: 'Chris Evans', result: 'answered', dur: 234, transcript: 'ready' },
-    { tenantId: 't-003', queueId: 'q-s3', agentId: null, caller: '0447890123', callerName: null, result: 'abandoned', dur: 0, transcript: 'none' },
-    { tenantId: 't-003', queueId: 'q-h3', agentId: 'a-14', caller: '0448901234', callerName: 'Amy Watson', result: 'answered', dur: 156, transcript: 'ready' },
-    { tenantId: 't-004', queueId: 'q-s4', agentId: 'a-15', caller: '0456789012', callerName: null, result: 'answered', dur: 245, transcript: 'processing' },
-    { tenantId: 't-004', queueId: 'q-h4', agentId: 'a-16', caller: '0457890123', callerName: 'Tom Hardy', result: 'answered', dur: 189, transcript: 'ready' },
-    { tenantId: 't-004', queueId: 'q-h4', agentId: 'a-18', caller: '0467890123', callerName: null, result: 'answered', dur: 156, transcript: 'pending' },
-    { tenantId: 't-004', queueId: 'q-s4', agentId: null, caller: '0458901234', callerName: 'Jane Doe', result: 'missed', dur: 0, transcript: 'none' },
-    { tenantId: 't-004', queueId: 'q-h4', agentId: 'a-16', caller: '0459012345', callerName: null, result: 'answered', dur: 312, transcript: 'ready' },
-  ];
-
-  return raw.map((e, i) => ({
-    id: `call-${String(i + 1).padStart(4, '0')}`,
-    tenantId: e.tenantId,
-    queueId: e.queueId,
-    agentId: e.agentId,
-    callerNumber: e.caller,
-    callerName: e.callerName,
-    startTime: new Date(now - (raw.length - i) * 420000).toISOString(),
-    answerTime: e.result === 'answered' ? new Date(now - (raw.length - i) * 420000 + 8000).toISOString() : null,
-    endTime: e.dur > 0 ? new Date(now - (raw.length - i) * 420000 + e.dur * 1000).toISOString() : null,
-    durationSeconds: e.dur,
-    result: e.result,
-    recordingUrl: e.result === 'answered' ? `/recordings/${e.tenantId}/${`call-${String(i + 1).padStart(4, '0')}`}.wav` : null,
-    transcriptStatus: e.transcript,
-    summaryStatus: e.transcript === 'ready' ? 'ready' as const : 'none' as const,
-    agentName: e.agentId ? (AGENTS.find((a) => a.id === e.agentId)?.name ?? '—') : '—',
-    queueName: QUEUES.find((q) => q.id === e.queueId)?.name ?? '—',
-    tenantName: TENANTS.find((t) => t.id === e.tenantId)?.name ?? '—',
+export async function fetchTenants(): Promise<Tenant[]> {
+  const { data, error } = await supabase
+    .from('tenants')
+    .select('*')
+    .order('name');
+  if (error) throw new Error(error.message);
+  return (data || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    industry: t.industry,
+    status: t.status as 'active' | 'inactive',
+    brandColor: t.brand_color,
+    didNumbers: t.did_numbers || [],
   }));
 }
 
-const CALLS = buildCallLog();
-
-const SIP_LINES: SipLine[] = [
-  { id: 'sip-01', label: 'SIP/01', trunkName: 'Trunk-A', status: 'active' as SipLineStatus, tenantId: 't-001', activeCaller: '0412345678', activeSince: Date.now() - 187000 },
-  { id: 'sip-02', label: 'SIP/02', trunkName: 'Trunk-A', status: 'active' as SipLineStatus, tenantId: 't-001', activeCaller: '0398765432', activeSince: Date.now() - 423000 },
-  { id: 'sip-03', label: 'SIP/03', trunkName: 'Trunk-A', status: 'idle' as SipLineStatus, tenantId: null, activeCaller: null, activeSince: null },
-  { id: 'sip-04', label: 'SIP/04', trunkName: 'Trunk-B', status: 'active' as SipLineStatus, tenantId: 't-002', activeCaller: '0423456789', activeSince: Date.now() - 98000 },
-  { id: 'sip-05', label: 'SIP/05', trunkName: 'Trunk-B', status: 'active' as SipLineStatus, tenantId: 't-002', activeCaller: '0434567890', activeSince: Date.now() - 312000 },
-  { id: 'sip-06', label: 'SIP/06', trunkName: 'Trunk-B', status: 'idle' as SipLineStatus, tenantId: null, activeCaller: null, activeSince: null },
-  { id: 'sip-07', label: 'SIP/07', trunkName: 'Trunk-C', status: 'active' as SipLineStatus, tenantId: 't-003', activeCaller: '0445678901', activeSince: Date.now() - 67000 },
-  { id: 'sip-08', label: 'SIP/08', trunkName: 'Trunk-C', status: 'idle' as SipLineStatus, tenantId: null, activeCaller: null, activeSince: null },
-  { id: 'sip-09', label: 'SIP/09', trunkName: 'Trunk-D', status: 'active' as SipLineStatus, tenantId: 't-004', activeCaller: '0456789012', activeSince: Date.now() - 245000 },
-  { id: 'sip-10', label: 'SIP/10', trunkName: 'Trunk-D', status: 'active' as SipLineStatus, tenantId: 't-004', activeCaller: '0467890123', activeSince: Date.now() - 156000 },
-  { id: 'sip-11', label: 'SIP/11', trunkName: 'Trunk-D', status: 'idle' as SipLineStatus, tenantId: null, activeCaller: null, activeSince: null },
-  { id: 'sip-12', label: 'SIP/12', trunkName: 'Trunk-D', status: 'idle' as SipLineStatus, tenantId: null, activeCaller: null, activeSince: null },
-];
-
-/* ─── Client Onboarding Data ─── */
-
-const clientsStore: TenantOnboarding[] = [
-  {
-    ...TENANTS[0],
-    didNumbers: TENANTS[0].didNumbers,
-    onboardingStage: 'live' as OnboardingStage,
-    contactName: 'Mark Brown', contactPhone: '0412000001', contactEmail: 'mark@melbplumbing.com.au',
-    createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 90 * 86400000).toISOString(), notes: 'First client onboarded',
-    clientDetails: { ...createDefaultClientDetails('Melbourne Plumbing Co', 'Trades', 'Mark Brown', '0412000001', 'mark@melbplumbing.com.au'), timezone: 'Australia/Melbourne', billingContactName: 'Mark Brown', billingContactEmail: 'mark@melbplumbing.com.au', businessHours: [{ day: 'monday', open: '08:00', close: '17:00', closed: false }, { day: 'tuesday', open: '08:00', close: '17:00', closed: false }, { day: 'wednesday', open: '08:00', close: '17:00', closed: false }, { day: 'thursday', open: '08:00', close: '17:00', closed: false }, { day: 'friday', open: '08:00', close: '17:00', closed: false }, { day: 'saturday', open: '09:00', close: '13:00', closed: false }, { day: 'sunday', open: '00:00', close: '00:00', closed: true }] },
-    businessRules: { ...createDefaultBusinessRules(), urgentKeywords: ['emergency', 'burst pipe', 'flood'], escalationContactName: 'Mark Brown', escalationContactPhone: '0412000001', afterHoursEnabled: true, afterHoursAction: 'transfer', afterHoursTransferNumber: '0412000099' },
-    queueSetup: { queues: [{ id: 'oq-1', name: 'General', purpose: 'General enquiries', businessHoursRule: 'ring-all', afterHoursRule: 'transfer-mobile', fallbackAction: 'voicemail', fallbackNumber: '0412000001', priority: 1, assignedAgentIds: ['a-01', 'a-02'], routingPath: 'round-robin' }, { id: 'oq-2', name: 'Emergency', purpose: 'Urgent/emergency plumbing calls', businessHoursRule: 'priority-ring', afterHoursRule: 'transfer-mobile', fallbackAction: 'transfer', fallbackNumber: '0412000099', priority: 2, assignedAgentIds: ['a-01'], routingPath: 'priority' }] },
-    scriptKnowledgeBase: { greeting: 'Thank you for calling Melbourne Plumbing Co, this is [agent name], how can I help you today?', faqAnswers: [{ question: 'What areas do you service?', answer: 'We service all of Melbourne metro.' }], objectionHandling: 'I understand your concern. Let me see what options we have for you.', complianceWording: '', escalationWording: 'I can see this is urgent. Let me transfer you to our emergency line right away.', pricingNotes: 'Callout fee starts at $120. Quote required for larger jobs.', servicesScript: 'We offer general plumbing, emergency repairs, hot water, and drainage.', closingScript: 'Thank you for calling Melbourne Plumbing Co.', approvedByClient: true, approvedAt: new Date(Date.now() - 85 * 86400000).toISOString(), approvedBy: 'Mark Brown' },
-    bookingRules: { requiredCallerFields: ['name', 'phone', 'address'], requiredJobFields: ['description', 'urgency'], depositRequired: false, depositAmount: '', depositWorkflow: '', managerApprovalRequired: false, managerContactName: '', managerContactPhone: '', calendarIntegrationEnabled: false, calendarConnected: false, calendarProvider: '', smsConfirmationEnabled: true, smsSenderConfigured: true, smsSenderId: 'MelbPlumb', cancellationPolicy: '24 hours notice required', rescheduleRules: 'Call to reschedule', allowBookingsOutsideHours: false, outsideHoursBookingRule: '' },
-    testingGoLive: { testCalls: [{ id: 'tc-1', timestamp: new Date(Date.now() - 88 * 86400000).toISOString(), testerName: 'Admin', scenario: 'General enquiry', result: 'pass', notes: 'Answered correctly', queueTested: 'General' }, { id: 'tc-2', timestamp: new Date(Date.now() - 88 * 86400000).toISOString(), testerName: 'Admin', scenario: 'Emergency call', result: 'pass', notes: 'Transferred to mobile', queueTested: 'Emergency' }], allTestsPassed: true, routingVerified: true, queueConfigVerified: true, clientApprovalReceived: true, clientApprovalTimestamp: new Date(Date.now() - 87 * 86400000).toISOString(), clientApprovalBy: 'Mark Brown', scriptApprovalReceived: true, scriptApprovalTimestamp: new Date(Date.now() - 87 * 86400000).toISOString(), rollbackPlan: 'Revert to voicemail-only if issues arise', handoverNotes: 'Client prefers SMS for booking confirmations', assignedLiveOpsTeam: 'Team Alpha', goLiveDate: new Date(Date.now() - 86 * 86400000).toISOString() },
-    activityLog: [{ id: 'log-001', timestamp: new Date(Date.now() - 90 * 86400000).toISOString(), userId: 'u-sa-001', userName: 'Admin', action: 'client_created', section: 'Client Details', details: 'Client created', previousValue: '', newValue: '' }],
-  },
-  {
-    ...TENANTS[1],
-    onboardingStage: 'awaiting-approval' as OnboardingStage,
-    contactName: 'Dr Sarah Lin', contactPhone: '0412000002', contactEmail: 'sarah@sunrisedental.com.au',
-    createdBy: 'u-sa-001', createdAt: new Date(Date.now() - 45 * 86400000).toISOString(), notes: '',
-    clientDetails: createDefaultClientDetails('Sunrise Dental Group', 'Healthcare', 'Dr Sarah Lin', '0412000002', 'sarah@sunrisedental.com.au'),
-    businessRules: createDefaultBusinessRules(),
-    queueSetup: createDefaultQueueSetup(),
-    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
-    bookingRules: createDefaultBookingRules(),
-    testingGoLive: createDefaultTestingGoLive(),
-    activityLog: [],
-  },
-  {
-    ...TENANTS[2],
-    onboardingStage: 'discovery-complete' as OnboardingStage,
-    contactName: 'Tom Reid', contactPhone: '0412000003', contactEmail: 'tom@apexre.com.au',
-    createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 20 * 86400000).toISOString(), notes: 'Waiting on IVR script approval',
-    clientDetails: createDefaultClientDetails('Apex Real Estate', 'Property', 'Tom Reid', '0412000003', 'tom@apexre.com.au'),
-    businessRules: createDefaultBusinessRules(),
-    queueSetup: createDefaultQueueSetup(),
-    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
-    bookingRules: createDefaultBookingRules(),
-    testingGoLive: createDefaultTestingGoLive(),
-    activityLog: [],
-  },
-  {
-    ...TENANTS[3],
-    onboardingStage: 'new' as OnboardingStage,
-    contactName: 'Lisa Tran', contactPhone: '0412000004', contactEmail: 'lisa@coastalins.com.au',
-    createdBy: 'u-ca-001', createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), notes: 'Yeastar provisioning in progress',
-    clientDetails: createDefaultClientDetails('Coastal Insurance', 'Finance', 'Lisa Tran', '0412000004', 'lisa@coastalins.com.au'),
-    businessRules: createDefaultBusinessRules(),
-    queueSetup: createDefaultQueueSetup(),
-    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
-    bookingRules: createDefaultBookingRules(),
-    testingGoLive: createDefaultTestingGoLive(),
-    activityLog: [],
-  },
-];
-
-/* ─── API Functions ─── */
-
-export async function fetchSession(): Promise<UserSession> {
-  await wait(API_LATENCY);
-  return getCurrentSession();
-}
-
-export async function fetchTenants(): Promise<Tenant[]> {
-  await wait(API_LATENCY);
-  return [...TENANTS];
-}
+/* ─── Summary (computed from live data) ─── */
 
 export async function fetchSummary(tenantId?: string | null): Promise<DashboardSummary> {
-  await wait(API_LATENCY);
-  const ag = tenantId ? AGENTS.filter((a) => a.tenantId === tenantId) : AGENTS;
-  const cl = tenantId ? CALLS.filter((c) => c.tenantId === tenantId) : CALLS;
-  const answered = cl.filter((c) => c.result === 'answered').length;
-  const total = cl.length;
-  const onCall = ag.filter((a) => a.status === 'on-call').length;
-  const online = ag.filter((a) => a.status !== 'offline').length;
-  const available = ag.filter((a) => a.status === 'available').length;
-  const queued = tenantId
-    ? QUEUES.filter((q) => q.tenantId === tenantId).reduce((s, q) => s + q.waitingCalls, 0)
-    : QUEUES.reduce((s, q) => s + q.waitingCalls, 0);
+  // Fetch agents and calls for computation
+  const [agents, queues, calls] = await Promise.all([
+    fetchAgents(tenantId),
+    fetchQueues(tenantId),
+    fetchCalls(tenantId),
+  ]);
+
+  const onCall = agents.filter((a) => a.status === 'on-call').length;
+  const online = agents.filter((a) => a.status !== 'offline').length;
+  const available = agents.filter((a) => a.status === 'available').length;
+  const queued = queues.reduce((s, q) => s + q.waitingCalls, 0);
+  const answered = calls.filter((c) => c.result === 'answered').length;
+  const total = calls.length;
   const avgHandle = answered > 0
-    ? Math.round(cl.filter((c) => c.result === 'answered').reduce((s, c) => s + c.durationSeconds, 0) / answered)
+    ? Math.round(calls.filter((c) => c.result === 'answered').reduce((s, c) => s + c.durationSeconds, 0) / answered)
     : 0;
-  const sla = tenantId
-    ? Math.round(QUEUES.filter((q) => q.tenantId === tenantId).reduce((s, q) => s + q.slaPercent, 0) / Math.max(1, QUEUES.filter((q) => q.tenantId === tenantId).length))
-    : Math.round(QUEUES.reduce((s, q) => s + q.slaPercent, 0) / QUEUES.length);
+  const sla = queues.length > 0
+    ? Math.round(queues.reduce((s, q) => s + q.slaPercent, 0) / queues.length)
+    : 0;
 
   return {
     activeCalls: onCall,
@@ -407,95 +62,238 @@ export async function fetchSummary(tenantId?: string | null): Promise<DashboardS
     onlineAgents: online,
     totalCallsToday: total,
     answerRate: total > 0 ? Math.round((answered / total) * 1000) / 10 : 0,
-    abandonRate: total > 0 ? Math.round((cl.filter((c) => c.result === 'abandoned').length / total) * 1000) / 10 : 0,
+    abandonRate: total > 0 ? Math.round((calls.filter((c) => c.result === 'abandoned').length / total) * 1000) / 10 : 0,
     avgHandleTime: avgHandle,
     slaPercent: sla,
   };
 }
 
+/* ─── Queues ─── */
+
 export async function fetchQueues(tenantId?: string | null): Promise<Queue[]> {
-  await wait(API_LATENCY);
-  return tenantId ? QUEUES.filter((q) => q.tenantId === tenantId) : [...QUEUES];
+  let query = supabase.from('queues').select('*');
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query.order('name');
+  if (error) throw new Error(error.message);
+  return (data || []).map((q) => ({
+    id: q.id,
+    tenantId: q.tenant_id,
+    name: q.name,
+    type: q.type,
+    color: q.color,
+    icon: q.icon,
+    activeCalls: q.active_calls,
+    waitingCalls: q.waiting_calls,
+    availableAgents: q.available_agents,
+    totalAgents: q.total_agents,
+    avgWaitSeconds: q.avg_wait_seconds,
+    slaPercent: q.sla_percent,
+  }));
 }
+
+/* ─── Agents ─── */
 
 export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
-  await wait(API_LATENCY);
-  const filtered = tenantId ? AGENTS.filter((a) => a.tenantId === tenantId) : AGENTS;
-  return filtered.map((a) => ({
-    ...a,
-    queueName: QUEUES.find((q) => a.queueIds.includes(q.id))?.name ?? '—',
-    tenantName: TENANTS.find((t) => t.id === a.tenantId)?.name ?? '—',
-  }));
+  let query = supabase.from('agents').select('*, tenants!inner(name)');
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query.order('name');
+  if (error) {
+    // Fallback without join if inner fails
+    let q2 = supabase.from('agents').select('*');
+    if (tenantId) q2 = q2.eq('tenant_id', tenantId);
+    const { data: d2, error: e2 } = await q2.order('name');
+    if (e2) throw new Error(e2.message);
+    return (d2 || []).map(mapAgent);
+  }
+  return (data || []).map(mapAgent);
 }
+
+function mapAgent(a: any): Agent {
+  return {
+    id: a.id,
+    tenantId: a.tenant_id,
+    queueIds: a.queue_ids || [],
+    name: a.name,
+    extension: a.extension,
+    role: a.role,
+    status: a.status,
+    currentCaller: a.current_caller,
+    callStartTime: a.call_start_time ? Number(a.call_start_time) : null,
+    allowedQueueIds: a.allowed_queue_ids || [],
+    assignedTenantIds: a.assigned_tenant_ids || [],
+    groupIds: a.group_ids || [],
+    tenantName: a.tenants?.name,
+  };
+}
+
+/* ─── Calls ─── */
 
 export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
-  await wait(API_LATENCY);
-  return tenantId ? CALLS.filter((c) => c.tenantId === tenantId) : [...CALLS];
-}
-
-export async function fetchSipLines(tenantId?: string | null): Promise<SipLine[]> {
-  await wait(API_LATENCY);
-  const lines = tenantId
-    ? SIP_LINES.filter((l) => l.tenantId === tenantId || l.status === 'idle')
-    : [...SIP_LINES];
-  return lines.map((l) => ({
-    ...l,
-    tenantName: l.tenantId ? TENANTS.find((t) => t.id === l.tenantId)?.name : undefined,
+  let query = supabase.from('calls').select('*');
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query.order('start_time', { ascending: false }).limit(100);
+  if (error) throw new Error(error.message);
+  return (data || []).map((c) => ({
+    id: c.id,
+    tenantId: c.tenant_id,
+    queueId: c.queue_id,
+    agentId: c.agent_id,
+    callerNumber: c.caller_number,
+    callerName: c.caller_name,
+    startTime: c.start_time,
+    answerTime: c.answer_time,
+    endTime: c.end_time,
+    durationSeconds: c.duration_seconds,
+    result: c.result as any,
+    recordingUrl: c.recording_url,
+    transcriptStatus: c.transcript_status as any,
+    summaryStatus: c.summary_status as any,
+    agentName: '—', // Will be joined later or resolved client-side
+    queueName: '—',
+    tenantName: '—',
   }));
 }
 
+/* ─── SIP Lines ─── */
+
+export async function fetchSipLines(tenantId?: string | null): Promise<SipLine[]> {
+  let query = supabase.from('sip_lines').select('*');
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query.order('label');
+  if (error) throw new Error(error.message);
+  return (data || []).map((l) => ({
+    id: l.id,
+    tenantId: l.tenant_id,
+    label: l.label,
+    trunkName: l.trunk_name,
+    status: l.status as any,
+    activeCaller: l.active_caller,
+    activeSince: l.active_since ? Number(l.active_since) : null,
+  }));
+}
+
+/* ─── Agent Groups ─── */
+
+export async function fetchAgentGroups(tenantId?: string | null): Promise<AgentGroup[]> {
+  let query = supabase.from('agent_groups').select('*');
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data || []).map((g) => ({
+    id: g.id,
+    name: g.name,
+    tenantId: g.tenant_id,
+    queueId: g.queue_id,
+    agentIds: g.agent_ids || [],
+    ringStrategy: g.ring_strategy as any,
+  }));
+}
+
+/* ─── DID Mappings ─── */
+
+export async function fetchDIDMappings(): Promise<DIDMapping[]> {
+  const { data, error } = await supabase.from('did_mappings').select('*');
+  if (error) throw new Error(error.message);
+  return (data || []).map((d) => ({
+    did: d.did,
+    tenantId: d.tenant_id,
+    queueId: d.queue_id,
+    label: d.label,
+  }));
+}
+
+/* ─── Incoming Calls (placeholder — will be driven by Yeastar in Phase 2) ─── */
+
+export async function fetchIncomingCalls(_allowedQueueIds?: string[]): Promise<IncomingCall[]> {
+  // Phase 2: Replace with real Yeastar PBX events
+  return [];
+}
+
+/* ─── Client Onboarding ─── */
+
 export async function fetchClients(tenantId?: string | null): Promise<TenantOnboarding[]> {
-  await wait(API_LATENCY);
-  return tenantId
-    ? clientsStore.filter((c) => c.id === tenantId)
-    : [...clientsStore];
+  let query = supabase.from('tenant_onboarding').select('*, tenants(*)');
+  if (tenantId) query = query.eq('id', tenantId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data || []).map(mapOnboarding);
+}
+
+function mapOnboarding(row: any): TenantOnboarding {
+  const t = row.tenants || {};
+  return {
+    id: row.id,
+    name: t.name || '',
+    industry: t.industry || '',
+    status: t.status || 'active',
+    brandColor: t.brand_color || '#00d4f5',
+    didNumbers: t.did_numbers || [],
+    onboardingStage: row.onboarding_stage,
+    contactName: row.contact_name,
+    contactPhone: row.contact_phone,
+    contactEmail: row.contact_email,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    notes: row.notes,
+    clientDetails: row.client_details || {},
+    businessRules: row.business_rules || {},
+    queueSetup: row.queue_setup || { queues: [] },
+    scriptKnowledgeBase: row.script_knowledge_base || {},
+    bookingRules: row.booking_rules || {},
+    testingGoLive: row.testing_go_live || {},
+    activityLog: row.activity_log || [],
+  };
 }
 
 export async function createClient(data: NewClientForm, createdBy: string): Promise<TenantOnboarding> {
-  await wait(API_LATENCY);
-  const id = `t-${String(TENANTS.length + clientsStore.length + 1).padStart(3, '0')}`;
-  const tenant: TenantOnboarding = {
-    id,
+  // Create tenant first
+  const tenantId = `t-${Date.now()}`;
+  const { error: tErr } = await supabase.from('tenants').insert({
+    id: tenantId,
     name: data.businessName.trim(),
     industry: data.industry,
     status: 'active',
-    brandColor: data.brandColor,
-    didNumbers: [],
-    onboardingStage: 'new',
-    contactName: data.contactName.trim(),
-    contactPhone: data.contactPhone.trim(),
-    contactEmail: data.contactEmail.trim(),
-    createdBy,
-    createdAt: new Date().toISOString(),
-    notes: data.notes.trim(),
-    clientDetails: createDefaultClientDetails(data.businessName.trim(), data.industry, data.contactName.trim(), data.contactPhone.trim(), data.contactEmail.trim()),
-    businessRules: createDefaultBusinessRules(),
-    queueSetup: createDefaultQueueSetup(),
-    scriptKnowledgeBase: createDefaultScriptKnowledgeBase(),
-    bookingRules: createDefaultBookingRules(),
-    testingGoLive: createDefaultTestingGoLive(),
-    activityLog: [],
-  };
-  clientsStore.push(tenant);
-  logClientCreation(tenant, createdBy, 'System');
-  return tenant;
-}
+    brand_color: data.brandColor,
+    did_numbers: [],
+  });
+  if (tErr) throw new Error(tErr.message);
 
-export { ONBOARDING_STAGES };
+  // Create onboarding record
+  const { error: oErr } = await supabase.from('tenant_onboarding').insert({
+    id: tenantId,
+    onboarding_stage: 'new',
+    contact_name: data.contactName.trim(),
+    contact_phone: data.contactPhone.trim(),
+    contact_email: data.contactEmail.trim(),
+    created_by: createdBy,
+    notes: data.notes.trim(),
+    client_details: {
+      businessName: data.businessName.trim(),
+      industry: data.industry,
+      primaryContactName: data.contactName.trim(),
+      primaryContactPhone: data.contactPhone.trim(),
+      primaryContactEmail: data.contactEmail.trim(),
+    },
+  });
+  if (oErr) throw new Error(oErr.message);
+
+  const clients = await fetchClients(tenantId);
+  return clients[0];
+}
 
 export async function advanceClientStage(
   clientId: string,
-  userId: string = 'unknown',
-  userName: string = 'Unknown',
+  _userId: string = 'unknown',
+  _userName: string = 'Unknown',
 ): Promise<{ client: TenantOnboarding | null; transition: StageTransitionResult | null }> {
-  await wait(API_LATENCY);
-  const client = clientsStore.find((c) => c.id === clientId);
+  const clients = await fetchClients(clientId);
+  const client = clients[0];
   if (!client) return { client: null, transition: null };
 
   const nextStage = getNextStage(client.onboardingStage);
   if (!nextStage) {
     return {
-      client: { ...client },
+      client,
       transition: {
         allowed: false,
         blockers: [{ section: 'Stage', field: 'onboardingStage', message: 'No next stage available', severity: 'blocker' }],
@@ -508,73 +306,40 @@ export async function advanceClientStage(
   const transition = validateStageTransition(client, nextStage);
 
   if (transition.allowed) {
-    const previousStage = client.onboardingStage;
-    client.onboardingStage = nextStage;
-    logStageChange(client, userId, userName, previousStage, nextStage);
+    await supabase
+      .from('tenant_onboarding')
+      .update({ onboarding_stage: nextStage })
+      .eq('id', clientId);
+
+    const updated = await fetchClients(clientId);
+    return { client: updated[0], transition };
   }
 
-  return { client: { ...client }, transition };
+  return { client, transition };
 }
 
 export async function regressClientStage(
   clientId: string,
-  userId: string = 'unknown',
-  userName: string = 'Unknown',
-  reason: string = '',
+  _userId: string = 'unknown',
+  _userName: string = 'Unknown',
+  _reason: string = '',
 ): Promise<TenantOnboarding | null> {
-  await wait(API_LATENCY);
-  const client = clientsStore.find((c) => c.id === clientId);
-  if (!client) return null;
+  await supabase
+    .from('tenant_onboarding')
+    .update({ onboarding_stage: 'needs-revision' })
+    .eq('id', clientId);
 
-  const previousStage = client.onboardingStage;
-  client.onboardingStage = 'needs-revision';
-  logStageChange(client, userId, userName, previousStage, 'needs-revision');
-
-  if (reason) {
-    client.activityLog.push({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId,
-      userName,
-      action: 'revision_reason',
-      section: 'Onboarding Stage',
-      details: `Revision reason: ${reason}`,
-      previousValue: previousStage,
-      newValue: 'needs-revision',
-    });
-  }
-
-  return { ...client };
+  const clients = await fetchClients(clientId);
+  return clients[0] || null;
 }
 
-export async function getClientValidation(clientId: string): Promise<{
-  blockers: ReturnType<typeof getGoLiveBlockers>;
-  warnings: ReturnType<typeof getGoLiveWarnings>;
-} | null> {
-  await wait(API_LATENCY);
-  const client = clientsStore.find((c) => c.id === clientId);
+export async function getClientValidation(clientId: string) {
+  const clients = await fetchClients(clientId);
+  const client = clients[0];
   if (!client) return null;
 
   return {
     blockers: getGoLiveBlockers(client),
     warnings: getGoLiveWarnings(client),
   };
-}
-
-export async function fetchAgentGroups(tenantId?: string | null): Promise<AgentGroup[]> {
-  await wait(API_LATENCY);
-  return tenantId ? AGENT_GROUPS.filter((g) => g.tenantId === tenantId) : [...AGENT_GROUPS];
-}
-
-export async function fetchIncomingCalls(allowedQueueIds?: string[]): Promise<IncomingCall[]> {
-  await wait(API_LATENCY);
-  if (allowedQueueIds && allowedQueueIds.length > 0) {
-    return INCOMING_CALLS.filter((c) => allowedQueueIds.includes(c.queueId));
-  }
-  return [...INCOMING_CALLS];
-}
-
-export async function fetchDIDMappings(): Promise<DIDMapping[]> {
-  await wait(API_LATENCY);
-  return [...DID_MAPPINGS];
 }
