@@ -108,6 +108,16 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                 now={d.now}
               />
             )}
+            {d.selectedTab === 'agent-onboarding' && (
+              <AgentOnboardingTab
+                agentOnboarding={d.agentOnboarding}
+                tenants={d.tenants}
+                queues={d.queues}
+                agentGroups={d.agentGroups}
+                permissions={permissions}
+                onRefresh={d.refresh}
+              />
+            )}
             {d.selectedTab === 'calls' && (
               <CallsTab
                 calls={d.calls}
