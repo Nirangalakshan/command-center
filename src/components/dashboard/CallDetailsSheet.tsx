@@ -20,6 +20,7 @@ import { formatDuration, formatPhone } from '@/utils/formatters';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { BookingFormDialog } from '@/components/dashboard/BookingFormDialog';
 import { EmptyState } from '@/components/dashboard/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -101,8 +102,9 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
   const [callerContext, setCallerContext] = useState<CallerContext | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
+  const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
   const commandButtons = useMemo(() => ([
-    { label: 'Create Booking', icon: CalendarPlus2 },
+    { label: 'Book Now', icon: CalendarPlus2 },
     { label: 'Log Note', icon: ClipboardPenLine },
     { label: 'Profile', icon: UserRound },
     { label: 'SMS', icon: MessageSquareText },
@@ -145,13 +147,16 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
     [callerContext?.services],
   );
 
-  if (!detail) return null;
-
-  const resolvedCustomerName = callerContext?.customer.name || normalizeCustomerName(detail.customerName);
+  const resolvedCustomerName = callerContext?.customer.name || normalizeCustomerName(detail?.customerName);
+  const resolvedCustomerEmail = callerContext?.customer.email || '';
+  const availableVehicles = callerContext?.vehicles || [];
   const statusTone = callerContext
     ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
     : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200';
   const statusLabel = callerContext ? 'Known Customer' : contextLoading ? 'Searching...' : 'Unknown Caller';
+  const canOpenBooking = detail?.mode === 'live';
+
+  if (!detail) return null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -244,9 +249,14 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                     return (
                       <Button
                         key={command.label}
-                        variant={command.label === 'Create Booking' ? 'default' : 'outline'}
+                        variant={command.label === 'Book Now' ? 'default' : 'outline'}
                         className="justify-start"
+                        disabled={command.label === 'Book Now' && !canOpenBooking}
                         onClick={() => {
+                          if (command.label === 'Book Now') {
+                            setBookingDialogOpen(true);
+                            return;
+                          }
                           toast({
                             title: command.label,
                             description: `${command.label} selected for ${resolvedCustomerName}.`,
@@ -334,6 +344,15 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
           </div>
         </ScrollArea>
       </SheetContent>
+
+      <BookingFormDialog
+        open={bookingDialogOpen}
+        onOpenChange={setBookingDialogOpen}
+        customerName={resolvedCustomerName}
+        customerPhone={detail.customerPhone}
+        customerEmail={resolvedCustomerEmail}
+        availableVehicles={availableVehicles}
+      />
     </Sheet>
   );
 }
