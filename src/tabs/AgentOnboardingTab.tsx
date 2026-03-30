@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { Fragment, useState, useCallback } from 'react';
 import type { AgentOnboarding, AgentStatus, Tenant, Queue, AgentGroup, Permissions } from '@/services/types';
 import { AgentOnboardingStageBadge } from '@/components/dashboard/AgentOnboardingStageBadge';
 import { AgentTrainingChecklist } from '@/components/dashboard/AgentTrainingChecklist';
@@ -6,6 +6,16 @@ import { CreateAgentModal, type CreateAgentData } from '@/components/dashboard/C
 import { createAgentViaEdge, advanceAgentStage, updateTrainingChecklist } from '@/services/agentOnboardingApi';
 import { EmptyState } from '@/components/dashboard/EmptyState';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 interface Props {
   agentOnboarding: AgentOnboarding[];
@@ -45,27 +55,39 @@ export function AgentOnboardingTab({ agentOnboarding, tenants, queues, agentGrou
   const canManage = permissions.canOnboardAgents;
 
   return (
-    <div className="cc-fade-in">
-      <div className="cc-section-header">
-        <h2 className="cc-section-title">AGENT ONBOARDING</h2>
+    <div className="cc-fade-in space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+            Agent Onboarding
+          </div>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+            Track onboarding stages and training readiness
+          </h2>
+        </div>
         {canManage && (
-          <button className="cc-btn cc-btn-primary" onClick={() => setModalOpen(true)}>
+          <Button onClick={() => setModalOpen(true)}>
             + Add Agent
-          </button>
+          </Button>
         )}
       </div>
 
-      {/* Stage filters */}
-      <div className="cc-filters">
-        <button className={`cc-chip ${filterStage === 'all' ? 'cc-chip-active' : ''}`} onClick={() => setFilterStage('all')}>
+      <div className="flex flex-wrap gap-2">
+        <Button variant={filterStage === 'all' ? 'default' : 'outline'} size="sm" className="rounded-full" onClick={() => setFilterStage('all')}>
           All ({agentOnboarding.length})
-        </button>
+        </Button>
         {stages.map((s) => {
           const count = agentOnboarding.filter((a) => a.stage === s).length;
           return (
-            <button key={s} className={`cc-chip ${filterStage === s ? 'cc-chip-active' : ''}`} onClick={() => setFilterStage(s)}>
+            <Button
+              key={s}
+              variant={filterStage === s ? 'default' : 'outline'}
+              size="sm"
+              className="rounded-full"
+              onClick={() => setFilterStage(s)}
+            >
               {s.replace('-', ' ')} ({count})
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -73,69 +95,79 @@ export function AgentOnboardingTab({ agentOnboarding, tenants, queues, agentGrou
       {filtered.length === 0 ? (
         <EmptyState message="No agents in onboarding pipeline" />
       ) : (
-        <div className="cc-table-wrap">
-          <table className="cc-table">
-            <thead>
-              <tr>
-                <th>Agent</th>
-                <th>Tenant</th>
-                <th>Stage</th>
-                <th>Status</th>
-                <th>Email</th>
-                <th>Invited</th>
-                {canManage && <th>Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((ao) => (
-                <>
-                  <tr key={ao.id} onClick={() => setExpandedId(expandedId === ao.id ? null : ao.id)}>
-                    <td>
-                      <div className="cc-agent-name">{ao.agentName}</div>
-                      <div className="cc-table-muted" style={{ fontSize: 11 }}>Ext {ao.agentExtension}</div>
-                    </td>
-                    <td>{ao.tenantName}</td>
-                    <td><AgentOnboardingStageBadge stage={ao.stage} /></td>
-                    <td><StatusBadge status={ao.agentStatus as AgentStatus} /></td>
-                    <td className="cc-table-mono">{ao.personalEmail}</td>
-                    <td className="cc-table-mono">{new Date(ao.invitedAt).toLocaleDateString()}</td>
-                    {canManage && (
-                      <td>
-                        {ao.stage !== 'live' && (
-                          <button
-                            className="cc-btn cc-btn-sm cc-btn-ghost"
-                            onClick={(e) => { e.stopPropagation(); handleAdvance(ao.id, ao.stage); }}
-                          >
-                            Advance →
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                  {expandedId === ao.id && (
-                    <tr key={`${ao.id}-detail`}>
-                      <td colSpan={canManage ? 7 : 6} style={{ padding: '16px 20px', background: 'var(--cc-bg-elevated)' }}>
-                        <div className="cc-onboarding-detail">
-                          <AgentTrainingChecklist
-                            checklist={ao.trainingChecklist}
-                            onChange={(c) => handleChecklistChange(ao.id, c)}
-                            readOnly={!canManage}
-                          />
-                          {ao.notes && (
-                            <div className="cc-detail-notes">
-                              <span className="cc-form-label">Notes</span>
-                              <p>{ao.notes}</p>
-                            </div>
-                          )}
+        <Card className="border-border/80 bg-white shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Onboarding Pipeline</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>Tenant</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Invited</TableHead>
+                  {canManage && <TableHead>Actions</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((ao) => (
+                  <Fragment key={ao.id}>
+                    <TableRow className="cursor-pointer" onClick={() => setExpandedId(expandedId === ao.id ? null : ao.id)}>
+                      <TableCell>
+                        <div className="font-medium text-slate-900">{ao.agentName}</div>
+                        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                          Ext {ao.agentExtension}
                         </div>
-                      </td>
-                    </tr>
-                  )}
-                </>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      </TableCell>
+                      <TableCell>{ao.tenantName}</TableCell>
+                      <TableCell><AgentOnboardingStageBadge stage={ao.stage} /></TableCell>
+                      <TableCell><StatusBadge status={ao.agentStatus as AgentStatus} /></TableCell>
+                      <TableCell className="font-mono text-xs">{ao.personalEmail}</TableCell>
+                      <TableCell className="font-mono text-xs">{new Date(ao.invitedAt).toLocaleDateString()}</TableCell>
+                      {canManage && (
+                        <TableCell>
+                          {ao.stage !== 'live' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => { e.stopPropagation(); handleAdvance(ao.id, ao.stage); }}
+                            >
+                              Advance
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                    {expandedId === ao.id && (
+                      <TableRow>
+                        <TableCell colSpan={canManage ? 7 : 6} className="bg-slate-50/70">
+                          <div className="flex flex-wrap gap-6 py-4">
+                            <AgentTrainingChecklist
+                              checklist={ao.trainingChecklist}
+                              onChange={(c) => handleChecklistChange(ao.id, c)}
+                              readOnly={!canManage}
+                            />
+                            {ao.notes && (
+                              <div className="min-w-[220px] flex-1 rounded-2xl border border-border bg-white p-5 shadow-sm">
+                                <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                                  Notes
+                                </div>
+                                <p className="mt-3 text-sm text-slate-700">{ao.notes}</p>
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <CreateAgentModal

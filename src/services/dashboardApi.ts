@@ -3,6 +3,8 @@ import type {
   Tenant, Queue, Agent, Call, SipLine, DashboardSummary,
   TenantOnboarding, NewClientForm, StageTransitionResult,
   AgentGroup, DIDMapping, IncomingCall,
+  CallResult, TranscriptStatus, SipLineStatus, RingStrategy,
+  CallerContext, CustomerRecord, VehicleRecord, ServiceRecord,
 } from './types';
 import {
   ONBOARDING_STAGES,
@@ -108,20 +110,20 @@ export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
   return (data || []).map(mapAgent);
 }
 
-function mapAgent(a: any): Agent {
+function mapAgent(a: Record<string, unknown> & { tenants?: { name?: string } }): Agent {
   return {
-    id: a.id,
-    tenantId: a.tenant_id,
-    queueIds: a.queue_ids || [],
-    name: a.name,
-    extension: a.extension,
-    role: a.role,
-    status: a.status,
-    currentCaller: a.current_caller,
+    id: a.id as string,
+    tenantId: a.tenant_id as string,
+    queueIds: (a.queue_ids as string[]) || [],
+    name: a.name as string,
+    extension: a.extension as string,
+    role: a.role as Agent['role'],
+    status: a.status as Agent['status'],
+    currentCaller: (a.current_caller as string | null) ?? null,
     callStartTime: a.call_start_time ? Number(a.call_start_time) : null,
-    allowedQueueIds: a.allowed_queue_ids || [],
-    assignedTenantIds: a.assigned_tenant_ids || [],
-    groupIds: a.group_ids || [],
+    allowedQueueIds: (a.allowed_queue_ids as string[]) || [],
+    assignedTenantIds: (a.assigned_tenant_ids as string[]) || [],
+    groupIds: (a.group_ids as string[]) || [],
     tenantName: a.tenants?.name,
   };
 }
@@ -144,10 +146,10 @@ export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
     answerTime: c.answer_time,
     endTime: c.end_time,
     durationSeconds: c.duration_seconds,
-    result: c.result as any,
+    result: c.result as CallResult,
     recordingUrl: c.recording_url,
-    transcriptStatus: c.transcript_status as any,
-    summaryStatus: c.summary_status as any,
+    transcriptStatus: c.transcript_status as TranscriptStatus,
+    summaryStatus: c.summary_status as 'pending' | 'ready' | 'none',
     agentName: '—', // Will be joined later or resolved client-side
     queueName: '—',
     tenantName: '—',
@@ -166,7 +168,7 @@ export async function fetchSipLines(tenantId?: string | null): Promise<SipLine[]
     tenantId: l.tenant_id,
     label: l.label,
     trunkName: l.trunk_name,
-    status: l.status as any,
+    status: l.status as SipLineStatus,
     activeCaller: l.active_caller,
     activeSince: l.active_since ? Number(l.active_since) : null,
   }));
@@ -185,7 +187,7 @@ export async function fetchAgentGroups(tenantId?: string | null): Promise<AgentG
     tenantId: g.tenant_id,
     queueId: g.queue_id,
     agentIds: g.agent_ids || [],
-    ringStrategy: g.ring_strategy as any,
+    ringStrategy: g.ring_strategy as RingStrategy,
   }));
 }
 
@@ -202,11 +204,209 @@ export async function fetchDIDMappings(): Promise<DIDMapping[]> {
   }));
 }
 
-/* ─── Incoming Calls (placeholder — will be driven by Yeastar in Phase 2) ─── */
+/* ─── Caller Context ─── */
 
+type UntypedSupabase = {
+  from: (table: string) => {
+    select: (...args: unknown[]) => any;
+  };
+};
+
+const dynamicSupabase = supabase as unknown as UntypedSupabase;
+
+export function normalizePhoneNumber(phone: string | null | undefined): string {
+  return String(phone ?? '').replace(/\D/g, '');
+}
+
+/**
+ * Builds every plausible format of a phone number so the DB lookup
+ * succeeds regardless of how the number was originally stored.
+ *
+ * Covers: +94…, 94…, 0…, raw local (no prefix), and the original input.
+ */
+export function buildPhoneLookupVariants(phone: string | null | undefined): string[] {
+  const raw = String(phone ?? '').trim();
+  if (!raw) return [];
+
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return [];
+
+  const variants = new Set<string>();
+
+  variants.add(digits);
+  variants.add(raw);
+  if (raw.startsWith('+')) variants.add(raw.slice(1));
+
+  // Sri Lanka: 94 + 9-digit local  →  also try 0 + local and bare local
+  if (digits.startsWith('94') && digits.length === 11) {
+    const local = digits.slice(2);           // 766524216
+    variants.add(`0${local}`);               // 0766524216
+    variants.add(local);                     // 766524216
+    variants.add(`+94${local}`);             // +94766524216
+  }
+
+  // Local with leading zero  →  also try with country code
+  if (digits.startsWith('0') && digits.length === 10) {
+    const local = digits.slice(1);           // 766524216
+    variants.add(`94${local}`);              // 94766524216
+    variants.add(`+94${local}`);             // +94766524216
+    variants.add(local);                     // 766524216
+  }
+
+  // Bare local (9 digits, no prefix) — common when Yeastar strips the trunk prefix
+  if (!digits.startsWith('0') && !digits.startsWith('94') && digits.length === 9) {
+    variants.add(`0${digits}`);              // 0766524216
+    variants.add(`94${digits}`);             // 94766524216
+    variants.add(`+94${digits}`);            // +94766524216
+  }
+
+  return Array.from(variants);
+}
+
+export async function fetchCallerContext(
+  tenantId: string,
+  callerNumber: string,
+): Promise<CallerContext | null> {
+  const variants = buildPhoneLookupVariants(callerNumber);
+  if (!tenantId || variants.length === 0) return null;
+
+  const phoneFilter = variants
+    .flatMap((variant) => [`phone_normalized.eq.${variant}`, `primary_phone.eq.${variant}`])
+    .join(',');
+
+  const { data: customer, error: customerError } = await dynamicSupabase
+    .from('customers')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .or(phoneFilter)
+    .maybeSingle();
+
+  if (customerError) throw new Error(customerError.message);
+  if (!customer) return null;
+
+  const { data: vehicles, error: vehicleError } = await dynamicSupabase
+    .from('vehicles')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('customer_id', customer.id)
+    .order('created_at');
+
+  if (vehicleError) throw new Error(vehicleError.message);
+
+  const vehicleRows = (vehicles || []) as Record<string, unknown>[];
+  const vehicleIds = vehicleRows.map((vehicle) => String(vehicle.id));
+
+  let serviceRows: Record<string, unknown>[] = [];
+  if (vehicleIds.length > 0) {
+    const { data: services, error: serviceError } = await dynamicSupabase
+      .from('services')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('customer_id', customer.id)
+      .in('vehicle_id', vehicleIds)
+      .order('service_date', { ascending: false });
+
+    if (serviceError) throw new Error(serviceError.message);
+    serviceRows = (services || []) as Record<string, unknown>[];
+  }
+
+  return {
+    customer: mapCustomerRecord(customer as Record<string, unknown>),
+    vehicles: vehicleRows.map(mapVehicleRecord),
+    services: serviceRows.map(mapServiceRecord),
+  };
+}
+
+
+/* ─── Incoming Calls — Yeastar Real-Time Integration ─── */
+
+/**
+ * Kept for backwards compat — returns empty array.
+ * Use subscribeToIncomingCalls() for live data.
+ */
 export async function fetchIncomingCalls(_allowedQueueIds?: string[]): Promise<IncomingCall[]> {
-  // Phase 2: Replace with real Yeastar PBX events
   return [];
+}
+
+/**
+ * Subscribe to live incoming call events broadcast by the
+ * yeastar-webhook Supabase Edge Function.
+ *
+ * The Yeastar PBX fires an IncomingCall event when a call rings.
+ * The edge function translates it and broadcasts it here via
+ * Supabase Realtime so the dashboard shows it instantly.
+ *
+ * @returns cleanup function — call it in useEffect cleanup
+ */
+export function subscribeToIncomingCalls(
+  allowedQueueIds: string[],
+  onCall: (call: IncomingCall) => void,
+  onHangup?: (callId: string) => void,
+): () => void {
+  const channel = supabase
+    .channel('yeastar-incoming-calls')
+    .on('broadcast', { event: 'IncomingCall' }, ({ payload }) => {
+      // If supervisor/agent, filter to their queues
+      if (allowedQueueIds.length === 0 || allowedQueueIds.includes(payload.queueId)) {
+        onCall(payload as IncomingCall);
+      }
+    })
+    .on('broadcast', { event: 'CallHangup' }, ({ payload }) => {
+      onHangup?.(payload.id as string);
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
+}
+
+/**
+ * Subscribe to agent table changes (Postgres CDC).
+ * Triggers whenever the yeastar-webhook updates agent status.
+ */
+export function subscribeToAgents(
+  tenantId: string | null,
+  onChange: () => void,
+): () => void {
+  const channel = supabase
+    .channel('yeastar-agents-cdc')
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'agents',
+        ...(tenantId ? { filter: `tenant_id=eq.${tenantId}` } : {}),
+      },
+      () => onChange(),
+    )
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
+}
+
+/**
+ * Subscribe to calls table changes (Postgres CDC).
+ * Triggers whenever the yeastar-webhook inserts a new CDR.
+ */
+export function subscribeToCalls(
+  tenantId: string | null,
+  onChange: () => void,
+): () => void {
+  const channel = supabase
+    .channel('yeastar-calls-cdc')
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'calls',
+        ...(tenantId ? { filter: `tenant_id=eq.${tenantId}` } : {}),
+      },
+      () => onChange(),
+    )
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
 }
 
 /* ─── Client Onboarding ─── */
@@ -242,6 +442,56 @@ function mapOnboarding(row: any): TenantOnboarding {
     bookingRules: row.booking_rules || {},
     testingGoLive: row.testing_go_live || {},
     activityLog: row.activity_log || [],
+  };
+}
+
+function mapCustomerRecord(row: Record<string, unknown>): CustomerRecord {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    name: String(row.name ?? ''),
+    primaryPhone: String(row.primary_phone ?? ''),
+    phoneNormalized: String(row.phone_normalized ?? ''),
+    email: row.email ? String(row.email) : null,
+    address: row.address ? String(row.address) : null,
+    notes: row.notes ? String(row.notes) : null,
+  };
+}
+
+function mapVehicleRecord(row: Record<string, unknown>): VehicleRecord {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    customerId: String(row.customer_id),
+    rego: String(row.rego ?? ''),
+    make: String(row.make ?? ''),
+    model: String(row.model ?? ''),
+    year: typeof row.year === 'number' ? row.year : row.year ? Number(row.year) : null,
+    color: row.color ? String(row.color) : null,
+    vin: row.vin ? String(row.vin) : null,
+    notes: row.notes ? String(row.notes) : null,
+  };
+}
+
+function mapServiceRecord(row: Record<string, unknown>): ServiceRecord {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    customerId: String(row.customer_id),
+    vehicleId: String(row.vehicle_id),
+    serviceDate: String(row.service_date ?? ''),
+    serviceType: String(row.service_type ?? ''),
+    odometerKm: typeof row.odometer_km === 'number'
+      ? row.odometer_km
+      : row.odometer_km
+        ? Number(row.odometer_km)
+        : null,
+    amount: typeof row.amount === 'number'
+      ? row.amount
+      : row.amount
+        ? Number(row.amount)
+        : null,
+    advisorNotes: row.advisor_notes ? String(row.advisor_notes) : null,
   };
 }
 

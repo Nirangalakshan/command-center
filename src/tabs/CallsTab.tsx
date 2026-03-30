@@ -3,6 +3,18 @@ import type { Call, Queue, Tenant, Permissions } from '@/services/types';
 import { formatTime, formatPhone, formatSeconds } from '@/utils/formatters';
 import { ResultBadge, RESULT_MAP } from '@/components/dashboard/ResultBadge';
 import { EmptyState } from '@/components/dashboard/EmptyState';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 interface CallsTabProps {
   calls: Call[];
@@ -38,131 +50,162 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
   }, [calls, filterResult, filterQueue, searchTerm]);
 
   return (
-    <div className="cc-fade-in">
-      {/* Search */}
-      <div style={{ marginBottom: 14 }}>
-        <input
-          className="cc-search-input"
-          type="text"
-          placeholder="Search by caller, agent, queue..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-      </div>
+    <div className="cc-fade-in space-y-6">
+      <Card className="border-border/80 bg-white shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Search Calls</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Input
+            className="max-w-md bg-white"
+            type="text"
+            placeholder="Search by caller, agent, queue..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </CardContent>
+      </Card>
 
-      {/* Result Filters */}
-      <div className="cc-filters">
-        <button
-          className={`cc-chip ${filterResult === 'all' ? 'cc-chip-active' : ''}`}
-          onClick={() => setFilterResult('all')}
-        >
-          All Results
-        </button>
-        {Object.entries(RESULT_MAP).map(([key, val]) => (
-          <button
-            key={key}
-            className={`cc-chip ${filterResult === key ? 'cc-chip-active' : ''}`}
-            onClick={() => setFilterResult(key)}
-            style={filterResult === key ? { borderColor: val.color, color: val.color, background: val.bg } : {}}
-          >
-            {val.label}
-          </button>
-        ))}
-      </div>
+      <Card className="border-border/80 bg-white shadow-sm">
+        <CardHeader className="gap-4 pb-3">
+          <div className="space-y-4">
+            <div>
+              <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                Filter by Result
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={filterResult === 'all' ? 'default' : 'outline'}
+                  size="sm"
+                  className="rounded-full"
+                  onClick={() => setFilterResult('all')}
+                >
+                  All Results
+                </Button>
+                {Object.entries(RESULT_MAP).map(([key, val]) => (
+                  <Button
+                    key={key}
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full bg-white"
+                    onClick={() => setFilterResult(key)}
+                    style={filterResult === key ? { borderColor: val.color, color: val.color, background: val.bg } : {}}
+                  >
+                    {val.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
 
-      {/* Queue Filters */}
-      <div className="cc-filters">
-        <button
-          className={`cc-chip ${filterQueue === 'all' ? 'cc-chip-active' : ''}`}
-          onClick={() => setFilterQueue('all')}
-        >
-          All Queues
-        </button>
-        {availableQueues.map((q) => (
-          <button
-            key={q.id}
-            className={`cc-chip ${filterQueue === q.id ? 'cc-chip-active' : ''}`}
-            onClick={() => setFilterQueue(q.id)}
-            style={filterQueue === q.id ? { borderColor: q.color, color: q.color, background: `${q.color}0a` } : {}}
-          >
-            {q.icon} {q.name}
-          </button>
-        ))}
-      </div>
+            <div>
+              <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                Filter by Queue
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={filterQueue === 'all' ? 'default' : 'outline'}
+                  size="sm"
+                  className="rounded-full"
+                  onClick={() => setFilterQueue('all')}
+                >
+                  All Queues
+                </Button>
+                {availableQueues.map((q) => (
+                  <Button
+                    key={q.id}
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full bg-white"
+                    onClick={() => setFilterQueue(q.id)}
+                    style={filterQueue === q.id ? { borderColor: q.color, color: q.color, background: `${q.color}0a` } : {}}
+                  >
+                    {q.icon} {q.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+      </Card>
 
-      {/* Calls Table */}
-      <div className="cc-table-wrap">
-        <table className="cc-table">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Caller</th>
-              <th>Client</th>
-              <th>Queue</th>
-              <th>Agent</th>
-              <th>Duration</th>
-              <th>Result</th>
-              <th>Transcript</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={8}>
-                  <EmptyState message="No calls match filters" />
-                </td>
-              </tr>
-            )}
-            {filtered.map((c) => {
-              const tenant = tenants.find((t) => t.id === c.tenantId);
-              const brandColor = tenant?.brandColor || 'var(--cc-color-cyan)';
-              return (
-                <tr key={c.id}>
-                  <td className="cc-table-mono">{formatTime(c.startTime)}</td>
-                  <td className="cc-table-mono">
-                    {formatPhone(c.callerNumber)}
-                    {c.callerName && (
-                      <div style={{ fontSize: 10, color: 'var(--cc-text-muted)', marginTop: 1 }}>
-                        {c.callerName}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <span
-                      className="cc-company-pill"
-                      style={{
-                        color: brandColor,
-                        borderColor: `${brandColor}40`,
-                        background: `${brandColor}12`,
-                      }}
-                    >
-                      <span className="cc-company-pill-dot" style={{ background: brandColor }} />
-                      {c.tenantName}
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className="cc-badge cc-badge-queue"
-                      style={{
-                        color: queues.find((q) => q.id === c.queueId)?.color || 'var(--cc-color-cyan)',
-                        background: `${queues.find((q) => q.id === c.queueId)?.color || 'var(--cc-color-cyan)'}18`,
-                      }}
-                    >
-                      {c.queueName}
-                    </span>
-                  </td>
-                  <td>{c.agentName}</td>
-                  <td className="cc-table-mono">{c.durationSeconds > 0 ? formatSeconds(c.durationSeconds) : '—'}</td>
-                  <td><ResultBadge result={c.result} /></td>
-                  <td>
-                    <TranscriptIndicator status={c.transcriptStatus} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <Card className="border-border/80 bg-white shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Call History</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {filtered.length === 0 ? (
+            <EmptyState message="No calls match filters" />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Caller</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Queue</TableHead>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead>Transcript</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((c) => {
+                  const tenant = tenants.find((t) => t.id === c.tenantId);
+                  const brandColor = tenant?.brandColor || 'var(--cc-color-cyan)';
+
+                  return (
+                    <TableRow key={c.id}>
+                      <TableCell className="font-mono text-xs">{formatTime(c.startTime)}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {formatPhone(c.callerNumber)}
+                        {c.callerName && (
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {c.callerName}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
+                          style={{
+                            color: brandColor,
+                            borderColor: `${brandColor}40`,
+                            background: `${brandColor}12`,
+                          }}
+                        >
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: brandColor }} />
+                          {c.tenantName}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className="rounded-full border-0 px-2.5 py-1 text-[11px] font-semibold"
+                          style={{
+                            color: queues.find((q) => q.id === c.queueId)?.color || 'var(--cc-color-cyan)',
+                            background: `${queues.find((q) => q.id === c.queueId)?.color || 'var(--cc-color-cyan)'}18`,
+                          }}
+                        >
+                          {c.queueName}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{c.agentName}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {c.durationSeconds > 0 ? formatSeconds(c.durationSeconds) : '—'}
+                      </TableCell>
+                      <TableCell><ResultBadge result={c.result} /></TableCell>
+                      <TableCell>
+                        <TranscriptIndicator status={c.transcriptStatus} />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -171,12 +214,12 @@ function TranscriptIndicator({ status }: { status: string }) {
   const map: Record<string, { label: string; color: string; bg: string }> = {
     ready: { label: '✓ Ready', color: 'var(--cc-color-green)', bg: 'rgba(52,211,153,0.1)' },
     processing: { label: '⟳ Processing', color: 'var(--cc-color-amber)', bg: 'rgba(251,191,36,0.1)' },
-    pending: { label: '◌ Pending', color: 'var(--cc-text-muted)', bg: 'rgba(77,95,117,0.1)' },
-    none: { label: '—', color: 'var(--cc-text-disabled)', bg: 'transparent' },
+    pending: { label: '◌ Pending', color: '#64748b', bg: 'rgba(100,116,139,0.12)' },
+    none: { label: '—', color: '#94a3b8', bg: 'transparent' },
   };
   const s = map[status] || map['none'];
   return (
-    <span className="cc-transcript-badge" style={{ color: s.color, background: s.bg }}>
+    <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium" style={{ color: s.color, background: s.bg }}>
       {s.label}
     </span>
   );

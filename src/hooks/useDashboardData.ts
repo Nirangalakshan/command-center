@@ -8,6 +8,7 @@ import {
   fetchTenants, fetchSummary,
   fetchQueues, fetchAgents, fetchCalls, fetchSipLines,
   fetchAgentGroups, fetchIncomingCalls,
+  subscribeToIncomingCalls, subscribeToAgents, subscribeToCalls,
 } from '@/services/dashboardApi';
 import { fetchAgentOnboarding } from '@/services/agentOnboardingApi';
 
@@ -94,7 +95,6 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
       setCalls(c);
       setSipLines(sl);
       setAgentGroups(ag);
-      setIncomingCalls(ic);
       setAgentOnboarding(ao);
       setConnectionStatus('connected');
     } catch (err) {
@@ -112,11 +112,46 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
     }
   }, [loadData, session]);
 
+  // Evict stale incoming-call entries that have been sitting around for too
+  // long (e.g. because the CallHangup broadcast was missed or never sent).
+  // Runs every tick (1 s) since `now` changes every second.
+  const STALE_INCOMING_MS = 120_000; // 2 minutes
+  useEffect(() => {
+    setIncomingCalls(prev => {
+      const fresh = prev.filter(c => now - c.waitingSince < STALE_INCOMING_MS);
+      return fresh.length === prev.length ? prev : fresh;
+    });
+  }, [now]);
+
   useEffect(() => {
     if (!session) return;
     const interval = setInterval(loadData, POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [loadData, session]);
+    
+    // Real-time subscriptions
+    const unsubCalls = subscribeToIncomingCalls(
+      session.allowedQueueIds,
+      (call) => setIncomingCalls(prev => {
+        const existing = prev.find(c => c.id === call.id);
+        // Yeastar re-ring events often arrive without callfrom — preserve the
+        // caller number and name from the first broadcast so they are never lost.
+        const merged: IncomingCall = (existing && !call.callerNumber && existing.callerNumber)
+          ? { ...call, callerNumber: existing.callerNumber, callerName: call.callerName ?? existing.callerName }
+          : call;
+        return [merged, ...prev.filter(c => c.id !== call.id)];
+      }),
+      (callId) => setIncomingCalls(prev => prev.filter(c => c.id !== callId))
+    );
+
+    const unsubAgents = subscribeToAgents(effectiveTenant, loadData);
+    const unsubCallLog = subscribeToCalls(effectiveTenant, loadData);
+
+    return () => {
+      clearInterval(interval);
+      unsubCalls();
+      unsubAgents();
+      unsubCallLog();
+    };
+  }, [loadData, session, effectiveTenant]);
 
   return {
     selectedTenant: effectiveTenant,

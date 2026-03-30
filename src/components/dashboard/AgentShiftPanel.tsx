@@ -1,6 +1,13 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { UserSession, Tenant, Queue, AgentGroup, IncomingCall } from '@/services/types';
 import { formatDuration } from '@/utils/formatters';
+import {
+  buildIncomingCallSnapshot,
+  CallDetailsSheet,
+  type CallDetailSnapshot,
+} from '@/components/dashboard/CallDetailsSheet';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LiveDot } from './LiveDot';
 
 interface AgentShiftPanelProps {
@@ -15,7 +22,7 @@ interface AgentShiftPanelProps {
 export function AgentShiftPanel({
   session, tenants, queues, agentGroups, incomingCalls, now,
 }: AgentShiftPanelProps) {
-  // Determine which tenants this agent serves based on their allowed queues
+  const [selectedCall, setSelectedCall] = useState<CallDetailSnapshot | null>(null);
   const assignedTenants = useMemo(() => {
     const tenantIds = new Set<string>();
     for (const q of queues) {
@@ -26,7 +33,6 @@ export function AgentShiftPanel({
     return tenants.filter((t) => tenantIds.has(t.id));
   }, [session.allowedQueueIds, queues, tenants]);
 
-  // Group queues by tenant for the agent
   const tenantQueues = useMemo(() => {
     const map = new Map<string, Queue[]>();
     for (const t of assignedTenants) {
@@ -38,7 +44,6 @@ export function AgentShiftPanel({
     return map;
   }, [assignedTenants, queues, session.allowedQueueIds]);
 
-  // Filter incoming calls to this agent's groups
   const myGroupIds = useMemo(() => {
     const ids = new Set<string>();
     for (const g of agentGroups) {
@@ -50,120 +55,142 @@ export function AgentShiftPanel({
   }, [agentGroups, session.allowedQueueIds]);
 
   const myIncomingCalls = useMemo(
-    () => incomingCalls.filter((c) => myGroupIds.has(c.groupId)),
-    [incomingCalls, myGroupIds],
+    () => incomingCalls.filter((c) => myGroupIds.has(c.groupId) || session.allowedQueueIds.includes(c.queueId)),
+    [incomingCalls, myGroupIds, session.allowedQueueIds],
   );
 
   return (
-    <div className="cc-shift-panel cc-fade-in">
-      {/* Header */}
-      <div className="cc-shift-header">
-        <div className="cc-shift-title">
-          <span className="cc-shift-label">MY SHIFT</span>
-          <span className="cc-shift-agent-name">{session.displayName}</span>
-          <span className="cc-shift-meta">
-            <LiveDot color="var(--cc-color-green)" /> Available
-          </span>
+    <Card className="cc-fade-in overflow-hidden border-border/80 bg-gradient-to-br from-white via-white to-sky-50/40 shadow-sm">
+      <CardHeader className="gap-3 border-b border-border/70 pb-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-sky-600">My Shift</div>
+            <CardTitle className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+              {session.displayName}
+            </CardTitle>
+          </div>
+          <div className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200">
+            <LiveDot color="var(--cc-color-green)" />
+            Available
+          </div>
         </div>
-      </div>
+      </CardHeader>
 
-      {/* Assigned Clients Grid */}
-      <div className="cc-shift-clients">
-        {assignedTenants.map((t) => {
-          const tQueues = tenantQueues.get(t.id) || [];
-          const totalWaiting = tQueues.reduce((s, q) => s + q.waitingCalls, 0);
-          const totalActive = tQueues.reduce((s, q) => s + q.activeCalls, 0);
-          return (
-            <div
-              key={t.id}
-              className="cc-client-card"
-              style={{ borderColor: `${t.brandColor}40` }}
-            >
-              <div className="cc-client-card-header">
-                <span
-                  className="cc-company-pill"
+      <CardContent className="space-y-6 p-6">
+        <div className="grid gap-4 lg:grid-cols-2">
+          {assignedTenants.map((t) => {
+            const tQueues = tenantQueues.get(t.id) || [];
+            const totalWaiting = tQueues.reduce((s, q) => s + q.waitingCalls, 0);
+            const totalActive = tQueues.reduce((s, q) => s + q.activeCalls, 0);
+
+            return (
+              <div
+                key={t.id}
+                className="rounded-2xl border bg-slate-50/70 p-4 shadow-sm"
+                style={{ borderColor: `${t.brandColor}40` }}
+              >
+                <div className="mb-4 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
                   style={{
                     color: t.brandColor,
                     borderColor: `${t.brandColor}40`,
                     background: `${t.brandColor}12`,
                   }}
                 >
-                  <span className="cc-company-pill-dot" style={{ background: t.brandColor }} />
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: t.brandColor }} />
                   {t.name}
-                </span>
+                </div>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {tQueues.map((q) => (
+                    <span key={q.id} className="rounded-full border border-border bg-white px-3 py-1 text-xs text-slate-600">
+                      {q.icon} {q.name}
+                    </span>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-white p-3">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Active</div>
+                    <div className="mt-2 text-2xl font-semibold text-rose-600">{totalActive}</div>
+                  </div>
+                  <div className="rounded-xl bg-white p-3">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Waiting</div>
+                    <div className="mt-2 text-2xl font-semibold text-amber-600">{totalWaiting}</div>
+                  </div>
+                </div>
               </div>
-              <div className="cc-client-card-queues">
-                {tQueues.map((q) => (
-                  <span key={q.id} className="cc-client-queue-tag">
-                    {q.icon} {q.name}
-                  </span>
-                ))}
-              </div>
-              <div className="cc-client-card-stats">
-                <span className="cc-client-stat">
-                  <span className="cc-client-stat-value" style={{ color: 'var(--cc-color-red)' }}>{totalActive}</span>
-                  <span className="cc-client-stat-label">active</span>
-                </span>
-                <span className="cc-client-stat">
-                  <span className="cc-client-stat-value" style={{ color: 'var(--cc-color-amber)' }}>{totalWaiting}</span>
-                  <span className="cc-client-stat-label">waiting</span>
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      {/* Incoming Calls */}
-      {myIncomingCalls.length > 0 && (
-        <>
-          <div className="cc-shift-section-head">
-            <LiveDot color="var(--cc-color-red)" /> INCOMING CALLS
-            <span className="cc-shift-call-count">{myIncomingCalls.length}</span>
+        {myIncomingCalls.length > 0 && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
+              <LiveDot color="var(--cc-color-red)" />
+              Incoming Calls
+              <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                {myIncomingCalls.length}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {myIncomingCalls.map((call) => (
+                <div
+                  key={call.id}
+                  className="cursor-pointer rounded-2xl border bg-white p-4 shadow-sm transition-transform hover:-translate-y-0.5"
+                  style={{ borderColor: `${call.tenantBrandColor}40` }}
+                  onClick={() => setSelectedCall(buildIncomingCallSnapshot(call, now))}
+                >
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <span
+                      className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
+                      style={{
+                        color: call.tenantBrandColor,
+                        borderColor: `${call.tenantBrandColor}40`,
+                        background: `${call.tenantBrandColor}12`,
+                      }}
+                    >
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: call.tenantBrandColor }} />
+                      {call.tenantName}
+                    </span>
+                    <span className="font-mono text-xs text-muted-foreground">DID: {call.did}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">{call.didLabel}</span>
+                  </div>
+
+                  <div className="mb-3 font-mono text-sm text-slate-900">
+                    {call.callerNumber}
+                    {call.callerName && <span className="text-muted-foreground"> ({call.callerName})</span>}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-mono text-xs text-muted-foreground">
+                      Queue: {call.queueName} · Group: {call.groupName}
+                    </span>
+                    <span className="inline-flex items-center font-mono text-xs font-semibold text-rose-600">
+                      <LiveDot color="var(--cc-color-red)" />
+                      {formatDuration(now - call.waitingSince)}
+                    </span>
+                    <Button
+                      size="sm"
+                      className="ml-auto"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                      }}
+                    >
+                      Answer
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="cc-incoming-calls">
-            {myIncomingCalls.map((call) => (
-              <div
-                key={call.id}
-                className={`cc-incoming-call-row ${call.status === 'ringing' ? 'cc-incoming-ringing' : ''}`}
-                style={{ borderLeftColor: call.tenantBrandColor }}
-              >
-                <div className="cc-incoming-call-top">
-                  <span
-                    className="cc-company-pill"
-                    style={{
-                      color: call.tenantBrandColor,
-                      borderColor: `${call.tenantBrandColor}40`,
-                      background: `${call.tenantBrandColor}12`,
-                    }}
-                  >
-                    <span className="cc-company-pill-dot" style={{ background: call.tenantBrandColor }} />
-                    {call.tenantName}
-                  </span>
-                  <span className="cc-incoming-did">DID: {call.did}</span>
-                  <span className="cc-incoming-did-label">{call.didLabel}</span>
-                </div>
-                <div className="cc-incoming-call-mid">
-                  <span className="cc-incoming-caller">
-                    📞 {call.callerNumber}
-                    {call.callerName && <span className="cc-incoming-caller-name"> ({call.callerName})</span>}
-                  </span>
-                </div>
-                <div className="cc-incoming-call-bottom">
-                  <span className="cc-incoming-meta">
-                    Queue: {call.queueName} · Group: {call.groupName}
-                  </span>
-                  <span className="cc-incoming-wait" style={{ color: 'var(--cc-color-red)' }}>
-                    <LiveDot color="var(--cc-color-red)" />
-                    {formatDuration(now - call.waitingSince)}
-                  </span>
-                  <button className="cc-incoming-answer">ANSWER</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+        )}
+      </CardContent>
+
+      <CallDetailsSheet
+        detail={selectedCall}
+        open={Boolean(selectedCall)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedCall(null);
+        }}
+      />
+    </Card>
   );
 }

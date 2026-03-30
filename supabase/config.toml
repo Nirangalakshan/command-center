@@ -1,7 +1,10 @@
-project_id = "kvfkxgxiepeepvsflmoi"
+project_id = "kcmopdntriyepywgphfz"
 
 [functions.create-user]
 verify_jwt = false
 
 [functions.create-agent]
+verify_jwt = false
+
+[functions.yeastar-webhook]
 verify_jwt = false

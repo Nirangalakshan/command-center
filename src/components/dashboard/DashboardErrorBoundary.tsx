@@ -26,7 +26,7 @@ export class DashboardErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return this.props.fallback || (
-        <div className="cc-root" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="flex min-h-screen items-center justify-center bg-slate-50">
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 14, color: '#8a99ad', fontFamily: 'monospace' }}>Refreshing...</div>
           </div>

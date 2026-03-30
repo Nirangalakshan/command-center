@@ -5,7 +5,7 @@
 
 export type UserRole = 'super-admin' | 'client-admin' | 'supervisor' | 'agent';
 
-export type AgentStatus = 'on-call' | 'available' | 'wrap-up' | 'break' | 'offline';
+export type AgentStatus = 'ringing' | 'on-call' | 'available' | 'wrap-up' | 'break' | 'offline';
 
 export type CallResult = 'answered' | 'abandoned' | 'missed' | 'voicemail';
 
@@ -85,6 +85,48 @@ export interface SipLine {
   activeCaller: string | null;
   activeSince: number | null;
   tenantName?: string;
+}
+
+export interface CustomerRecord {
+  id: string;
+  tenantId: string;
+  name: string;
+  primaryPhone: string;
+  phoneNormalized: string;
+  email: string | null;
+  address: string | null;
+  notes: string | null;
+}
+
+export interface VehicleRecord {
+  id: string;
+  tenantId: string;
+  customerId: string;
+  rego: string;
+  make: string;
+  model: string;
+  year: number | null;
+  color: string | null;
+  vin: string | null;
+  notes: string | null;
+}
+
+export interface ServiceRecord {
+  id: string;
+  tenantId: string;
+  customerId: string;
+  vehicleId: string;
+  serviceDate: string;
+  serviceType: string;
+  odometerKm: number | null;
+  amount: number | null;
+  advisorNotes: string | null;
+}
+
+export interface CallerContext {
+  customer: CustomerRecord;
+  vehicles: VehicleRecord[];
+  services: ServiceRecord[];
 }
 
 export interface UserSession {

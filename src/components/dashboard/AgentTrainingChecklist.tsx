@@ -1,4 +1,6 @@
 import type { TrainingChecklist } from '@/services/types';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from '@/components/ui/progress';
 
 interface Props {
   checklist: TrainingChecklist;
@@ -18,35 +20,37 @@ export function AgentTrainingChecklist({ checklist, onChange, readOnly }: Props)
   const progress = Math.round((completedCount / ITEMS.length) * 100);
 
   return (
-    <div className="cc-training-checklist">
-      <div className="cc-training-header">
-        <span className="cc-training-title">TRAINING CHECKLIST</span>
-        <span className="cc-training-progress" style={{ color: progress === 100 ? 'var(--cc-color-green)' : 'var(--cc-text-secondary)' }}>
+    <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between">
+        <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+          Training Checklist
+        </span>
+        <span className="text-sm font-semibold" style={{ color: progress === 100 ? 'var(--cc-color-green)' : 'var(--cc-color-slate)' }}>
           {completedCount}/{ITEMS.length}
         </span>
       </div>
-      <div className="cc-training-bar-bg">
-        <div
-          className="cc-training-bar-fill"
-          style={{ width: `${progress}%`, background: progress === 100 ? 'var(--cc-color-green)' : 'var(--cc-color-cyan)' }}
-        />
-      </div>
-      <div className="cc-training-items">
+      <Progress value={progress} className="mb-4 h-2 bg-slate-100" />
+      <div className="space-y-3">
         {ITEMS.map((item) => (
-          <label key={item.key} className={`cc-training-item ${readOnly ? 'cc-training-item-readonly' : ''}`}>
-            <input
-              type="checkbox"
+          <label
+            key={item.key}
+            className={`flex items-center gap-3 rounded-xl border border-border/70 px-3 py-2 text-sm text-slate-700 ${
+              readOnly ? 'cursor-default' : 'cursor-pointer'
+            }`}
+          >
+            <Checkbox
               checked={checklist[item.key]}
               disabled={readOnly}
-              onChange={() => {
+              onCheckedChange={() => {
                 if (!readOnly) {
                   onChange({ ...checklist, [item.key]: !checklist[item.key] });
                 }
               }}
-              className="cc-training-checkbox"
             />
-            <span className="cc-training-icon">{item.icon}</span>
-            <span className={checklist[item.key] ? 'cc-training-done' : ''}>{item.label}</span>
+            <span>{item.icon}</span>
+            <span className={checklist[item.key] ? 'text-muted-foreground line-through' : ''}>
+              {item.label}
+            </span>
           </label>
         ))}
       </div>

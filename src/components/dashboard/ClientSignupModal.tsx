@@ -1,6 +1,25 @@
 import { useState } from 'react';
 import type { NewClientForm } from '@/services/types';
 import { isValidEmail, isValidPhone } from '@/utils/onboardingValidation';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 
 const INDUSTRIES = ['Trades', 'Healthcare', 'Property', 'Finance', 'Other'];
 const BRAND_COLORS = ['#00d4f5', '#34d399', '#a78bfa', '#fb923c', '#f43f5e', '#3b82f6', '#fbbf24', '#64748b'];
@@ -24,8 +43,6 @@ const INITIAL: NewClientForm = {
 export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
   const [form, setForm] = useState<NewClientForm>({ ...INITIAL });
   const [errors, setErrors] = useState<string[]>([]);
-
-  if (!open) return null;
 
   const set = (key: keyof NewClientForm, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -73,66 +90,78 @@ export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
   };
 
   return (
-    <div className="cc-modal-overlay" onClick={handleClose}>
-      <div className="cc-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="cc-modal-header">
-          <span className="cc-modal-title">SIGN UP NEW CLIENT</span>
-          <button className="cc-modal-close" onClick={handleClose}>✕</button>
-        </div>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) handleClose(); }}>
+      <DialogContent className="max-w-2xl bg-white">
+        <DialogHeader>
+          <DialogTitle>Sign Up New Client</DialogTitle>
+          <DialogDescription>
+            Add a new client and set the onboarding details used across the dashboard.
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="cc-modal-body">
+        <div className="space-y-5">
           {errors.length > 0 && (
-            <div className="cc-form-error">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {errors.map((err, i) => (
                 <div key={i}>{err}</div>
               ))}
             </div>
           )}
 
-          <label className="cc-form-label">Business Name *</label>
-          <input
-            className="cc-form-input"
-            value={form.businessName}
-            onChange={(e) => set('businessName', e.target.value)}
-            placeholder="e.g. Melbourne Plumbing Co"
-            maxLength={100}
-          />
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="businessName">Business Name *</Label>
+              <Input
+                id="businessName"
+                value={form.businessName}
+                onChange={(e) => set('businessName', e.target.value)}
+                placeholder="e.g. Melbourne Plumbing Co"
+                maxLength={100}
+              />
+            </div>
 
-          <label className="cc-form-label">Industry *</label>
-          <select
-            className="cc-form-select"
-            value={form.industry}
-            onChange={(e) => set('industry', e.target.value)}
-          >
-            {INDUSTRIES.map((i) => (
-              <option key={i} value={i}>{i}</option>
-            ))}
-          </select>
+            <div className="space-y-2">
+              <Label>Industry *</Label>
+              <Select value={form.industry} onValueChange={(value) => set('industry', value)}>
+                <SelectTrigger className="bg-white">
+                  <SelectValue placeholder="Select industry" />
+                </SelectTrigger>
+                <SelectContent>
+                  {INDUSTRIES.map((industry) => (
+                    <SelectItem key={industry} value={industry}>
+                      {industry}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <label className="cc-form-label">Contact Name *</label>
-          <input
-            className="cc-form-input"
-            value={form.contactName}
-            onChange={(e) => set('contactName', e.target.value)}
-            placeholder="Primary contact"
-            maxLength={100}
-          />
+            <div className="space-y-2">
+              <Label htmlFor="contactName">Contact Name *</Label>
+              <Input
+                id="contactName"
+                value={form.contactName}
+                onChange={(e) => set('contactName', e.target.value)}
+                placeholder="Primary contact"
+                maxLength={100}
+              />
+            </div>
 
-          <div className="cc-form-row">
-            <div className="cc-form-field">
-              <label className="cc-form-label">Phone</label>
-              <input
-                className="cc-form-input"
+            <div className="space-y-2">
+              <Label htmlFor="contactPhone">Phone</Label>
+              <Input
+                id="contactPhone"
                 value={form.contactPhone}
                 onChange={(e) => set('contactPhone', e.target.value)}
                 placeholder="04XX XXX XXX"
                 maxLength={20}
               />
             </div>
-            <div className="cc-form-field">
-              <label className="cc-form-label">Email</label>
-              <input
-                className="cc-form-input"
+
+            <div className="space-y-2">
+              <Label htmlFor="contactEmail">Email</Label>
+              <Input
+                id="contactEmail"
                 value={form.contactEmail}
                 onChange={(e) => set('contactEmail', e.target.value)}
                 placeholder="email@example.com"
@@ -140,37 +169,45 @@ export function ClientSignupModal({ open, onClose, onSubmit }: Props) {
                 type="email"
               />
             </div>
-          </div>
 
-          <label className="cc-form-label">Brand Color</label>
-          <div className="cc-color-swatches">
-            {BRAND_COLORS.map((c) => (
-              <button
-                key={c}
-                className={`cc-color-swatch ${form.brandColor === c ? 'cc-color-swatch-active' : ''}`}
-                style={{ background: c }}
-                onClick={() => set('brandColor', c)}
-                type="button"
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Brand Color</Label>
+              <div className="flex flex-wrap gap-2">
+                {BRAND_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={`Choose brand color ${color}`}
+                    className="h-8 w-8 rounded-full ring-offset-background transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    style={{
+                      backgroundColor: color,
+                      boxShadow: form.brandColor === color ? '0 0 0 3px white, 0 0 0 5px rgba(15, 23, 42, 0.18)' : 'none',
+                    }}
+                    onClick={() => set('brandColor', color)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="notes">Notes</Label>
+              <Textarea
+                id="notes"
+                value={form.notes}
+                onChange={(e) => set('notes', e.target.value)}
+                placeholder="Any additional details..."
+                rows={4}
+                maxLength={500}
               />
-            ))}
+            </div>
           </div>
-
-          <label className="cc-form-label">Notes</label>
-          <textarea
-            className="cc-form-textarea"
-            value={form.notes}
-            onChange={(e) => set('notes', e.target.value)}
-            placeholder="Any additional details..."
-            rows={3}
-            maxLength={500}
-          />
         </div>
 
-        <div className="cc-modal-footer">
-          <button className="cc-btn cc-btn-ghost" onClick={handleClose}>Cancel</button>
-          <button className="cc-btn cc-btn-primary" onClick={handleSubmit}>Create Client</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose}>Cancel</Button>
+          <Button onClick={handleSubmit}>Create Client</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

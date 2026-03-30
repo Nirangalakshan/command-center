@@ -2,6 +2,8 @@ import type { SipLine, Tenant, Permissions } from '@/services/types';
 import { formatDuration, formatPhone } from '@/utils/formatters';
 import { LiveDot } from '@/components/dashboard/LiveDot';
 import { EmptyState } from '@/components/dashboard/EmptyState';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface SipLinesTabProps {
   sipLines: SipLine[];
@@ -20,66 +22,69 @@ export function SipLinesTab({ sipLines, tenants, permissions, now }: SipLinesTab
   const idleCount = sipLines.filter((l) => l.status === 'idle').length;
 
   return (
-    <div className="cc-fade-in">
-      <div className="cc-section-head" style={{ marginBottom: 18 }}>
-        Yeastar SIP Trunks
-        <div className="cc-sip-summary" style={{ marginBottom: 0, marginLeft: 16 }}>
-          <span>
-            <span className="cc-status-count" style={{ color: 'var(--cc-color-red)' }}>{activeCount}</span>
-            <span className="cc-sip-summary-label" style={{ marginLeft: 4 }}>in use</span>
-          </span>
-          <span>
-            <span className="cc-status-count" style={{ color: 'var(--cc-color-green)' }}>{idleCount}</span>
-            <span className="cc-sip-summary-label" style={{ marginLeft: 4 }}>available</span>
-          </span>
+    <div className="cc-fade-in space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+          Yeastar SIP Trunks
+        </div>
+        <div className="inline-flex items-center gap-2 rounded-full bg-rose-50 px-3 py-1.5 text-sm text-rose-700">
+          <span className="font-semibold">{activeCount}</span>
+          <span>in use</span>
+        </div>
+        <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm text-emerald-700">
+          <span className="font-semibold">{idleCount}</span>
+          <span>available</span>
         </div>
       </div>
 
       {sipLines.length === 0 ? (
         <EmptyState message="No SIP lines configured" />
       ) : (
-        <div className="cc-sip-grid">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {sipLines.map((l) => {
             const isActive = l.status === 'active';
             const tenant = l.tenantId ? tenants.find((t) => t.id === l.tenantId) : null;
             return (
-              <div key={l.id} className={`cc-sip-card ${isActive ? 'cc-sip-active' : ''}`}>
-                {isActive && <div className="cc-sip-active-bar" />}
-                <div className="cc-sip-top">
-                  <span className="cc-sip-label">{l.label}</span>
-                  <span
-                    className="cc-badge"
+              <Card key={l.id} className="overflow-hidden border-border/80 bg-white shadow-sm">
+                {isActive && <div className="h-1 w-full bg-rose-500" />}
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-base">{l.label}</CardTitle>
+                  <Badge
+                    variant="outline"
+                    className="rounded-full border-0 px-2.5 py-1 text-[11px] font-semibold"
                     style={{
                       color: isActive ? 'var(--cc-color-red)' : 'var(--cc-color-green)',
                       background: isActive ? 'rgba(244,63,94,0.12)' : 'rgba(52,211,153,0.12)',
                     }}
                   >
                     {isActive ? 'IN USE' : 'IDLE'}
-                  </span>
-                </div>
+                  </Badge>
+                </CardHeader>
+                <CardContent>
                 {isActive ? (
                   <>
-                    <div className="cc-sip-call-row">
-                      <span className="cc-table-mono" style={{ fontSize: 12 }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-mono text-xs">
                         {formatPhone(l.activeCaller)}
                       </span>
-                      <span className="cc-table-mono" style={{ color: 'var(--cc-color-red)', fontWeight: 700 }}>
+                      <span className="inline-flex items-center font-mono text-xs font-semibold text-rose-600">
                         <LiveDot /> {l.activeSince ? formatDuration(now - l.activeSince) : '—'}
                       </span>
                     </div>
                     {permissions.canViewTenantNames && tenant && (
-                      <div style={{ marginTop: 6, fontFamily: 'var(--cc-font-mono)', fontSize: 10, color: 'var(--cc-text-muted)' }}>
+                      <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                         {tenant.name}
                       </div>
                     )}
-                    <div style={{ marginTop: 4, fontFamily: 'var(--cc-font-mono)', fontSize: 9, color: 'var(--cc-text-disabled)' }}>
+                    <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">
                       {l.trunkName}
                     </div>
                   </>
                 ) : (
-                  <div className="cc-sip-idle-text">No active call</div>
+                    <div className="font-mono text-xs text-muted-foreground">No active call</div>
                 )}
-              </div>
+                </CardContent>
+              </Card>
             );
           })}
         </div>

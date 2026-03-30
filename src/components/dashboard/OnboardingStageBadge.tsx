@@ -1,4 +1,5 @@
 import type { OnboardingStage } from '@/services/types';
+import { Badge } from '@/components/ui/badge';
 
 const STAGE_CONFIG: Record<OnboardingStage, { label: string; color: string }> = {
   'new':                  { label: 'New',                color: 'var(--cc-color-cyan)' },
@@ -20,16 +21,17 @@ interface Props {
 export function OnboardingStageBadge({ stage }: Props) {
   const cfg = STAGE_CONFIG[stage];
   return (
-    <span
-      className="cc-badge"
+    <Badge
+      variant="outline"
+      className="inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide"
       style={{
         color: cfg.color,
         background: `color-mix(in srgb, ${cfg.color} 12%, transparent)`,
         border: `1px solid color-mix(in srgb, ${cfg.color} 25%, transparent)`,
       }}
     >
-      {stage === 'live' && <span className="cc-live-dot-inline" />}
+      {stage === 'live' && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current" />}
       {cfg.label.toUpperCase()}
-    </span>
+    </Badge>
   );
 }

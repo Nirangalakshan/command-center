@@ -8,7 +8,7 @@ const Index = () => {
 
   if (loading) {
     return (
-      <div className="cc-root" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div style={{ fontFamily: 'monospace', fontSize: 14, color: '#8a99ad' }}>Loading...</div>
       </div>
     );

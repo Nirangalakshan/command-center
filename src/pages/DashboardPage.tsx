@@ -15,6 +15,8 @@ import { ClientsTab } from '@/tabs/ClientsTab';
 import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { useEffect } from 'react';
+import { AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 const TABS: TabDef[] = [
   { key: 'overview', label: 'Overview', icon: '◉' },
@@ -54,7 +56,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
   }, [d.selectedTenant]);
 
   return (
-    <div className="cc-root">
+    <div className="min-h-screen bg-slate-50 text-slate-950">
       <DashboardHeader
         tenants={d.tenants}
         selectedTenant={d.selectedTenant}
@@ -74,11 +76,16 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
         permissions={permissions}
       />
 
-      <main className="cc-main">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         {d.error && (
-          <div className="cc-error-banner">
-            <span>⚠ {d.error}</span>
-            <button className="cc-error-retry" onClick={d.refresh}>Retry</button>
+          <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:flex-row sm:items-center sm:justify-between">
+            <span className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              {d.error}
+            </span>
+            <Button variant="outline" size="sm" onClick={d.refresh} className="border-rose-200 bg-white text-rose-700 hover:bg-rose-100">
+              Retry
+            </Button>
           </div>
         )}
 

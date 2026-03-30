@@ -1,4 +1,5 @@
 import type { CallResult } from '@/services/types';
+import { Badge } from '@/components/ui/badge';
 
 interface ResultBadgeProps {
   result: CallResult;
@@ -16,8 +17,12 @@ export { RESULT_MAP };
 export function ResultBadge({ result }: ResultBadgeProps) {
   const r = RESULT_MAP[result] || RESULT_MAP['missed'];
   return (
-    <span className="cc-badge" style={{ color: r.color, background: r.bg }}>
+    <Badge
+      variant="outline"
+      className="rounded-full border-0 px-2.5 py-1 text-[11px] font-semibold"
+      style={{ color: r.color, background: r.bg }}
+    >
       {r.label}
-    </span>
+    </Badge>
   );
 }

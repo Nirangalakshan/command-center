@@ -1,4 +1,12 @@
 import type { Tenant, Permissions } from '@/services/types';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface TenantSelectorProps {
   tenants: Tenant[];
@@ -23,23 +31,25 @@ export function TenantSelector({
   // Client admins see a locked label — no dropdown
   if (!permissions.canSwitchTenant) {
     return (
-      <div className="cc-tenant-locked">
-        🔒 {currentTenantName || 'Your Organisation'}
-      </div>
+      <Badge variant="outline" className="rounded-full bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
+        Locked: {currentTenantName || 'Your Organisation'}
+      </Badge>
     );
   }
 
-  // Super admin gets the full dropdown
   return (
-    <select
-      className="cc-tenant-select"
-      value={selectedTenant || ''}
-      onChange={(e) => onSelect(e.target.value || null)}
-    >
-      <option value="">All Clients</option>
-      {tenants.map((t) => (
-        <option key={t.id} value={t.id}>{t.name}</option>
-      ))}
-    </select>
+    <Select value={selectedTenant || '__all__'} onValueChange={(value) => onSelect(value === '__all__' ? null : value)}>
+      <SelectTrigger className="w-[180px] bg-white">
+        <SelectValue placeholder="All Clients" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__all__">All Clients</SelectItem>
+        {tenants.map((t) => (
+          <SelectItem key={t.id} value={t.id}>
+            {t.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
