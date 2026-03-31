@@ -52,9 +52,10 @@ export function OverviewTab({ summary, queues, agents, tenants, permissions, now
       // The realtime IncomingCall broadcast is fast but volatile.
       // We try broadcast first (fastest), then agent DB fallback.
 
-      const incomingForQueue = (incomingCalls || []).find(
-        (call) => call.queueId === queue.id && call.callerNumber,
-      );
+      // const incomingForQueue = (incomingCalls || []).find(
+      //   (call) => call.queueId === queue.id && call.callerNumber,
+      // );
+       const incomingForQueue = true;
 
       // Priority 1: broadcast with a caller number
       if (incomingForQueue) {
@@ -130,7 +131,9 @@ export function OverviewTab({ summary, queues, agents, tenants, permissions, now
           Queue Status
         </div>
         <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-          {queues.map((q) => {
+          {queues.filter((q) =>
+            permissions.allowedQueueIds.length === 0 || permissions.allowedQueueIds.includes(q.id)
+          ).map((q) => {
             const tenant = tenants.find((t) => t.id === q.tenantId);
             const queueDetail = queueCallDetails.get(q.id);
             return (

@@ -145,7 +145,7 @@ export function BookingFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Book Service</DialogTitle>
+          <DialogTitle>Book fdsafasdf Service</DialogTitle>
           <DialogDescription>
             Create a customer booking from the live call details panel.
           </DialogDescription>

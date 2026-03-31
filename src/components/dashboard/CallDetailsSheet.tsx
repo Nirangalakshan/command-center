@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ArrowRightLeft,
   CalendarPlus2,
@@ -20,7 +21,6 @@ import { formatDuration, formatPhone } from '@/utils/formatters';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookingFormDialog } from '@/components/dashboard/BookingFormDialog';
 import { EmptyState } from '@/components/dashboard/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -99,10 +99,10 @@ export function buildLiveCallSnapshot(args: {
 
 export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsSheetProps) {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [callerContext, setCallerContext] = useState<CallerContext | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
-  const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
   const commandButtons = useMemo(() => ([
     { label: 'Book Now', icon: CalendarPlus2 },
     { label: 'Log Note', icon: ClipboardPenLine },
@@ -154,8 +154,8 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
     ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
     : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200';
   const statusLabel = callerContext ? 'Known Customer' : contextLoading ? 'Searching...' : 'Unknown Caller';
-  const canOpenBooking = detail?.mode === 'live';
-
+  // const canOpenBooking = detail?.mode === 'live';
+  const canOpenBooking = true;
   if (!detail) return null;
 
   return (
@@ -254,7 +254,18 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                         disabled={command.label === 'Book Now' && !canOpenBooking}
                         onClick={() => {
                           if (command.label === 'Book Now') {
-                            setBookingDialogOpen(true);
+                            navigate('/booking', {
+                              state: {
+                                tenantId: detail.tenantId,
+                                customerId: callerContext?.customer.id ?? null,
+                                customerName: resolvedCustomerName,
+                                customerPhone: detail.customerPhone,
+                                customerEmail: resolvedCustomerEmail,
+                                availableVehicles,
+                                workshopName: detail.workshopName,
+                                workshopColor: detail.workshopColor,
+                              },
+                            });
                             return;
                           }
                           toast({
@@ -345,14 +356,6 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
         </ScrollArea>
       </SheetContent>
 
-      <BookingFormDialog
-        open={bookingDialogOpen}
-        onOpenChange={setBookingDialogOpen}
-        customerName={resolvedCustomerName}
-        customerPhone={detail.customerPhone}
-        customerEmail={resolvedCustomerEmail}
-        availableVehicles={availableVehicles}
-      />
     </Sheet>
   );
 }

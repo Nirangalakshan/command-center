@@ -495,6 +495,50 @@ function mapServiceRecord(row: Record<string, unknown>): ServiceRecord {
   };
 }
 
+/* ─── Bookings ─── */
+
+export interface CreateBookingInput {
+  tenantId: string;
+  customerId?: string | null;
+  vehicleId?: string | null;
+  vehicleRego?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleYear?: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  serviceType: string;
+  bookingDate: string;
+  dropOffTime: string;
+  pickupTime?: string;
+  notes?: string;
+}
+
+export async function createBooking(input: CreateBookingInput): Promise<void> {
+  const { error } = await (supabase as unknown as UntypedSupabase)
+    .from('bookings')
+    .insert({
+      tenant_id: input.tenantId,
+      customer_id: input.customerId || null,
+      vehicle_id: input.vehicleId || null,
+      vehicle_rego: input.vehicleRego || null,
+      vehicle_make: input.vehicleMake || null,
+      vehicle_model: input.vehicleModel || null,
+      vehicle_year: input.vehicleYear ? Number(input.vehicleYear) : null,
+      customer_name: input.customerName,
+      customer_phone: input.customerPhone,
+      customer_email: input.customerEmail || null,
+      service_type: input.serviceType,
+      booking_date: input.bookingDate,
+      drop_off_time: input.dropOffTime,
+      pickup_time: input.pickupTime || null,
+      notes: input.notes || null,
+      status: 'pending',
+    });
+  if (error) throw new Error(error.message);
+}
+
 export async function createClient(data: NewClientForm, createdBy: string): Promise<TenantOnboarding> {
   // Create tenant first
   const tenantId = `t-${Date.now()}`;
