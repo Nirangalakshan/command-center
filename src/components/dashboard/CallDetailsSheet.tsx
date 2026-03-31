@@ -251,7 +251,7 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                         key={command.label}
                         variant={command.label === 'Book Now' ? 'default' : 'outline'}
                         className="justify-start"
-                        disabled={command.label === 'Book Now' && !canOpenBooking}
+                        // disabled={command.label === 'Book Now' && !canOpenBooking}
                         onClick={() => {
                           if (command.label === 'Book Now') {
                             setBookingDialogOpen(true);
