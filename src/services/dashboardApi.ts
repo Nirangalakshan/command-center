@@ -5,6 +5,7 @@ import type {
   AgentGroup, DIDMapping, IncomingCall,
   CallResult, TranscriptStatus, SipLineStatus, RingStrategy,
   CallerContext, CustomerRecord, VehicleRecord, ServiceRecord,
+  BookingRecord, BookingStatus,
 } from './types';
 import {
   ONBOARDING_STAGES,
@@ -537,6 +538,64 @@ export async function createBooking(input: CreateBookingInput): Promise<void> {
       status: 'pending',
     });
   if (error) throw new Error(error.message);
+}
+
+function mapBookingRecord(row: Record<string, unknown>): BookingRecord {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    customerId: row.customer_id ? String(row.customer_id) : null,
+    vehicleId: row.vehicle_id ? String(row.vehicle_id) : null,
+    vehicleRego: row.vehicle_rego ? String(row.vehicle_rego) : null,
+    vehicleMake: row.vehicle_make ? String(row.vehicle_make) : null,
+    vehicleModel: row.vehicle_model ? String(row.vehicle_model) : null,
+    vehicleYear: typeof row.vehicle_year === 'number' ? row.vehicle_year : row.vehicle_year ? Number(row.vehicle_year) : null,
+    customerName: String(row.customer_name ?? ''),
+    customerPhone: String(row.customer_phone ?? ''),
+    customerEmail: row.customer_email ? String(row.customer_email) : null,
+    serviceType: String(row.service_type ?? ''),
+    bookingDate: String(row.booking_date ?? ''),
+    dropOffTime: String(row.drop_off_time ?? ''),
+    pickupTime: row.pickup_time ? String(row.pickup_time) : null,
+    notes: row.notes ? String(row.notes) : null,
+    status: (row.status as BookingStatus) ?? 'pending',
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+  };
+}
+
+export async function fetchBookings(tenantId: string | null): Promise<BookingRecord[]> {
+  let query = (supabase as unknown as UntypedSupabase).from('bookings').select('*').order('booking_date', { ascending: false });
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(mapBookingRecord);
+}
+
+export async function fetchBookingById(id: string): Promise<BookingRecord | null> {
+  const { data, error } = await (supabase as unknown as UntypedSupabase)
+    .from('bookings').select('*').eq('id', id).single();
+  if (error) return null;
+  return mapBookingRecord(data as Record<string, unknown>);
+}
+
+export async function updateBookingStatus(id: string, status: BookingStatus): Promise<void> {
+  const { error } = await (supabase as unknown as UntypedSupabase)
+    .from('bookings').update({ status }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function fetchLatestBookingByPhone(tenantId: string, phone: string): Promise<BookingRecord | null> {
+  const { data, error } = await (supabase as unknown as UntypedSupabase)
+    .from('bookings')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('customer_phone', phone)
+    .order('booking_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapBookingRecord(data as Record<string, unknown>);
 }
 
 export async function createClient(data: NewClientForm, createdBy: string): Promise<TenantOnboarding> {

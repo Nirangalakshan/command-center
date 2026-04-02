@@ -13,6 +13,7 @@ import { CallsTab } from '@/tabs/CallsTab';
 import { SipLinesTab } from '@/tabs/SipLinesTab';
 import { ClientsTab } from '@/tabs/ClientsTab';
 import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
+// import { BookingsTab } from '@/tabs/BookingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { useEffect } from 'react';
 import { AlertCircle } from 'lucide-react';
@@ -23,6 +24,7 @@ const TABS: TabDef[] = [
   { key: 'agents', label: 'Agents', icon: '◎' },
   { key: 'agent-onboarding', label: 'Agent Onboarding', icon: '⊕' },
   { key: 'calls', label: 'Calls', icon: '◈' },
+  { key: 'bookings', label: 'Bookings', icon: '◫' },
   { key: 'sip', label: 'SIP Lines', icon: '◇' },
   { key: 'clients', label: 'Clients', icon: '◆' },
 ];
@@ -133,6 +135,12 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                 permissions={permissions}
               />
             )}
+            {/* {d.selectedTab === 'bookings' && (
+              <BookingsTab
+                tenantId={d.selectedTenant}
+                permissions={permissions}
+              />
+            )} */}
             {d.selectedTab === 'sip' && (
               <SipLinesTab
                 sipLines={d.sipLines}

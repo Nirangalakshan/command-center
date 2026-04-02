@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { CalendarCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRightLeft,
@@ -15,7 +16,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { Agent, CallerContext, IncomingCall, Queue, ServiceRecord, Tenant, VehicleRecord } from '@/services/types';
-import { fetchCallerContext } from '@/services/dashboardApi';
+import { fetchCallerContext, fetchLatestBookingByPhone } from '@/services/dashboardApi';
 import { useToast } from '@/hooks/use-toast';
 import { formatDuration, formatPhone } from '@/utils/formatters';
 import { Badge } from '@/components/ui/badge';
@@ -107,7 +108,7 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
     { label: 'Book Now', icon: CalendarPlus2 },
     { label: 'Log Note', icon: ClipboardPenLine },
     { label: 'Profile', icon: UserRound },
-    { label: 'SMS', icon: MessageSquareText },
+    { label: 'Booking Details', icon: CalendarCheck },
     { label: 'Reroute Call', icon: Route },
     { label: 'Call Dispatch', icon: ArrowRightLeft },
   ]), []);
@@ -252,7 +253,7 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                         variant={command.label === 'Book Now' ? 'default' : 'outline'}
                         className="justify-start"
                         disabled={command.label === 'Book Now' && !canOpenBooking}
-                        onClick={() => {
+                        onClick={async () => {
                           if (command.label === 'Book Now') {
                             navigate('/booking', {
                               state: {
@@ -266,6 +267,16 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                                 workshopColor: detail.workshopColor,
                               },
                             });
+                            return;
+                          }
+                          if (command.label === 'Booking Details') {
+                            // const booking = await fetchLatestBookingByPhone(detail.tenantId, detail.customerPhone);
+                            const booking = true;
+                            if (booking) {
+                              navigate(`/bookingsdetails`);
+                            } else {
+                              toast({ title: 'No bookings found', description: `No bookings found for ${resolvedCustomerName}.` });
+                            }
                             return;
                           }
                           toast({

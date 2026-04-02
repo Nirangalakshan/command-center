@@ -129,6 +129,30 @@ export interface CallerContext {
   services: ServiceRecord[];
 }
 
+export type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+
+export interface BookingRecord {
+  id: string;
+  tenantId: string;
+  customerId: string | null;
+  vehicleId: string | null;
+  vehicleRego: string | null;
+  vehicleMake: string | null;
+  vehicleModel: string | null;
+  vehicleYear: number | null;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string | null;
+  serviceType: string;
+  bookingDate: string;
+  dropOffTime: string;
+  pickupTime: string | null;
+  notes: string | null;
+  status: BookingStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserSession {
   userId: string;
   role: UserRole;
