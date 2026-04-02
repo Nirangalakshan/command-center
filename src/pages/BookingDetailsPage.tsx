@@ -15,9 +15,18 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
+// ── Task type ─────────────────────────────────────────────────────────────────
+
+type Task = { id: string; label: string; done: boolean };
+
+type BookingRecordWithTasks = BookingRecord & {
+  tasks?: Task[];
+  taskProgress?: number;
+};
+
 // ── Mock data ────────────────────────────────────────────────────────────────
 
-const ALL_MOCK_BOOKINGS: BookingRecord[] = [
+const ALL_MOCK_BOOKINGS: BookingRecordWithTasks[] = [
   {
     id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
     tenantId: 't-test-001', customerId: null, vehicleId: null,
@@ -28,6 +37,13 @@ const ALL_MOCK_BOOKINGS: BookingRecord[] = [
     vehicleMake: 'Toyota', vehicleModel: 'Corolla', vehicleYear: 2020, vehicleRego: 'CAB-1234',
     notes: 'Please check the front left tire — customer mentioned vibration at high speed.',
     createdAt: '2026-04-01T10:22:00Z', updatedAt: '2026-04-02T08:15:00Z',
+    tasks: [
+      { id: 't1', label: 'Oil Change',       done: true  },
+      { id: 't2', label: 'Brake Inspection', done: true  },
+      { id: 't3', label: 'Wheel Alignment',  done: false },
+      { id: 't4', label: 'Filter Check',     done: false },
+    ],
+    taskProgress: 50,
   },
   {
     id: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
@@ -39,6 +55,12 @@ const ALL_MOCK_BOOKINGS: BookingRecord[] = [
     vehicleMake: 'Honda', vehicleModel: 'Civic', vehicleYear: 2019, vehicleRego: 'WP-5678',
     notes: null,
     createdAt: '2026-03-30T08:00:00Z', updatedAt: '2026-03-30T08:00:00Z',
+    tasks: [
+      { id: 't1', label: 'Engine Check',   done: false },
+      { id: 't2', label: 'Fluid Top-Up',   done: false },
+      { id: 't3', label: 'Tyre Pressure',  done: false },
+    ],
+    taskProgress: 0,
   },
   {
     id: 'c3d4e5f6-a7b8-9012-cdef-012345678902',
@@ -50,6 +72,13 @@ const ALL_MOCK_BOOKINGS: BookingRecord[] = [
     vehicleMake: 'Nissan', vehicleModel: 'X-Trail', vehicleYear: 2021, vehicleRego: 'NW-9012',
     notes: 'Customer needs certificate urgently.',
     createdAt: '2026-04-01T09:00:00Z', updatedAt: '2026-04-01T09:00:00Z',
+    tasks: [
+      { id: 't1', label: 'Visual Inspection', done: false },
+      { id: 't2', label: 'Brake Test',        done: false },
+      { id: 't3', label: 'Lights Check',      done: false },
+      { id: 't4', label: 'Certificate Issue', done: false },
+    ],
+    taskProgress: 0,
   },
   {
     id: 'd4e5f6a7-b8c9-0123-def0-123456789003',
@@ -61,6 +90,12 @@ const ALL_MOCK_BOOKINGS: BookingRecord[] = [
     vehicleMake: 'Suzuki', vehicleModel: 'Swift', vehicleYear: 2022, vehicleRego: 'SP-3456',
     notes: null,
     createdAt: '2026-03-29T10:00:00Z', updatedAt: '2026-04-01T14:00:00Z',
+    tasks: [
+      { id: 't1', label: 'AC Gas Refill',    done: true  },
+      { id: 't2', label: 'AC Filter Clean',  done: true  },
+      { id: 't3', label: 'Oil Change',       done: true  },
+    ],
+    taskProgress: 100,
   },
   {
     id: 'e5f6a7b8-c9d0-1234-ef01-234567890004',
@@ -72,6 +107,12 @@ const ALL_MOCK_BOOKINGS: BookingRecord[] = [
     vehicleMake: 'Mitsubishi', vehicleModel: 'Outlander', vehicleYear: 2018, vehicleRego: 'CP-7890',
     notes: null,
     createdAt: '2026-03-25T07:00:00Z', updatedAt: '2026-03-28T13:00:00Z',
+    tasks: [
+      { id: 't1', label: 'Brake Pad Check',  done: true },
+      { id: 't2', label: 'Brake Fluid',      done: true },
+      { id: 't3', label: 'Rotor Inspection', done: true },
+    ],
+    taskProgress: 100,
   },
   {
     id: 'f6a7b8c9-d0e1-2345-f012-345678900005',
@@ -83,6 +124,13 @@ const ALL_MOCK_BOOKINGS: BookingRecord[] = [
     vehicleMake: 'Toyota', vehicleModel: 'Prius', vehicleYear: 2020, vehicleRego: 'WP-2233',
     notes: null,
     createdAt: '2026-03-20T09:00:00Z', updatedAt: '2026-03-25T17:00:00Z',
+    tasks: [
+      { id: 't1', label: 'Oil Change',      done: true },
+      { id: 't2', label: 'Filter Replace',  done: true },
+      { id: 't3', label: 'Tyre Rotation',   done: true },
+      { id: 't4', label: 'Full Inspection', done: true },
+    ],
+    taskProgress: 100,
   },
   {
     id: 'a7b8c9d0-e1f2-3456-0123-456789000006',
@@ -110,7 +158,7 @@ const ALL_MOCK_BOOKINGS: BookingRecord[] = [
 
 const TODAY = '2026-04-02';
 
-const BOOKINGS_BY_VIEW: Record<string, BookingRecord[]> = {
+const BOOKINGS_BY_VIEW: Record<string, BookingRecordWithTasks[]> = {
   '/bookings/dashboard': ALL_MOCK_BOOKINGS.filter((b) => b.bookingDate === TODAY),
   '/bookings/pending':   ALL_MOCK_BOOKINGS.filter((b) => b.status === 'pending'),
   '/bookings/confirmed': ALL_MOCK_BOOKINGS.filter((b) => b.status === 'confirmed'),
@@ -119,7 +167,6 @@ const BOOKINGS_BY_VIEW: Record<string, BookingRecord[]> = {
 };
 
 const MOCK_BOOKING = ALL_MOCK_BOOKINGS[0];
-
 const MOCK_OTHER_BOOKINGS = ALL_MOCK_BOOKINGS.slice(1, 4);
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -166,7 +213,7 @@ function SkeletonBlock({ className = '' }: { className?: string }) {
 
 // ── Booking row ───────────────────────────────────────────────────────────────
 
-function BookingRow({ booking, onView }: { booking: BookingRecord; onView: () => void }) {
+function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onView: () => void }) {
   const sc = STATUS_CONFIG[booking.status];
   const d = (() => { try { return format(parseISO(booking.bookingDate), 'EEE, dd MMM yyyy'); } catch { return booking.bookingDate; } })();
   const vehicleLabel = [booking.vehicleMake, booking.vehicleModel].filter(Boolean).join(' ');
@@ -316,9 +363,10 @@ function BookingDetailView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [booking, setBooking] = useState<BookingRecord | null>(null);
+  const [booking, setBooking] = useState<BookingRecordWithTasks | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
+  const [expandedTaskCard, setExpandedTaskCard] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -618,6 +666,123 @@ function BookingDetailView() {
                     })}
                   </CardContent>
                 </Card>
+
+                {/* Task Progress Bar */}
+                {booking.tasks && booking.tasks.length > 0 && (() => {
+                  const doneCount = booking.tasks.filter(t => t.done).length;
+                  const totalCount = booking.tasks.length;
+                  const pct = booking.taskProgress || 0;
+                  const isComplete = pct === 100;
+                  return (
+                    <Card className="border-0 bg-white shadow-sm overflow-hidden">
+                      <CardContent className="p-3">
+                        <button
+                          onClick={() => setExpandedTaskCard((v) => !v)}
+                          className="w-full text-left group"
+                        >
+                          <div className={`relative rounded-2xl border p-4 transition-all duration-500 overflow-hidden ${
+                            isComplete
+                              ? 'bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 border-emerald-200/80'
+                              : 'bg-gradient-to-br from-neutral-50 via-white to-neutral-50/80 border-neutral-200/80'
+                          }`}>
+
+                            {/* Decorative background glow */}
+                            {isComplete && (
+                              <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-400/10 rounded-full blur-2xl -translate-y-6 translate-x-6" />
+                            )}
+
+                            {/* Header row */}
+                            <div className="flex items-center justify-between mb-3 relative z-10">
+                              <div className="flex items-center gap-2">
+                                <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                                  isComplete
+                                    ? 'bg-emerald-500 shadow-md shadow-emerald-500/25'
+                                    : 'bg-neutral-900 shadow-md shadow-neutral-900/15'
+                                }`}>
+                                  <i className={`fas ${isComplete ? 'fa-check-double' : 'fa-tasks'} text-white text-[10px]`} />
+                                </div>
+                                <div>
+                                  <span className="text-[11px] font-extrabold text-neutral-800 tracking-tight">Service Progress</span>
+                                  <p className="text-[9px] text-neutral-400 font-medium -mt-0.5">
+                                    {isComplete
+                                      ? 'All tasks completed'
+                                      : `${totalCount - doneCount} task${totalCount - doneCount !== 1 ? 's' : ''} remaining`}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                {/* Circular percentage */}
+                                <div className="relative w-10 h-10">
+                                  <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
+                                    <circle cx="18" cy="18" r="14" fill="none" stroke={isComplete ? '#d1fae5' : '#f5f5f5'} strokeWidth="3" />
+                                    <circle
+                                      cx="18" cy="18" r="14" fill="none"
+                                      stroke={isComplete ? '#10b981' : pct > 50 ? '#f59e0b' : '#3b82f6'}
+                                      strokeWidth="3"
+                                      strokeLinecap="round"
+                                      strokeDasharray={`${pct * 0.88} 88`}
+                                      className="transition-all duration-1000 ease-out"
+                                    />
+                                  </svg>
+                                  <span className={`absolute inset-0 flex items-center justify-center text-[9px] font-black ${
+                                    isComplete ? 'text-emerald-600' : 'text-neutral-700'
+                                  }`}>
+                                    {pct}%
+                                  </span>
+                                </div>
+                                <i className={`fas fa-chevron-down text-[9px] text-neutral-400 transition-transform duration-300 ${
+                                  expandedTaskCard ? 'rotate-180' : ''
+                                }`} />
+                              </div>
+                            </div>
+
+                            {/* Segmented step bars */}
+                            <div className="flex items-center gap-1 relative z-10">
+                              {booking.tasks.map((task, i) => (
+                                <div key={task.id || i} className="flex-1">
+                                  <div className={`w-full h-2 rounded-full transition-all duration-500 ${
+                                    task.done
+                                      ? isComplete
+                                        ? 'bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-sm shadow-emerald-500/20'
+                                        : 'bg-gradient-to-r from-amber-400 to-amber-500 shadow-sm shadow-amber-500/20'
+                                      : 'bg-neutral-200/80'
+                                  }`} />
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Expanded task list */}
+                            {expandedTaskCard && (
+                              <div className="mt-4 space-y-2 relative z-10">
+                                <Separator className="mb-3" />
+                                {booking.tasks.map((task, i) => (
+                                  <div key={task.id || i} className="flex items-center gap-2.5">
+                                    <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                      task.done
+                                        ? isComplete
+                                          ? 'bg-emerald-500'
+                                          : 'bg-amber-400'
+                                        : 'bg-neutral-200'
+                                    }`}>
+                                      {task.done && <i className="fas fa-check text-white text-[7px]" />}
+                                    </div>
+                                    <span className={`text-xs ${
+                                      task.done ? 'line-through text-neutral-400' : 'text-neutral-700 font-medium'
+                                    }`}>
+                                      {task.label}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+
               </div>
             </div>
           </div>
