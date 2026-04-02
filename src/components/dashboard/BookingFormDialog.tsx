@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { VehicleRecord } from '@/services/types';
 import { useToast } from '@/hooks/use-toast';
+import { useCreateBooking } from '@/hooks/useBmsBooking';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -44,7 +45,11 @@ interface BookingFormDialogProps {
   customerPhone: string;
   customerEmail: string;
   availableVehicles: VehicleRecord[];
+  tenantId?: string; // We might use this later to determine the branch
 }
+
+const OWNER_UID = import.meta.env.VITE_BMS_OWNER_UID as string;
+const BRANCH_ID = import.meta.env.VITE_BMS_BRANCH_ID as string || 'branch-1';
 
 export function BookingFormDialog({
   open,
@@ -55,6 +60,7 @@ export function BookingFormDialog({
   availableVehicles,
 }: BookingFormDialogProps) {
   const { toast } = useToast();
+  const { create, loading: submitting } = useCreateBooking({ ownerUid: OWNER_UID });
   const [bookingForm, setBookingForm] = useState<BookingFormValues>({
     customerName: '',
     customerPhone: '',
@@ -124,21 +130,46 @@ export function BookingFormDialog({
     }));
   };
 
-  const handleBookingSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleBookingSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!bookingForm.customerName || !bookingForm.customerPhone || !bookingForm.serviceType || !bookingForm.bookingDate || !bookingForm.dropOffTime) {
       toast({
         title: 'Missing required fields',
         description: 'Please complete customer details, service, date, and drop-off time.',
+        variant: 'destructive',
       });
       return;
     }
 
-    toast({
-      title: 'Booking drafted',
-      description: `${bookingForm.serviceType} for ${bookingForm.customerName} on ${bookingForm.bookingDate} at ${bookingForm.dropOffTime}.`,
-    });
-    onOpenChange(false);
+    const payload = {
+      branchId: BRANCH_ID,
+      client: bookingForm.customerName,
+      clientPhone: bookingForm.customerPhone,
+      clientEmail: bookingForm.customerEmail || undefined,
+      date: bookingForm.bookingDate,
+      time: bookingForm.dropOffTime,
+      pickupTime: bookingForm.pickupTime || undefined,
+      services: [{ serviceId: bookingForm.serviceType }],
+      vehicleNumber: bookingForm.vehicleRego || undefined,
+      vehicleDetails: [bookingForm.vehicleYear, bookingForm.vehicleMake, bookingForm.vehicleModel].filter(Boolean).join(' ') || undefined,
+      notes: bookingForm.notes || undefined,
+    };
+
+    const result = await create(payload);
+
+    if (result) {
+      toast({
+        title: 'Booking Created Successfully!',
+        description: `${bookingForm.serviceType} booked for ${bookingForm.customerName} on ${bookingForm.bookingDate}.`,
+      });
+      onOpenChange(false);
+    } else {
+      toast({
+        title: 'Booking Failed',
+        description: 'Ensure you have valid Firebase credentials configured.',
+        variant: 'destructive',
+      });
+    }
   };
 
   return (
@@ -310,10 +341,12 @@ export function BookingFormDialog({
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button type="submit">Create Booking</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'Creating...' : 'Create Booking'}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
