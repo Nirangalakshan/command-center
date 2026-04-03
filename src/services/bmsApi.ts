@@ -125,6 +125,14 @@ async function request<T>(
     ...(init.headers as Record<string, string> | undefined),
   };
 
+  // DEBUG: Log exactly what we're sending (remove after fixing)
+  console.log('[BMS API DEBUG]', {
+    url: `${BASE_URL}${path}`,
+    method: init.method ?? 'GET',
+    headers,
+    body: init.body ? JSON.parse(init.body as string) : undefined,
+  });
+
   const res = await fetch(`${BASE_URL}${path}`, { ...init, headers });
 
   if (!res.ok) {
@@ -250,6 +258,7 @@ export function bmsApi(idToken: string | null, ownerUid?: string | null) {
       method: 'POST',
       body: JSON.stringify(payload),
       token,
+      tenant,
     });
 
   const getBooking = (bookingId: string) =>

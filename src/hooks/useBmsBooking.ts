@@ -30,7 +30,7 @@ interface CreateBookingState {
  *   const result = await create({ branchId, date, time, services, client, clientPhone, ... });
  */
 export function useCreateBooking({ ownerUid }: UseCreateBookingOptions) {
-  const { idToken } = useFirebaseAuth();
+  const { idToken, firebaseUser } = useFirebaseAuth();
   const [state, setState] = useState<CreateBookingState>({
     loading: false,
     error: null,
@@ -41,9 +41,40 @@ export function useCreateBooking({ ownerUid }: UseCreateBookingOptions) {
     async (payload: Omit<CreateBookingPayload, 'ownerUid'>): Promise<BmsBooking | null> => {
       setState({ loading: true, error: null, booking: null });
       try {
+        // 1. Create booking in BMS
         const api = bmsApi(idToken, ownerUid);
         const result = await api.createBooking({ ...payload, ownerUid });
         setState({ loading: false, error: null, booking: result });
+
+        // 2. Save a local copy to Supabase with agent details
+        try {
+          const { supabase } = await import('@/integrations/supabase/client');
+          await (supabase as any).from('bms_bookings').insert({
+            bms_booking_id: result.id ?? null,
+            owner_uid: ownerUid,
+            branch_id: payload.branchId ?? null,
+            agent_uid: firebaseUser?.uid ?? null,
+            agent_email: firebaseUser?.email ?? null,
+            client_name: payload.client,
+            client_phone: payload.clientPhone ?? null,
+            client_email: payload.clientEmail ?? null,
+            customer_id: payload.customerId ?? null,
+            vehicle_number: payload.vehicleNumber ?? null,
+            vehicle_details: payload.vehicleDetails ?? null,
+            booking_date: payload.date,
+            booking_time: payload.time,
+            pickup_time: payload.pickupTime ?? null,
+            services: payload.services ?? [],
+            notes: payload.notes ?? null,
+            bms_status: result.status ?? 'Pending',
+            bms_response: result,
+          });
+          console.log('[Supabase] Booking saved locally with agent:', firebaseUser?.email);
+        } catch (sbErr) {
+          // Don't fail the whole flow if Supabase save fails — BMS booking already created
+          console.warn('[Supabase] Failed to save local booking copy:', sbErr);
+        }
+
         return result;
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Booking failed';
@@ -51,7 +82,7 @@ export function useCreateBooking({ ownerUid }: UseCreateBookingOptions) {
         return null;
       }
     },
-    [idToken, ownerUid],
+    [idToken, ownerUid, firebaseUser],
   );
 
   return { ...state, create };
