@@ -10,21 +10,33 @@ export type BookingServiceItem = {
   duration: number;
 };
 
+export type BookingService = {
+  name: string;
+  price: number;
+  staffName: string | null;
+  completionStatus: string;
+};
+
 export type Booking = {
   id: string;
-  ownerUid: string;
-  branchId: string;
+  bookingCode: string;
+  status: string;
   date: string;
   time: string;
   pickupTime?: string;
-  services: BookingServiceItem[];
-  client: string;
+  clientName: string;
   clientEmail: string;
   clientPhone: string;
-  customerId?: string;
   vehicleNumber?: string;
+  branchId: string;
+  branchName: string;
+  services: BookingService[];
+  totalPrice: number;
+  progress: { completed: number; total: number; percentage: number };
+  additionalIssueCount: number;
+  pendingApprovalCount: number;
   notes?: string;
-  source?: string;
+  createdAt: { _seconds: number; _nanoseconds: number };
 };
 
 export type AvailabilityResponse = {
@@ -94,6 +106,7 @@ export async function getBookings(
   }
 
   const json = await res.json();
+  console.log('[getBookings] response:', json);
   return json.bookings ?? [];
 }
 
@@ -141,10 +154,84 @@ export async function createBooking(data: {
 
 // ─── 4. GET Booking Detail ───────────────────────────────────────────────────
 
+export type BookingTask = {
+  id: string;
+  serviceId: string;
+  serviceName: string;
+  name: string;
+  description: string;
+  done: boolean;
+  imageUrl: string;
+  staffNote: string;
+  completedAt: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export type BookingServiceDetail = {
+  id: string;
+  name: string;
+  price: number;
+  duration: number;
+  staffId: string | null;
+  staffName: string | null;
+  approvalStatus: string;
+  completionStatus: string;
+  completedAt: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export type BookingActivity = {
+  id: string;
+  type: string;
+  message: string;
+  performedByName: string;
+  performedByRole: string;
+  timestamp: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export type BookingDetail = {
+  booking: {
+    id: string;
+    bookingCode: string;
+    status: string;
+    date: string;
+    time: string;
+    pickupTime?: string;
+    duration?: number;
+    totalPrice: number;
+    ownerUid: string;
+    branchId: string;
+    branchName: string;
+    client: string;
+    clientEmail: string;
+    clientPhone: string;
+    customerId?: string;
+    vehicleNumber?: string;
+    vehicleBodyType?: string;
+    vehicleColour?: string;
+    vehicleMileage?: string;
+    vehicleMake?: string;
+    vehicleModel?: string;
+    vehicleYear?: string;
+    vehicleVinChassis?: string;
+    vehicleEngineNumber?: string;
+    notes?: string;
+    source?: string;
+    createdAt: { _seconds: number; _nanoseconds: number };
+    updatedAt: { _seconds: number; _nanoseconds: number };
+  };
+  services: BookingServiceDetail[];
+  tasks: BookingTask[];
+  additionalIssues: Record<string, unknown>[];
+  progress: {
+    services: { completed: number; total: number; percentage: number };
+    tasks: { completed: number; total: number; percentage: number };
+  };
+  activities: BookingActivity[];
+};
+
 export async function getBookingById(
   ownerUid: string,
   bookingId: string,
-): Promise<any> {
+): Promise<BookingDetail> {
   const res = await fetch(
     `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`,
     {
@@ -164,7 +251,7 @@ export async function getBookingById(
 export async function getAdditionalIssues(
   ownerUid: string,
   bookingId: string,
-): Promise<any> {
+): Promise<Record<string, unknown>> {
   const res = await fetch(
     `${BASE_URL}/bookings/${bookingId}/additional-issues`,
     {
@@ -184,7 +271,7 @@ export async function updateIssueDecision(
   bookingId: string,
   issueId: string,
   customerResponse: 'accept' | 'reject',
-): Promise<any> {
+): Promise<Record<string, unknown>> {
   const res = await fetch(
     `${BASE_URL}/bookings/${bookingId}/additional-issues/${issueId}`,
     {
@@ -229,10 +316,21 @@ export async function createCallLog(data: {
   return await res.json();
 }
 
+export type CallLog = {
+  id: string;
+  callerPhone: string;
+  direction: string;
+  purpose: string;
+  duration: number;
+  notes?: string;
+  outcome?: string;
+  createdAt: { _seconds: number; _nanoseconds: number };
+};
+
 export async function getCallLogs(
   ownerUid: string,
   limit: number = 10,
-): Promise<any[]> {
+): Promise<CallLog[]> {
   const res = await fetch(
     `${BASE_URL}/call-logs?ownerUid=${ownerUid}&limit=${limit}`,
     {
@@ -252,7 +350,7 @@ export async function getCallLogs(
 
 // ─── 7. Webhooks ─────────────────────────────────────────────────────────────
 
-export async function getWebhooks(): Promise<any[]> {
+export async function getWebhooks(): Promise<Record<string, unknown>[]> {
   const res = await fetch(`${BASE_URL}/webhooks`, {
     headers: {
       'Content-Type': 'application/json',

@@ -155,8 +155,8 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
     ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
     : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200';
   const statusLabel = callerContext ? 'Known Customer' : contextLoading ? 'Searching...' : 'Unknown Caller';
- const canOpenBooking = detail?.mode === 'live';
- // const canOpenBooking = true;
+//  const canOpenBooking = detail?.mode === 'live';
+  const canOpenBooking = true;
   if (!detail) return null;
 
   return (
@@ -270,8 +270,8 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                             return;
                           }
                           if (command.label === 'Booking Details') {
-                             const booking = await fetchLatestBookingByPhone(detail.tenantId, detail.customerPhone);
-                            // const booking = true;
+                            // const booking = await fetchLatestBookingByPhone(detail.tenantId, detail.customerPhone);
+                             const booking = true;
                             if (booking) {
                               navigate(`/bookingsdetails`);
                             } else {

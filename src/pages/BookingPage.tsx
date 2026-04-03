@@ -37,7 +37,7 @@ interface ServiceType {
   color: string;
   image?: string;
 }
-const OWNER_UID = '89UqVYLG4MRllNRCrDsgBrIXsCK2';
+const OWNER_UID = (import.meta.env.VITE_OWNER_UID as string) ?? '89UqVYLG4MRllNRCrDsgBrIXsCK2';
 
 function generateTimeSlots(start: string, end: string, step = 30): string[] {
   const slots: string[] = [];
