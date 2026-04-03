@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { format, addDays, isBefore, startOfDay } from 'date-fns';
 import { ArrowLeft, CalendarPlus2, CarFront, Check, ChevronDown, ChevronUp, Clock, MapPin, Plus, CheckCircle2 } from 'lucide-react';
 import type { VehicleRecord } from '@/services/types';
-import { createBooking } from '@/services/dashboardApi';
+import { createBooking, type BookingServiceItem, type VehicleDetails } from '@/services/bookingsApi';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
+import { getServices, type WorkshopService } from '@/services/servicesApi';
 
 interface BookingPageState {
   tenantId: string;
@@ -36,49 +37,7 @@ interface ServiceType {
   color: string;
   image?: string;
 }
-
-const SERVICE_TYPES: ServiceType[] = [
-  {
-    value: 'General Service',
-    label: 'General Service',
-    duration: '90 min',
-    price: '$149',
-    color: '#f59e0b',
-    included: ['Oil & filter change', 'Tyre pressure check', 'Safety inspection', 'Fluid top-up'],
-  },
-  {
-    value: 'Oil Change',
-    label: 'Oil Change',
-    duration: '45 min',
-    price: '$79',
-    color: '#64748b',
-    included: ['Engine oil drain & refill', 'New oil filter', 'Oil level check'],
-  },
-  {
-    value: 'Brake Inspection',
-    label: 'Brake Inspection',
-    duration: '60 min',
-    price: '$99',
-    color: '#ef4444',
-    included: ['Front & rear pad inspection', 'Rotor thickness check', 'Brake fluid level', 'Test drive'],
-  },
-  {
-    value: 'Engine Diagnostics',
-    label: 'Engine Diagnostics',
-    duration: '75 min',
-    price: '$129',
-    color: '#8b5cf6',
-    included: ['OBD scan', 'Fault code report', 'Engine health check', 'Advisor consultation'],
-  },
-  {
-    value: 'AC Service',
-    label: 'AC Service',
-    duration: '60 min',
-    price: '$119',
-    color: '#0ea5e9',
-    included: ['Refrigerant recharge', 'Filter replacement', 'Compressor check', 'Vent temperature test'],
-  },
-];
+const OWNER_UID = '89UqVYLG4MRllNRCrDsgBrIXsCK2';
 
 function generateTimeSlots(start: string, end: string, step = 30): string[] {
   const slots: string[] = [];
@@ -220,9 +179,24 @@ export default function BookingPage() {
   const [pickupTime, setPickupTime] = useState('');
   const [notes, setNotes] = useState('');
 
+  // Services from Firebase API
+  const [services, setServices] = useState<WorkshopService[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(true);
+  const [servicesError, setServicesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getServices(OWNER_UID)
+      .then((data) => {
+        console.log('[BookingPage] services:', data);
+        setServices(data);
+      })
+      .catch((err: Error) => setServicesError(err.message))
+      .finally(() => setServicesLoading(false));
+  }, []);
+
   const availableVehicles: VehicleRecord[] = state?.availableVehicles ?? [];
   const workshopColor = state?.workshopColor || 'var(--cc-color-cyan)';
-  const chosenServices = SERVICE_TYPES.filter((s) => selectedServices.includes(s.value));
+  const chosenServices = services.filter((s) => selectedServices.includes(s.id));
   const toggleService = (value: string) =>
     setSelectedServices((prev) => prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]);
 
@@ -263,35 +237,56 @@ export default function BookingPage() {
   };
 
   const handleSubmit = async () => {
-    if (!state?.tenantId) {
-      toast({ title: 'Missing context', description: 'Open this page from a live call.', variant: 'destructive' });
-      return;
-    }
     if (!customerName || !customerPhone || selectedServices.length === 0 || !selectedDate || !dropOffTime) {
       toast({ title: 'Missing required fields', description: 'Please complete all required fields.' });
       return;
     }
-    const extraVehicleLines = [
-      vehicleMileage && `Mileage: ${vehicleMileage}`,
-      vehicleBodyType && `Body Type: ${vehicleBodyType}`,
-      vehicleEngineNumber && `Engine No: ${vehicleEngineNumber}`,
-    ].filter(Boolean).join('\n');
-    const fullNotes = [notes, extraVehicleLines].filter(Boolean).join('\n---\n');
+
+    // Build services payload from selected service objects
+    const serviceItems: BookingServiceItem[] = chosenServices.map((s) => ({
+      serviceId: s.id,
+      serviceName: s.name,
+      price: s.price,
+      duration: s.duration,
+    }));
+
+    // Use first branch from the first selected service
+    const branchId = chosenServices[0]?.branches?.[0] ?? '';
+
+    const vehicleDetails: VehicleDetails = {
+      make: vehicleMake || undefined,
+      model: vehicleModel || undefined,
+      year: vehicleYear || undefined,
+      registrationNumber: vehicleRego || undefined,
+      mileage: vehicleMileage || undefined,
+      bodyType: vehicleBodyType || undefined,
+      colour: vehicleColor || undefined,
+      vinChassis: vehicleVin || undefined,
+      engineNumber: vehicleEngineNumber || undefined,
+    };
+
+    const payload = {
+      ownerUid: OWNER_UID,
+      branchId,
+      date: format(selectedDate, 'yyyy-MM-dd'),
+      time: dropOffTime,
+      pickupTime: pickupTime || undefined,
+      services: serviceItems,
+      client: customerName,
+      clientEmail: customerEmail,
+      clientPhone: customerPhone,
+      customerId: state?.customerId ?? undefined,
+      vehicleDetails,
+      notes: notes || undefined,
+    };
+
+    console.log('[BookingPage] submitting payload:', payload);
 
     setSubmitting(true);
     try {
-      await createBooking({
-        tenantId: state.tenantId,
-        customerId: state.customerId ?? null,
-        vehicleId: selectedVehicleId !== 'new' ? selectedVehicleId : null,
-        vehicleRego, vehicleMake, vehicleModel, vehicleYear,
-        customerName, customerPhone, customerEmail,
-        serviceType: selectedServices.join(', '),
-        bookingDate: format(selectedDate, 'yyyy-MM-dd'),
-        dropOffTime, pickupTime,
-        notes: fullNotes,
-      });
-      toast({ title: 'Booking confirmed', description: `${selectedServices.join(', ')} booked for ${format(selectedDate, 'dd MMM yyyy')} at ${dropOffTime}` });
+      const result = await createBooking(payload);
+      console.log('[BookingPage] booking created:', result);
+      toast({ title: 'Booking confirmed!', description: `${chosenServices.map((s) => s.name).join(', ')} on ${format(selectedDate, 'dd MMM yyyy')} at ${dropOffTime}` });
       navigate(-1);
     } catch (error) {
       toast({ title: 'Booking failed', description: error instanceof Error ? error.message : 'Could not save booking.', variant: 'destructive' });
@@ -337,21 +332,40 @@ export default function BookingPage() {
           {/* Left: 2/3 */}
           <div className="space-y-6 lg:col-span-2">
 
-            {/* Services */}
-            <div>
-              <h1 className="text-2xl font-bold text-slate-950">Pick your services</h1>
-              <p className="mt-1 text-sm text-slate-500">Select one or more services for your visit</p>
-              <div className="mt-4 space-y-3">
-                {SERVICE_TYPES.map((s) => (
-                  <ServiceCard
-                    key={s.value}
-                    service={s}
-                    selected={selectedServices.includes(s.value)}
-                    onToggle={() => toggleService(s.value)}
-                  />
-                ))}
-              </div>
-            </div>
+        {/* Services */}
+<div>
+  <h1 className="text-2xl font-bold text-slate-950">Pick your services</h1>
+  <p className="mt-1 text-sm text-slate-500">Select one or more services for your visit</p>
+
+  {servicesLoading && (
+    <p className="mt-6 text-sm text-slate-400">Loading services…</p>
+  )}
+
+  {servicesError && (
+    <p className="mt-6 text-sm text-red-500">Failed to load services: {servicesError}</p>
+  )}
+
+  <div className="mt-4 space-y-3">
+    {services.map((s) => (
+      <ServiceCard
+        key={s.id}
+        service={{
+          value: s.id,
+          label: s.name,
+          image: s.imageUrl ?? undefined,
+          duration: s.duration < 60
+            ? `${s.duration} min`
+            : `${Math.floor(s.duration / 60)}h${s.duration % 60 ? ` ${s.duration % 60}m` : ''}`,
+          price: `$${s.price.toLocaleString()}`,
+          color: '#f59e0b',
+          included: s.checklist?.map((c) => c.name) ?? [],
+        }}
+        selected={selectedServices.includes(s.id)}
+        onToggle={() => toggleService(s.id)}
+      />
+    ))}
+  </div>
+</div>
 
             {/* Date & Time */}
             <Card className="border-0 bg-white shadow-sm">
@@ -418,7 +432,7 @@ export default function BookingPage() {
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500 text-white">
                     <CheckCircle2 className="h-5 w-5" />
                   </div>
-                  <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Your information</div>
+                  <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Client information</div>
                 </div>
                 <Separator className="mb-4" />
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -538,7 +552,7 @@ export default function BookingPage() {
                   <div className="mb-4 text-xs text-slate-500">
                     {selectedServices.length > 0 ? `${selectedServices.length} service${selectedServices.length > 1 ? 's' : ''} selected` : 'No service selected'}
                   </div>
-                  <Separator className="mb-4 bg-slate-700" />
+                  {/* <Separator className="mb-4 bg-slate-700" /> */}
 
                   {state?.workshopName && (
                     <div className="mb-3 flex items-start justify-between gap-2">
@@ -550,16 +564,17 @@ export default function BookingPage() {
                   )}
 
                   {chosenServices.map((s) => (
-                    <div key={s.value} className="mb-2 rounded-xl bg-slate-800 px-3 py-2">
+                    <div key={s.id} className="mb-2 rounded-xl bg-slate-800 px-3 py-2">
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-2 text-slate-200">
                           <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
-                          {s.label}
+                          {s.name}
                         </div>
-                        <span className="font-bold text-amber-400">{s.price}</span>
+                        <span className="font-bold text-amber-400">${s.price.toLocaleString()}</span>
                       </div>
                       <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                        <Clock className="h-3 w-3" />{s.duration}
+                        <Clock className="h-3 w-3" />
+                        {s.duration < 60 ? `${s.duration} min` : `${Math.floor(s.duration / 60)}h${s.duration % 60 ? ` ${s.duration % 60}m` : ''}`}
                       </div>
                     </div>
                   ))}
@@ -578,8 +593,17 @@ export default function BookingPage() {
                         <CarFront className="h-3.5 w-3.5" />
                         <span className="font-medium text-slate-300">{[vehicleMake, vehicleModel, vehicleYear].filter(Boolean).join(' ') || 'Vehicle'}</span>
                       </div>
-                      {vehicleRego && <div>Rego: <span className="text-white">{vehicleRego}</span></div>}
+                      {vehicleRego && <div>Reg: <span className="text-white">{vehicleRego}</span></div>}
                       {vehicleColor && <div>Colour: <span className="text-white">{vehicleColor}</span></div>}
+                    </div>
+                  )}
+
+                  {chosenServices.length > 0 && (
+                    <div className="mb-4 flex items-center justify-between rounded-xl bg-amber-400/10 px-3 py-2">
+                      <span className="text-sm font-semibold text-slate-300">Total</span>
+                      <span className="text-lg font-bold text-amber-400">
+                        ${chosenServices.reduce((sum, s) => sum + s.price, 0).toLocaleString()}
+                      </span>
                     </div>
                   )}
 
