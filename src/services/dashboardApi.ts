@@ -195,13 +195,17 @@ export async function fetchAgentGroups(tenantId?: string | null): Promise<AgentG
 /* ─── DID Mappings ─── */
 
 export async function fetchDIDMappings(): Promise<DIDMapping[]> {
-  const { data, error } = await supabase.from('did_mappings').select('*');
+  const { data, error } = await dynamicSupabase.from('did_mappings').select('*');
   if (error) throw new Error(error.message);
-  return (data || []).map((d) => ({
-    did: d.did,
-    tenantId: d.tenant_id,
-    queueId: d.queue_id,
-    label: d.label,
+  return (data || []).map((d: Record<string, unknown>) => ({
+    did: String(d.did ?? ''),
+    tenantId: String(d.tenant_id ?? ''),
+    queueId: String(d.queue_id ?? ''),
+    label: String(d.label ?? ''),
+    branchId: String(d.branch_id ?? ''),
+    branchName: String(d.branch_name ?? ''),
+    mappingWorkshopName: String(d.workshop_name ?? ''),
+    ownerId: String(d.owner_id ?? ''),
   }));
 }
 

@@ -277,6 +277,10 @@ async function handleIncomingCall(body: Record<string, unknown>) {
     groupId: context.queueId === 'unknown' ? '' : context.queueId,
     groupName: context.queueName === 'Inbound' ? '' : context.queueName,
     didLabel: context.didLabel || did || trunkName || extension,
+    branchId: context.branchId,
+    branchName: context.branchName,
+    mappingWorkshopName: context.mappingWorkshopName,
+    ownerId: context.ownerId,
     waitingSince: Date.now(),
     status: 'ringing' as const,
   };
@@ -442,13 +446,17 @@ async function resolveIncomingContext(args: {
   queueId: string;
   queueName: string;
   didLabel: string;
+  branchId: string;
+  branchName: string;
+  mappingWorkshopName: string;
+  ownerId: string;
 }> {
   const { did, extension, trunkName } = args;
 
   if (did) {
     const { data: mapping } = await supabase
       .from('did_mappings')
-      .select('tenant_id, queue_id, label, tenants(name, brand_color), queues(name)')
+      .select('tenant_id, queue_id, label, branch_id, branch_name, workshop_name, owner_id, tenants(name, brand_color), queues(name)')
       .eq('did', did)
       .maybeSingle();
 
@@ -460,6 +468,10 @@ async function resolveIncomingContext(args: {
         queueId: mapping.queue_id ?? 'unknown',
         queueName: (mapping as any)?.queues?.name ?? 'Inbound',
         didLabel: mapping.label ?? did,
+        branchId: mapping.branch_id ?? '',
+        branchName: mapping.branch_name ?? '',
+        mappingWorkshopName: mapping.workshop_name ?? '',
+        ownerId: mapping.owner_id ?? '',
       };
     }
   }
@@ -493,6 +505,10 @@ async function resolveIncomingContext(args: {
         queueId,
         queueName,
         didLabel: trunkName || extension,
+        branchId: '',
+        branchName: '',
+        mappingWorkshopName: '',
+        ownerId: '',
       };
     }
   }
@@ -518,6 +534,10 @@ async function resolveIncomingContext(args: {
         queueId: 'unknown',
         queueName: 'Inbound',
         didLabel: line.label ?? trunkName,
+        branchId: '',
+        branchName: '',
+        mappingWorkshopName: '',
+        ownerId: '',
       };
     }
   }
@@ -529,6 +549,10 @@ async function resolveIncomingContext(args: {
     queueId: 'unknown',
     queueName: 'Inbound',
     didLabel: did || trunkName || extension,
+    branchId: '',
+    branchName: '',
+    mappingWorkshopName: '',
+    ownerId: '',
   };
 }
 

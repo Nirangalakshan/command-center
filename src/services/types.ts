@@ -425,6 +425,10 @@ export interface DIDMapping {
   tenantId: string;
   queueId: string;
   label: string;
+  branchId: string;
+  branchName: string;
+  mappingWorkshopName: string;
+  ownerId: string;
 }
 
 export type IncomingCallStatus = 'ringing' | 'queued';
@@ -442,6 +446,10 @@ export interface IncomingCall {
   groupId: string;
   groupName: string;
   didLabel: string;
+  branchId: string;
+  branchName: string;
+  mappingWorkshopName: string;
+  ownerId: string;
   waitingSince: number;
   status: IncomingCallStatus;
 }
