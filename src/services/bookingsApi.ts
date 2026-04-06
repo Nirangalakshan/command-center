@@ -1,6 +1,27 @@
 import { auth } from '@/lib/firebase';
 import { getIdToken } from 'firebase/auth';
 
+/** Resolves the workshop ownerUid from .env */
+export async function resolveOwnerUid(): Promise<string> {
+  // TODO: get ownerUid from Firebase auth after login
+  // let user = auth.currentUser;
+  // if (!user) {
+  //   const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
+  //   const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
+  //   if (email && password) {
+  //     try {
+  //       const cred = await signInWithEmailAndPassword(auth, email, password);
+  //       user = cred.user;
+  //     } catch (err) {
+  //       console.error('[bookingsApi] Auto-login failed:', err);
+  //     }
+  //   }
+  // }
+  // return user?.uid ?? (import.meta.env.VITE_OWNER_UID as string) ?? '';
+
+  return (import.meta.env.VITE_OWNER_UID as string) ?? '';
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type BookingServiceItem = {

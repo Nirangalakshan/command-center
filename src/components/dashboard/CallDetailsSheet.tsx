@@ -240,8 +240,8 @@ export function CallDetailsSheet({
     : contextLoading
       ? "Searching..."
       : "Unknown Caller";
-  const canOpenBooking = detail?.mode === "live";
-  // const canOpenBooking = true;
+ // const canOpenBooking = detail?.mode === "live";
+   const canOpenBooking = true;
   if (!detail) return null;
 
   return (
@@ -400,11 +400,12 @@ export function CallDetailsSheet({
                             return;
                           }
                           if (command.label === "Booking Details") {
-                            const booking = await fetchLatestBookingByPhone(
-                              detail.ownerId || detail.tenantId,
-                              detail.customerPhone,
-                            );
-                            // const booking = true;
+                            // const booking = await fetchLatestBookingByPhone(
+                            //   detail.ownerId || detail.tenantId,
+                            //   detail.customerPhone,
+                            // );
+                            
+                            const booking = true;
                             if (booking) {
                               navigate(`/bookings/dashboard`, {
                                 state: {

@@ -17,6 +17,7 @@ import {
 import type { VehicleRecord } from "@/services/types";
 import {
   createBooking,
+  resolveOwnerUid,
   type BookingServiceItem,
   type VehicleDetails,
 } from "@/services/bookingsApi";
@@ -61,7 +62,6 @@ interface ServiceType {
   color: string;
   image?: string;
 }
-const OWNER_UID = (import.meta.env.VITE_OWNER_UID as string) ?? '89UqVYLG4MRllNRCrDsgBrIXsCK2';
 
 function generateTimeSlots(start: string, end: string, step = 30): string[] {
   const slots: string[] = [];
@@ -248,20 +248,21 @@ export default function BookingPage() {
   const [servicesError, setServicesError] = useState<string | null>(null);
 
   useEffect(() => {
-    const ownerIdToUse = state?.ownerId || OWNER_UID;
-    const branchIdToUse = state?.branchId;
-
-    const fetchPromise = branchIdToUse
-      ? getServicesByBranch(ownerIdToUse, branchIdToUse)
-      : getServices(ownerIdToUse);
-
-    fetchPromise
-      .then((data) => {
-        console.log("[BookingPage] services:", data);
+    async function load() {
+      const ownerIdToUse = state?.ownerId || await resolveOwnerUid();
+      const branchIdToUse = state?.branchId;
+      try {
+        const data = branchIdToUse
+          ? await getServicesByBranch(ownerIdToUse, branchIdToUse)
+          : await getServices(ownerIdToUse);
         setServices(data);
-      })
-      .catch((err: Error) => setServicesError(err.message))
-      .finally(() => setServicesLoading(false));
+      } catch (err) {
+        setServicesError((err as Error).message);
+      } finally {
+        setServicesLoading(false);
+      }
+    }
+    load();
   }, [state?.branchId, state?.ownerId]);
 
   const availableVehicles: VehicleRecord[] = state?.availableVehicles ?? [];

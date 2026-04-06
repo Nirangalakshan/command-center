@@ -1,36 +1,61 @@
 import '@/styles/dashboard.css';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import BookingSidebar from '../tabs/BookingSidebar';
 import {
   ArrowLeft, CalendarDays, CarFront, CheckCircle2, Clock,
   FileText, Phone, Mail, User, Wrench, Flag, Ban, LayoutDashboard,
-  Eye, ChevronDown, ChevronUp, Activity,
+  Eye, ChevronDown, ChevronUp, Activity, CalendarCheck,
 } from 'lucide-react';
-import { getBookingById, getBookings, type Booking, type BookingDetail } from '@/services/bookingsApi';
+import { getBookingById, getBookings, resolveOwnerUid, type Booking, type BookingDetail, type BookingService, type BookingTask } from '@/services/bookingsApi';
+import type { BookingStatus } from '@/services/types';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
+type PageMeta = { title: string; subtitle: string; icon: React.ReactNode };
 
+const PAGE_META: Record<string, PageMeta> = {
+  '/bookings/dashboard': { title: "Today's Bookings",   subtitle: 'All bookings for today',        icon: <LayoutDashboard className="h-6 w-6 text-white" /> },
+  '/bookings/pending':   { title: 'Booking Requests',   subtitle: 'Awaiting confirmation',         icon: <Clock className="h-6 w-6 text-white" /> },
+  '/bookings/confirmed': { title: 'Confirmed Bookings', subtitle: 'Confirmed and upcoming',        icon: <CalendarCheck className="h-6 w-6 text-white" /> },
+  '/bookings/completed': { title: 'Completed Bookings', subtitle: 'Successfully completed jobs',   icon: <Flag className="h-6 w-6 text-white" /> },
+  '/bookings/cancelled': { title: 'Cancelled Bookings', subtitle: 'Cancelled or rejected bookings',icon: <Ban className="h-6 w-6 text-white" /> },
+};
 
-type Task = { id: string; label: string; done: boolean };
+type BookingRecordWithTasks = {
+  id: string;
+  status: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  serviceType: string;
+  bookingDate: string;
+  dropOffTime: string;
+  pickupTime: string;
+  vehicleMake: string;
+  vehicleModel: string;
+  vehicleYear: number | null;
+  vehicleRego: string;
+  notes: string;
+  tasks: BookingTask[];
+  totalPrice: number;
+  progress: { completed: number; total: number; percentage: number };
+};
 
-type BookingRecordWithTasks = any; 
-
-const MOCK_OTHER_BOOKINGS: any[] = [];
+const MOCK_OTHER_BOOKINGS: BookingRecordWithTasks[] = [];
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
-  Pending:   { label: 'Pending',   className: 'bg-amber-100 text-amber-800 border-amber-200' },
-  Confirmed: { label: 'Confirmed', className: 'bg-blue-100 text-blue-800 border-blue-200' },
-  Completed: { label: 'Completed', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-  Cancelled: { label: 'Cancelled', className: 'bg-rose-100 text-rose-800 border-rose-200' },
-  Canceled:  { label: 'Canceled',  className: 'bg-rose-100 text-rose-800 border-rose-200' },
+  pending:   { label: 'Pending',   className: 'bg-amber-100 text-amber-800 border-amber-200' },
+  confirmed: { label: 'Confirmed', className: 'bg-blue-100 text-blue-800 border-blue-200' },
+  completed: { label: 'Completed', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+  Canceled: { label: 'Cancelled', className: 'bg-rose-100 text-rose-800 border-rose-200' },
+  canceled:  { label: 'Canceled',  className: 'bg-rose-100 text-rose-800 border-rose-200' },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -126,53 +151,59 @@ function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onVi
 function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<BookingRecordWithTasks[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
-    const branchId = location.state?.branchId;
-
-    getBookings(ownerUid, 100).then(data => {
-      let filtered = data;
-      if (branchId) {
-        filtered = filtered.filter(b => b.branchId === branchId);
+    async function load() {
+      const ownerUid = location.state?.ownerId || await resolveOwnerUid();
+      const branchId = location.state?.branchId;
+      try {
+        const data = await getBookings(ownerUid, 100);
+        let filtered = data;
+        if (branchId) {
+          filtered = filtered.filter(b => b.branchId === branchId);
+        }
+        const mapped = filtered.map(b => ({
+          id: b.id,
+          status: (b.status || 'pending').toLowerCase(),
+          customerName: b.clientName || 'Unknown',
+          customerPhone: b.clientPhone || '',
+          customerEmail: b.clientEmail || '',
+          serviceType: b.services?.map(s => s.name).join(', ') || 'General Service',
+          bookingDate: b.date || '',
+          dropOffTime: b.time || '',
+          pickupTime: b.pickupTime || '',
+          vehicleMake: '',
+          vehicleModel: '',
+          vehicleYear: null,
+          vehicleRego: b.vehicleNumber || '',
+          notes: b.notes || '',
+          tasks: [],
+          totalPrice: b.totalPrice ?? 0,
+          progress: b.progress ?? { completed: 0, total: 0, percentage: 0 },
+        }));
+        const todayStr = new Date().toISOString().slice(0, 10);
+        let finalBookings = mapped;
+        if (pathname === '/bookings/dashboard') {
+          finalBookings = mapped.filter(b => b.bookingDate === todayStr);
+        } else if (pathname === '/bookings/pending') {
+          finalBookings = mapped.filter(b => b.status === 'pending');
+        } else if (pathname === '/bookings/confirmed') {
+          finalBookings = mapped.filter(b => b.status === 'confirmed');
+        } else if (pathname === '/bookings/completed') {
+          finalBookings = mapped.filter(b => b.status === 'completed');
+        } else if (pathname === '/bookings/cancelled') {
+          finalBookings = mapped.filter(b => b.status === 'cancelled' || b.status === 'canceled');
+        }
+        setBookings(finalBookings);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
       }
-      
-      const mapped = filtered.map(b => ({
-         id: b.id,
-         status: (b as any).status || 'pending',
-         customerName: b.client || 'Unknown',
-         customerPhone: b.clientPhone || '',
-         customerEmail: b.clientEmail || '',
-         serviceType: b.services?.map(s => s.serviceName).join(', ') || 'General Service',
-         bookingDate: b.date || '',
-         dropOffTime: b.time || '',
-         pickupTime: b.pickupTime || '',
-         vehicleMake: '',
-         vehicleModel: '',
-         vehicleYear: null,
-         vehicleRego: b.vehicleNumber || '',
-         notes: b.notes || '',
-         tasks: [],
-      }));
-
-      // If we are on a specific filter tab
-      let finalBookings = mapped;
-      if (pathname === '/bookings/pending') {
-        finalBookings = mapped.filter(b => b.status === 'pending');
-      } else if (pathname === '/bookings/confirmed') {
-        finalBookings = mapped.filter(b => b.status === 'confirmed');
-      } else if (pathname === '/bookings/completed') {
-        finalBookings = mapped.filter(b => b.status === 'completed');
-      } else if (pathname === '/bookings/cancelled') {
-        finalBookings = mapped.filter(b => b.status === 'cancelled');
-      }
-
-      setBookings(finalBookings);
-    })
-    .catch(console.error)
-    .finally(() => setLoading(false));
+    }
+    load();
   }, [pathname, location.state]);
 
   return (
@@ -203,7 +234,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
             <div className="text-lg font-semibold text-slate-500">{meta.title}</div>
             <p className="text-sm text-slate-400">No bookings found.</p>
           </div>
-        ):}
+        ) : null}
 
         {!loading && bookings.length > 0 && (
           <Card className="border-0 bg-white shadow-sm overflow-hidden">
@@ -223,7 +254,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                 <tbody>
                   {bookings.map((b) => {
                     const sc = STATUS_CONFIG[b.status] ?? { label: b.status, className: 'bg-slate-100 text-slate-600' };
-                    const d = (() => { try { return format(new Date(b.date), 'dd MMM yyyy'); } catch { return b.date; } })();
+                    const d = (() => { try { return format(parseISO(b.bookingDate), 'dd MMM yyyy'); } catch { return b.bookingDate; } })();
                     return (
                       <tr
                         key={b.id}
@@ -232,15 +263,15 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-neutral-800 text-sm font-bold text-white">
-                              {b.clientName.charAt(0).toUpperCase()}
+                              {b.customerName.charAt(0).toUpperCase()}
                             </div>
                             <div>
-                              <div className="text-sm font-semibold text-slate-900">{b.clientName}</div>
-                              <div className="text-xs text-slate-400">{b.bookingCode}</div>
+                              <div className="text-sm font-semibold text-slate-900">{b.customerName}</div>
+                              <div className="text-xs text-slate-400">{b.customerPhone}</div>
                               <div className="mt-1 flex flex-wrap gap-1">
-                                {b.services.map((s) => (
-                                  <span key={s.name} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200">
-                                    {s.name}
+                                {String(b.serviceType || '').split(',').map((s) => (
+                                  <span key={s.trim()} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200">
+                                    {s.trim()}
                                   </span>
                                 ))}
                               </div>
@@ -252,7 +283,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                             <CalendarDays className="h-3.5 w-3.5" />{d}
                           </div>
                           <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
-                            <Clock className="h-3.5 w-3.5" />{b.time}
+                            <Clock className="h-3.5 w-3.5" />{b.dropOffTime}
                           </div>
                           {b.pickupTime && (
                             <div className="mt-0.5 flex items-center gap-1 text-xs text-sky-600">
@@ -261,7 +292,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                           )}
                         </td>
                         <td className="px-4 py-3 text-xs text-slate-600">
-                          {b.vehicleNumber ?? '—'}
+                          {b.vehicleRego || '—'}
                         </td>
                         <td className="px-4 py-3 text-sm font-bold text-slate-900">
                           ${b.totalPrice.toLocaleString()}
@@ -324,37 +355,22 @@ function BookingDetailView() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
-    
-    // For single detail view, fetch all and find it, or use getBookingById if it exists
-    getBookings(ownerUid, 100).then(data => {
-      const b: any = data.find(x => x.id === id);
-      if (b) {
-        setBooking({
-           id: b.id,
-           status: b.status || 'pending',
-           customerName: b.client || 'Unknown',
-           customerPhone: b.clientPhone || '',
-           customerEmail: b.clientEmail || '',
-           serviceType: b.services?.map((s: any) => s.serviceName).join(', ') || 'General Service',
-           bookingDate: b.date || '',
-           dropOffTime: b.time || '',
-           pickupTime: b.pickupTime || '',
-           vehicleMake: '',
-           vehicleModel: '',
-           vehicleYear: null,
-           vehicleRego: b.vehicleNumber || '',
-           notes: b.notes || '',
-           tasks: [],
-        });
+    async function load() {
+      const ownerUid = location.state?.ownerId || await resolveOwnerUid();
+      try {
+        const data = await getBookingById(ownerUid, id!);
+        setDetail(data);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
       }
-    })
-    .catch(console.error)
-    .finally(() => setLoading(false));
+    }
+    load();
   }, [id, location.state]);
 
   const b = detail?.booking ?? null;
-  const statusCfg = b ? (STATUS_CONFIG[b.status] ?? { label: b.status, className: 'bg-slate-100 text-slate-600' }) : null;
+  const statusCfg = b ? (STATUS_CONFIG[b.status.toLowerCase()] ?? { label: b.status, className: 'bg-slate-100 text-slate-600' }) : null;
   const formattedDate = b?.date ? (() => { try { return format(new Date(b.date), 'EEEE, dd MMMM yyyy'); } catch { return b.date; } })() : null;
   const tasks = detail?.tasks ?? [];
   const taskPct = detail?.progress.tasks.percentage ?? 0;
