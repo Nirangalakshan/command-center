@@ -84,8 +84,12 @@ export async function getBookingAvailability(
 export async function getBookings(
   ownerUid: string,
   limit: number = 25,
+  branchId?: string,
 ): Promise<Booking[]> {
-  const res = await fetch(`${BASE_URL}/bookings?limit=${limit}`, {
+  const url = new URL(`${BASE_URL}/bookings`);
+  url.searchParams.set('limit', limit.toString());
+
+  const res = await fetch(url.toString(), {
     headers: await apiHeaders(ownerUid),
   });
 
@@ -94,7 +98,18 @@ export async function getBookings(
   }
 
   const json = await res.json();
-  return json.bookings ?? [];
+  let bookings: Booking[] = json.bookings ?? [];
+  
+  if (branchId) {
+    console.warn(`[getBookings] Filtering ${bookings.length} bookings by branchId: "${branchId}"`);
+    bookings = bookings.filter((b: any) => {
+      const bBranchId = b.branchId || b.branch_id || b.branchId;
+      return bBranchId === branchId;
+    });
+    console.warn(`[getBookings] Results after filter: ${bookings.length}`);
+  }
+  
+  return bookings;
 }
 
 // ─── 3. POST Create Booking ──────────────────────────────────────────────────

@@ -590,22 +590,54 @@ export async function updateBookingStatus(id: string, status: BookingStatus): Pr
   if (error) throw new Error(error.message);
 }
 
-export async function fetchLatestBookingByPhone(tenantId: string, phone: string): Promise<BookingRecord | null> {
+export async function fetchLatestBookingByPhone(
+  tenantId: string,
+  phone: string,
+  branchId?: string,
+): Promise<BookingRecord | null> {
   try {
-    const bookings = await getBookings(tenantId, 100);
+    // Fetch latest bookings for this owner (and branch if provided) from Firebase
+    const bookings = await getBookings(tenantId, 50, branchId);
     const normalizedPhone = phone.replace(/\D/g, '');
     
+    // Support Sri Lanka specific formatting cases for the local 10-digit number
+    const localPhone = normalizedPhone.startsWith('94') && normalizedPhone.length === 11 
+      ? `0${normalizedPhone.slice(2)}` 
+      : normalizedPhone;
+
     const matching = bookings.filter(b => {
-      if (!b.clientPhone) return false;
-      return b.clientPhone === phone || b.clientPhone.replace(/\D/g, '') === normalizedPhone;
+      const bPhone = (b.clientPhone || '').replace(/\D/g, '');
+      return bPhone === normalizedPhone || bPhone === localPhone;
     });
 
     if (matching.length === 0) return null;
     
     // Sort descending by date
     matching.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const b = matching[0];
     
-    return matching[0] as unknown as BookingRecord;
+    // Map to BookingRecord for UI compatibility
+    return {
+      id: b.id,
+      tenantId,
+      customerId: b.customerId || null,
+      vehicleId: null,
+      vehicleRego: b.vehicleNumber || null,
+      vehicleMake: null,
+      vehicleModel: null,
+      vehicleYear: null,
+      customerName: b.client || 'Unknown',
+      customerPhone: b.clientPhone || '',
+      customerEmail: b.clientEmail || null,
+      serviceType: b.services?.map(s => s.serviceName).join(', ') || 'General Service',
+      bookingDate: b.date,
+      dropOffTime: b.time,
+      pickupTime: b.pickupTime || null,
+      notes: b.notes || null,
+      status: 'confirmed', // Fallback status
+      createdAt: b.date,
+      updatedAt: b.date,
+    } as unknown as BookingRecord;
   } catch (error) {
     console.warn("fetchLatestBookingByPhone Firebase error:", error);
     return null;

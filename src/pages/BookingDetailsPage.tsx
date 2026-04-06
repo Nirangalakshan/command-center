@@ -275,15 +275,16 @@ function BookingListView({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const locationState = location.state as any;
     const ownerUid =
-      location.state?.ownerId || localStorage.getItem("cc_last_owner_id");
+      locationState?.ownerId || localStorage.getItem("cc_last_owner_id");
     const branchId =
-      location.state?.branchId || localStorage.getItem("cc_last_branch_id");
+      locationState?.branchId || localStorage.getItem("cc_last_branch_id");
 
-    if (location.state?.ownerId)
-      localStorage.setItem("cc_last_owner_id", location.state.ownerId);
-    if (location.state?.branchId)
-      localStorage.setItem("cc_last_branch_id", location.state.branchId);
+    if (locationState?.ownerId)
+      localStorage.setItem("cc_last_owner_id", locationState.ownerId);
+    if (locationState?.branchId)
+      localStorage.setItem("cc_last_branch_id", locationState.branchId);
 
     if (!ownerUid) {
       setBookings([]);
@@ -291,21 +292,16 @@ function BookingListView({
       return;
     }
 
-    getBookings(ownerUid, 100)
+    getBookings(ownerUid, 100, branchId)
       .then((data) => {
-        let filtered = data;
-        if (branchId) {
-          filtered = filtered.filter((b) => b.branchId === branchId);
-        }
-
-        const mapped = filtered.map((b: any, index) => ({
+        const mapped = data.map((b: any, index) => ({
           id: b.id || b.bookingId || `fallback-id-${index}`,
           status: ((b as any).status || "pending").toLowerCase(),
           customerName: b.client || b.customerName || b.clientName || "Unknown",
           customerPhone: b.clientPhone || b.customerPhone || "",
           customerEmail: b.clientEmail || b.customerEmail || "",
           serviceType:
-            b.services?.map((s) => s.serviceName).join(", ") ||
+            (b as any).services?.map((s: any) => s.serviceName).join(", ") ||
             "General Service",
           bookingDate: b.date || "",
           dropOffTime: b.time || "",
@@ -315,7 +311,7 @@ function BookingListView({
           vehicleYear: null,
           vehicleRego: b.vehicleNumber || "",
           notes: b.notes || "",
-          tasks: [],
+          tasks: b.tasks || [],
         }));
 
         // If we are on a specific filter tab
@@ -334,7 +330,7 @@ function BookingListView({
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [pathname, location.state]);
+  }, [pathname, location.state, location.pathname]);
 
   return (
     <div className="cc-fade-in flex-1 overflow-y-auto bg-[#f5f5f5]">
@@ -442,14 +438,16 @@ function BookingDetailView() {
     setLoading(true);
     const ownerUid =
       location.state?.ownerId || localStorage.getItem("cc_last_owner_id");
+    const branchId =
+      location.state?.branchId || localStorage.getItem("cc_last_branch_id");
 
     if (!ownerUid) {
       setLoading(false);
       return;
     }
 
-    // For single detail view, fetch all and find it, or use getBookingById if it exists
-    getBookings(ownerUid, 100)
+    // For single detail view, fetch latest bookings for this branch
+    getBookings(ownerUid, 100, branchId)
       .then((data) => {
         const b: any = data.find((x: any) => (x.id || x.bookingId) === id);
         if (b) {

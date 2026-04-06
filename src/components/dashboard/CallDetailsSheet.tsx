@@ -28,7 +28,10 @@ import {
   fetchCallerContext,
   fetchLatestBookingByPhone,
 } from "@/services/dashboardApi";
-import { getServicesByBranch, type WorkshopService } from "@/services/servicesApi";
+import {
+  getServicesByBranch,
+  type WorkshopService,
+} from "@/services/servicesApi";
 import { useToast } from "@/hooks/use-toast";
 import { formatDuration, formatPhone } from "@/utils/formatters";
 import { Badge } from "@/components/ui/badge";
@@ -86,10 +89,10 @@ export function buildIncomingCallSnapshot(
     customerPhone: call.callerNumber,
     customerName: call.callerName,
     didLabel: call.didLabel || call.did,
-    branchId: call.branchId ?? '',
-    branchName: call.branchName ?? '',
-    mappingWorkshopName: call.mappingWorkshopName ?? '',
-    ownerId: call.ownerId ?? '',
+    branchId: call.branchId ?? "",
+    branchName: call.branchName ?? "",
+    mappingWorkshopName: call.mappingWorkshopName ?? "",
+    ownerId: call.ownerId ?? "",
     callStatusText: `Incoming for ${formatDuration(now - call.waitingSince)}`,
   };
 }
@@ -121,10 +124,10 @@ export function buildLiveCallSnapshot(args: {
       incomingCall?.did ||
       queue?.name ||
       "Active line",
-    branchId: incomingCall?.branchId ?? '',
-    branchName: incomingCall?.branchName ?? '',
-    mappingWorkshopName: incomingCall?.mappingWorkshopName ?? '',
-    ownerId: incomingCall?.ownerId ?? '',
+    branchId: incomingCall?.branchId ?? "",
+    branchName: incomingCall?.branchName ?? "",
+    mappingWorkshopName: incomingCall?.mappingWorkshopName ?? "",
+    ownerId: incomingCall?.ownerId ?? "",
     callStatusText: `Live for ${agent.callStartTime ? formatDuration(now - agent.callStartTime) : "—"}`,
   };
 }
@@ -141,8 +144,10 @@ export function CallDetailsSheet({
   );
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
-  
-  const [branchServices, setBranchServices] = useState<WorkshopService[] | null>(null);
+
+  const [branchServices, setBranchServices] = useState<
+    WorkshopService[] | null
+  >(null);
   const [branchServicesLoading, setBranchServicesLoading] = useState(false);
   const commandButtons = useMemo(
     () => [
@@ -287,7 +292,8 @@ export function CallDetailsSheet({
                       Workshop / Branch
                     </div>
                     <div className="mt-2 text-lg font-semibold text-slate-950">
-                      {(detail.mappingWorkshopName || detail.workshopName) + (detail.branchName ? ` - ${detail.branchName}` : '')}
+                      {(detail.mappingWorkshopName || detail.workshopName) +
+                        (detail.branchName ? ` - ${detail.branchName}` : "")}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
                       {detail.queueName}
@@ -403,14 +409,15 @@ export function CallDetailsSheet({
                             const booking = await fetchLatestBookingByPhone(
                               detail.ownerId || detail.tenantId,
                               detail.customerPhone,
+                              detail.branchId,
                             );
                             // const booking = true;
                             if (booking) {
                               navigate(`/bookings/dashboard`, {
                                 state: {
+                                  ownerId: detail.ownerId || detail.tenantId,
                                   branchId: detail.branchId,
-                                  ownerId: detail.ownerId,
-                                }
+                                },
                               });
                             } else {
                               toast({
@@ -547,8 +554,13 @@ export function CallDetailsSheet({
                       ) : branchServices?.length ? (
                         <div className="grid gap-3 sm:grid-cols-2">
                           {branchServices.map((service) => (
-                            <div key={service.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                              <div className="font-semibold text-slate-900">{service.name}</div>
+                            <div
+                              key={service.id}
+                              className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                            >
+                              <div className="font-semibold text-slate-900">
+                                {service.name}
+                              </div>
                               <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
                                 <span>{service.duration} mins</span>
                                 <div className="h-1 w-1 rounded-full bg-slate-300" />
@@ -558,9 +570,7 @@ export function CallDetailsSheet({
                           ))}
                         </div>
                       ) : (
-                        <EmptyState
-                          message="No services found for this branch."
-                        />
+                        <EmptyState message="No services found for this branch." />
                       )}
                     </CardContent>
                   </Card>

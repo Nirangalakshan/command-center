@@ -3,7 +3,10 @@ import { Link, useLocation } from 'react-router-dom';
 import { Ban, CalendarCheck, ChevronDown, ChevronRight, CheckCircle, Clock, Flag, LayoutDashboard } from 'lucide-react';
 
 export default function BookingSidebar() {
-  const pathname = useLocation().pathname;
+  const location = useLocation();
+  const pathname = location.pathname;
+  const locationState = location.state;
+  const commonState = { state: locationState };
 
   const isBookings = pathname.startsWith('/bookings');
   const isBookingsDashboard = pathname === '/bookings/dashboard';
@@ -59,15 +62,9 @@ export default function BookingSidebar() {
 
         {openBookings && (
           <>
-            {/* <Link
-              to="/bookings/dashboard"
-              className="ml-3 flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition bg-white text-neutral-900 hover:bg-neutral-200 shadow-sm"
-            >
-              <i className="fas fa-plus w-4" />
-              <span>Create Booking</span>
-            </Link> */}
             <Link
               to="/bookings/dashboard"
+              {...commonState}
               className={`ml-3 flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                 isBookingsDashboard ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
               }`}
@@ -77,6 +74,7 @@ export default function BookingSidebar() {
             </Link>
             <Link
               to="/bookings/pending"
+              {...commonState}
               className={`ml-3 flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                 isBookingsPending ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
               }`}
@@ -86,6 +84,7 @@ export default function BookingSidebar() {
             </Link>
             <Link
               to="/bookings/confirmed"
+              {...commonState}
               className={`ml-3 flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                 isBookingsConfirmed ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
               }`}
@@ -95,6 +94,7 @@ export default function BookingSidebar() {
             </Link>
             <Link
               to="/bookings/completed"
+              {...commonState}
               className={`ml-3 flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                 isBookingsCompleted ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
               }`}
@@ -104,6 +104,7 @@ export default function BookingSidebar() {
             </Link>
             <Link
               to="/bookings/cancelled"
+              {...commonState}
               className={`ml-3 flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                 isBookingsCancelled ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
               }`}
