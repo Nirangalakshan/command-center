@@ -61,7 +61,7 @@ interface ServiceType {
   color: string;
   image?: string;
 }
-const OWNER_UID = "89UqVYLG4MRllNRCrDsgBrIXsCK2";
+
 
 function generateTimeSlots(start: string, end: string, step = 30): string[] {
   const slots: string[] = [];
@@ -248,8 +248,14 @@ export default function BookingPage() {
   const [servicesError, setServicesError] = useState<string | null>(null);
 
   useEffect(() => {
-    const ownerIdToUse = state?.ownerId || OWNER_UID;
+    const ownerIdToUse = state?.ownerId;
     const branchIdToUse = state?.branchId;
+
+    if (!ownerIdToUse) {
+      setServicesError("No Owner ID available. Please start booking from an active call session.");
+      setServicesLoading(false);
+      return;
+    }
 
     const fetchPromise = branchIdToUse
       ? getServicesByBranch(ownerIdToUse, branchIdToUse)
@@ -344,7 +350,16 @@ export default function BookingPage() {
 
     // Use branchId from state, fallback to first branch from selected service
     const branchId = state?.branchId || (chosenServices[0]?.branches?.[0] ?? "");
-    const ownerUidToUse = state?.ownerId || OWNER_UID;
+    const ownerUidToUse = state?.ownerId;
+
+    if (!ownerUidToUse) {
+      toast({
+        title: "Booking Failed",
+        description: "Missing Owner ID. Bookings must be initiated from a call session.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     const vehicleDetails: VehicleDetails = {
       make: vehicleMake || undefined,

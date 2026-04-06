@@ -1,76 +1,174 @@
-import '@/styles/dashboard.css';
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { format, parseISO } from 'date-fns';
-import BookingSidebar from '../tabs/BookingSidebar';
+import "@/styles/dashboard.css";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { format, parseISO } from "date-fns";
+import BookingSidebar from "../tabs/BookingSidebar";
 import {
-  ArrowLeft, CalendarDays, CarFront, CheckCircle2, Clock,
-  FileText, Phone, Mail, User, Wrench, Flag, Ban, LayoutDashboard,
-  Eye, Plus,
-} from 'lucide-react';
-import type { BookingRecord, BookingStatus } from '@/services/types';
-import { useToast } from '@/hooks/use-toast';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
+  ArrowLeft,
+  CalendarDays,
+  CarFront,
+  CheckCircle2,
+  Clock,
+  FileText,
+  Phone,
+  Mail,
+  User,
+  Wrench,
+  Flag,
+  Ban,
+  LayoutDashboard,
+  Eye,
+  Plus,
+} from "lucide-react";
+import type { BookingRecord, BookingStatus } from "@/services/types";
+import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 
-import { getBookings } from '@/services/bookingsApi';
+import { getBookings } from "@/services/bookingsApi";
 
 type Task = { id: string; label: string; done: boolean };
 
-type BookingRecordWithTasks = any; 
+type BookingRecordWithTasks = any;
 
 const MOCK_OTHER_BOOKINGS: any[] = [];
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<BookingStatus, { label: string; className: string }> = {
-  pending:   { label: 'Pending',   className: 'bg-amber-100 text-amber-800 border-amber-200' },
-  confirmed: { label: 'Confirmed', className: 'bg-blue-100 text-blue-800 border-blue-200' },
-  completed: { label: 'Completed', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-  cancelled: { label: 'Cancelled', className: 'bg-rose-100 text-rose-800 border-rose-200' },
+const STATUS_CONFIG: Record<
+  BookingStatus,
+  { label: string; className: string }
+> = {
+  pending: {
+    label: "Pending",
+    className: "bg-amber-100 text-amber-800 border-amber-200",
+  },
+  confirmed: {
+    label: "Confirmed",
+    className: "bg-blue-100 text-blue-800 border-blue-200",
+  },
+  completed: {
+    label: "Completed",
+    className: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  },
+  cancelled: {
+    label: "Cancelled",
+    className: "bg-rose-100 text-rose-800 border-rose-200",
+  },
 };
 
-const STATUS_ACTIONS: { from: BookingStatus; to: BookingStatus; label: string; variant: 'default' | 'outline' | 'destructive' }[] = [
-  { from: 'pending',   to: 'confirmed', label: 'Confirm Booking',  variant: 'default' },
-  { from: 'confirmed', to: 'completed', label: 'Mark Completed',   variant: 'default' },
-  { from: 'pending',   to: 'cancelled', label: 'Cancel Booking',   variant: 'destructive' },
-  { from: 'confirmed', to: 'cancelled', label: 'Cancel Booking',   variant: 'destructive' },
+const STATUS_ACTIONS: {
+  from: BookingStatus;
+  to: BookingStatus;
+  label: string;
+  variant: "default" | "outline" | "destructive";
+}[] = [
+  {
+    from: "pending",
+    to: "confirmed",
+    label: "Confirm Booking",
+    variant: "default",
+  },
+  {
+    from: "confirmed",
+    to: "completed",
+    label: "Mark Completed",
+    variant: "default",
+  },
+  {
+    from: "pending",
+    to: "cancelled",
+    label: "Cancel Booking",
+    variant: "destructive",
+  },
+  {
+    from: "confirmed",
+    to: "cancelled",
+    label: "Cancel Booking",
+    variant: "destructive",
+  },
 ];
 
 type PageMeta = { title: string; subtitle: string; icon: React.ReactNode };
 
 const PAGE_META: Record<string, PageMeta> = {
-  '/bookings/dashboard': { title: "Today's Bookings",   subtitle: 'View and manage bookings for today',  icon: <LayoutDashboard className="h-6 w-6 text-neutral-900" /> },
-  '/bookings/pending':   { title: 'Booking Requests',   subtitle: 'Manage your workshop bookings',        icon: <Clock className="h-6 w-6 text-neutral-900" /> },
-  '/bookings/confirmed': { title: 'Confirmed Bookings', subtitle: 'All confirmed upcoming bookings',      icon: <CheckCircle2 className="h-6 w-6 text-neutral-900" /> },
-  '/bookings/completed': { title: 'Completed Bookings', subtitle: 'History of completed bookings',       icon: <Flag className="h-6 w-6 text-neutral-900" /> },
-  '/bookings/cancelled': { title: 'Cancelled Bookings', subtitle: 'Bookings that have been cancelled',   icon: <Ban className="h-6 w-6 text-neutral-900" /> },
+  "/bookings/dashboard": {
+    title: "Today's Bookings",
+    subtitle: "View and manage bookings for today",
+    icon: <LayoutDashboard className="h-6 w-6 text-neutral-900" />,
+  },
+  "/bookings/pending": {
+    title: "Booking Requests",
+    subtitle: "Manage your workshop bookings",
+    icon: <Clock className="h-6 w-6 text-neutral-900" />,
+  },
+  "/bookings/confirmed": {
+    title: "Confirmed Bookings",
+    subtitle: "All confirmed upcoming bookings",
+    icon: <CheckCircle2 className="h-6 w-6 text-neutral-900" />,
+  },
+  "/bookings/completed": {
+    title: "Completed Bookings",
+    subtitle: "History of completed bookings",
+    icon: <Flag className="h-6 w-6 text-neutral-900" />,
+  },
+  "/bookings/cancelled": {
+    title: "Cancelled Bookings",
+    subtitle: "Bookings that have been cancelled",
+    icon: <Ban className="h-6 w-6 text-neutral-900" />,
+  },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
+function Field({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
   if (!value) return null;
   return (
     <div>
-      <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">{label}</div>
+      <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">
+        {label}
+      </div>
       <div className="mt-0.5 text-sm text-slate-900">{value}</div>
     </div>
   );
 }
 
-function SkeletonBlock({ className = '' }: { className?: string }) {
-  return <div className={`animate-pulse rounded-lg bg-slate-200 ${className}`} />;
+function SkeletonBlock({ className = "" }: { className?: string }) {
+  return (
+    <div className={`animate-pulse rounded-lg bg-slate-200 ${className}`} />
+  );
 }
 
 // ── Booking row ───────────────────────────────────────────────────────────────
 
-function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onView: () => void }) {
-  const sc = STATUS_CONFIG[(booking.status as BookingStatus) || 'pending'] || STATUS_CONFIG.pending;
-  const d = (() => { try { return format(parseISO(booking.bookingDate), 'EEE, dd MMM yyyy'); } catch { return booking.bookingDate || 'N/A'; } })();
-  const vehicleLabel = [booking.vehicleMake, booking.vehicleModel].filter(Boolean).join(' ');
+function BookingRow({
+  booking,
+  onView,
+}: {
+  booking: BookingRecordWithTasks;
+  onView: () => void;
+}) {
+  const sc =
+    STATUS_CONFIG[(booking.status as BookingStatus) || "pending"] ||
+    STATUS_CONFIG.pending;
+  const d = (() => {
+    try {
+      return format(parseISO(booking.bookingDate), "EEE, dd MMM yyyy");
+    } catch {
+      return booking.bookingDate || "N/A";
+    }
+  })();
+  const vehicleLabel = [booking.vehicleMake, booking.vehicleModel]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
@@ -81,14 +179,23 @@ function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onVi
             {booking.customerName.charAt(0).toUpperCase()}
           </div>
           <div>
-            <div className="text-sm font-semibold text-slate-900">{booking.customerName}</div>
-            <div className="text-xs text-slate-400">{booking.customerPhone}</div>
+            <div className="text-sm font-semibold text-slate-900">
+              {booking.customerName}
+            </div>
+            <div className="text-xs text-slate-400">
+              {booking.customerPhone}
+            </div>
             <div className="mt-1 flex flex-wrap gap-1">
-              {String(booking.serviceType || '').split(',').map((s) => (
-                <span key={s.trim()} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200">
-                  {s.trim()}
-                </span>
-              ))}
+              {String(booking.serviceType || "")
+                .split(",")
+                .map((s) => (
+                  <span
+                    key={s.trim()}
+                    className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200"
+                  >
+                    {s.trim()}
+                  </span>
+                ))}
             </div>
           </div>
         </div>
@@ -97,39 +204,55 @@ function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onVi
       {/* Date & Time */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-1 text-xs text-slate-500">
-          <CalendarDays className="h-3.5 w-3.5" />{d}
+          <CalendarDays className="h-3.5 w-3.5" />
+          {d}
         </div>
         <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
-          <Clock className="h-3.5 w-3.5" />{booking.dropOffTime}
+          <Clock className="h-3.5 w-3.5" />
+          {booking.dropOffTime}
         </div>
         {booking.pickupTime && (
           <div className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-sky-600">
-            <Clock className="h-3.5 w-3.5" />{booking.pickupTime}
+            <Clock className="h-3.5 w-3.5" />
+            {booking.pickupTime}
           </div>
         )}
       </td>
 
       {/* Vehicle */}
       <td className="px-4 py-3">
-        <div className="text-xs font-semibold text-slate-800">{vehicleLabel}</div>
+        <div className="text-xs font-semibold text-slate-800">
+          {vehicleLabel}
+        </div>
         {booking.vehicleRego && (
-          <div className="mt-0.5 text-[11px] text-slate-400">{booking.vehicleRego}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">
+            {booking.vehicleRego}
+          </div>
         )}
         {booking.vehicleYear && (
-          <div className="mt-0.5 text-[11px] text-slate-400">{booking.vehicleYear}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">
+            {booking.vehicleYear}
+          </div>
         )}
       </td>
 
       {/* Status */}
       <td className="px-4 py-3">
-        <Badge className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${sc.className}`}>
+        <Badge
+          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${sc.className}`}
+        >
           {sc.label}
         </Badge>
       </td>
 
       {/* Actions */}
       <td className="px-4 py-3">
-        <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={onView}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 text-xs"
+          onClick={onView}
+        >
           <Eye className="h-3.5 w-3.5" /> View
         </Button>
       </td>
@@ -139,65 +262,90 @@ function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onVi
 
 // ── List view ─────────────────────────────────────────────────────────────────
 
-function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string }) {
+function BookingListView({
+  meta,
+  pathname,
+}: {
+  meta: PageMeta;
+  pathname: string;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
-    const branchId = location.state?.branchId;
+    const ownerUid =
+      location.state?.ownerId || localStorage.getItem("cc_last_owner_id");
+    const branchId =
+      location.state?.branchId || localStorage.getItem("cc_last_branch_id");
 
-    getBookings(ownerUid, 100).then(data => {
-      let filtered = data;
-      if (branchId) {
-        filtered = filtered.filter(b => b.branchId === branchId);
-      }
-      
-      const mapped = filtered.map(b => ({
-         id: b.id,
-         status: (b as any).status || 'pending',
-         customerName: b.client || 'Unknown',
-         customerPhone: b.clientPhone || '',
-         customerEmail: b.clientEmail || '',
-         serviceType: b.services?.map(s => s.serviceName).join(', ') || 'General Service',
-         bookingDate: b.date || '',
-         dropOffTime: b.time || '',
-         pickupTime: b.pickupTime || '',
-         vehicleMake: '',
-         vehicleModel: '',
-         vehicleYear: null,
-         vehicleRego: b.vehicleNumber || '',
-         notes: b.notes || '',
-         tasks: [],
-      }));
+    if (location.state?.ownerId)
+      localStorage.setItem("cc_last_owner_id", location.state.ownerId);
+    if (location.state?.branchId)
+      localStorage.setItem("cc_last_branch_id", location.state.branchId);
 
-      // If we are on a specific filter tab
-      let finalBookings = mapped;
-      if (pathname === '/bookings/pending') {
-        finalBookings = mapped.filter(b => b.status === 'pending');
-      } else if (pathname === '/bookings/confirmed') {
-        finalBookings = mapped.filter(b => b.status === 'confirmed');
-      } else if (pathname === '/bookings/completed') {
-        finalBookings = mapped.filter(b => b.status === 'completed');
-      } else if (pathname === '/bookings/cancelled') {
-        finalBookings = mapped.filter(b => b.status === 'cancelled');
-      }
+    if (!ownerUid) {
+      setBookings([]);
+      setLoading(false);
+      return;
+    }
 
-      setBookings(finalBookings);
-    })
-    .catch(console.error)
-    .finally(() => setLoading(false));
+    getBookings(ownerUid, 100)
+      .then((data) => {
+        let filtered = data;
+        if (branchId) {
+          filtered = filtered.filter((b) => b.branchId === branchId);
+        }
+
+        const mapped = filtered.map((b: any, index) => ({
+          id: b.id || b.bookingId || `fallback-id-${index}`,
+          status: ((b as any).status || "pending").toLowerCase(),
+          customerName: b.client || b.customerName || b.clientName || "Unknown",
+          customerPhone: b.clientPhone || b.customerPhone || "",
+          customerEmail: b.clientEmail || b.customerEmail || "",
+          serviceType:
+            b.services?.map((s) => s.serviceName).join(", ") ||
+            "General Service",
+          bookingDate: b.date || "",
+          dropOffTime: b.time || "",
+          pickupTime: b.pickupTime || "",
+          vehicleMake: "",
+          vehicleModel: "",
+          vehicleYear: null,
+          vehicleRego: b.vehicleNumber || "",
+          notes: b.notes || "",
+          tasks: [],
+        }));
+
+        // If we are on a specific filter tab
+        let finalBookings = mapped;
+        if (pathname === "/bookings/pending") {
+          finalBookings = mapped.filter((b) => b.status === "pending");
+        } else if (pathname === "/bookings/confirmed") {
+          finalBookings = mapped.filter((b) => b.status === "confirmed");
+        } else if (pathname === "/bookings/completed") {
+          finalBookings = mapped.filter((b) => b.status === "completed");
+        } else if (pathname === "/bookings/cancelled") {
+          finalBookings = mapped.filter((b) => b.status === "cancelled");
+        }
+
+        setBookings(finalBookings);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
   }, [pathname, location.state]);
 
   return (
     <div className="cc-fade-in flex-1 overflow-y-auto bg-[#f5f5f5]">
-
       {/* Dark banner */}
       <div className="relative overflow-hidden bg-neutral-900 px-8 py-7 flex items-center justify-between">
-        <div className="absolute right-28 top-1/2 -translate-y-1/2 opacity-10 text-white text-[90px] pointer-events-none select-none">⚙</div>
-        <div className="absolute right-10 bottom-[-10px] opacity-5 text-white text-[70px] pointer-events-none select-none rotate-[-20deg]">🔧</div>
+        <div className="absolute right-28 top-1/2 -translate-y-1/2 opacity-10 text-white text-[90px] pointer-events-none select-none">
+          ⚙
+        </div>
+        <div className="absolute right-10 bottom-[-10px] opacity-5 text-white text-[70px] pointer-events-none select-none rotate-[-20deg]">
+          🔧
+        </div>
         <div className="flex items-center gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-400 shadow-lg flex-shrink-0">
             {meta.icon}
@@ -229,8 +377,12 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
               {meta.icon}
             </div>
-            <div className="text-lg font-semibold text-slate-500">{meta.title}</div>
-            <p className="text-sm text-slate-400">No bookings found for this branch.</p>
+            <div className="text-lg font-semibold text-slate-500">
+              {meta.title}
+            </div>
+            <p className="text-sm text-slate-400">
+              No bookings found for this branch.
+            </p>
           </div>
         ) : (
           <Card className="border-0 bg-white shadow-sm overflow-hidden">
@@ -238,11 +390,21 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-slate-100 bg-slate-50">
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Client & Service</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Date & Time</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Vehicle</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Actions</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      Client & Service
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      Date & Time
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      Vehicle
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      Status
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -278,33 +440,42 @@ function BookingDetailView() {
 
   useEffect(() => {
     setLoading(true);
-    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
-    
+    const ownerUid =
+      location.state?.ownerId || localStorage.getItem("cc_last_owner_id");
+
+    if (!ownerUid) {
+      setLoading(false);
+      return;
+    }
+
     // For single detail view, fetch all and find it, or use getBookingById if it exists
-    getBookings(ownerUid, 100).then(data => {
-      const b: any = data.find(x => x.id === id);
-      if (b) {
-        setBooking({
-           id: b.id,
-           status: b.status || 'pending',
-           customerName: b.client || 'Unknown',
-           customerPhone: b.clientPhone || '',
-           customerEmail: b.clientEmail || '',
-           serviceType: b.services?.map((s: any) => s.serviceName).join(', ') || 'General Service',
-           bookingDate: b.date || '',
-           dropOffTime: b.time || '',
-           pickupTime: b.pickupTime || '',
-           vehicleMake: '',
-           vehicleModel: '',
-           vehicleYear: null,
-           vehicleRego: b.vehicleNumber || '',
-           notes: b.notes || '',
-           tasks: [],
-        });
-      }
-    })
-    .catch(console.error)
-    .finally(() => setLoading(false));
+    getBookings(ownerUid, 100)
+      .then((data) => {
+        const b: any = data.find((x: any) => (x.id || x.bookingId) === id);
+        if (b) {
+          setBooking({
+            id: b.id || b.bookingId || id,
+            status: (b.status || "pending").toLowerCase(),
+            customerName: b.client || b.customerName || b.clientName || "Unknown",
+            customerPhone: b.clientPhone || b.customerPhone || "",
+            customerEmail: b.clientEmail || b.customerEmail || "",
+            serviceType:
+              b.services?.map((s: any) => s.serviceName).join(", ") ||
+              "General Service",
+            bookingDate: b.date || "",
+            dropOffTime: b.time || "",
+            pickupTime: b.pickupTime || "",
+            vehicleMake: "",
+            vehicleModel: "",
+            vehicleYear: null,
+            vehicleRego: b.vehicleNumber || "",
+            notes: b.notes || "",
+            tasks: [],
+          });
+        }
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
   }, [id, location.state]);
 
   const handleStatusChange = async (to: BookingStatus) => {
@@ -313,23 +484,45 @@ function BookingDetailView() {
     try {
       await new Promise((res) => setTimeout(res, 600));
       setBooking({ ...booking, status: to });
-      toast({ title: 'Status updated', description: `Booking marked as ${to}.` });
+      toast({
+        title: "Status updated",
+        description: `Booking marked as ${to}.`,
+      });
     } catch (err) {
-      toast({ title: 'Update failed', description: err instanceof Error ? err.message : 'Could not update status.', variant: 'destructive' });
+      toast({
+        title: "Update failed",
+        description:
+          err instanceof Error ? err.message : "Could not update status.",
+        variant: "destructive",
+      });
     } finally {
       setUpdating(false);
     }
   };
 
   const statusCfg = booking ? STATUS_CONFIG[booking.status] : null;
-  const availableActions = booking ? STATUS_ACTIONS.filter((a) => a.from === booking.status) : [];
+  const availableActions = booking
+    ? STATUS_ACTIONS.filter((a) => a.from === booking.status)
+    : [];
 
   const formattedDate = booking?.bookingDate
-    ? (() => { try { return format(parseISO(booking.bookingDate), 'EEEE, dd MMMM yyyy'); } catch { return booking.bookingDate; } })()
+    ? (() => {
+        try {
+          return format(parseISO(booking.bookingDate), "EEEE, dd MMMM yyyy");
+        } catch {
+          return booking.bookingDate;
+        }
+      })()
     : null;
 
-  const vehicleLabel = [booking?.vehicleMake, booking?.vehicleModel, booking?.vehicleYear ? String(booking.vehicleYear) : null]
-    .filter(Boolean).join(' ') || null;
+  const vehicleLabel =
+    [
+      booking?.vehicleMake,
+      booking?.vehicleModel,
+      booking?.vehicleYear ? String(booking.vehicleYear) : null,
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
 
   return (
     <div className="cc-fade-in flex-1 overflow-y-auto bg-[#f5f5f5]">
@@ -343,23 +536,29 @@ function BookingDetailView() {
               <CalendarDays className="h-5 w-5 text-sky-600" />
             </div>
             <div>
-              <div className="text-base font-semibold tracking-tight">Booking Details</div>
-              {loading
-                ? <SkeletonBlock className="mt-1 h-3 w-20" />
-                : booking
-                  ? <div className="text-xs text-muted-foreground">#{booking.id.slice(0, 8).toUpperCase()}</div>
-                  : null
-              }
+              <div className="text-base font-semibold tracking-tight">
+                Booking Details
+              </div>
+              {loading ? (
+                <SkeletonBlock className="mt-1 h-3 w-20" />
+              ) : booking ? (
+                <div className="text-xs text-muted-foreground">
+                  #{booking.id.slice(0, 8).toUpperCase()}
+                </div>
+              ) : null}
             </div>
           </div>
-          {loading
-            ? <SkeletonBlock className="h-6 w-20 rounded-full" />
-            : statusCfg && (
-              <Badge className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusCfg.className}`}>
+          {loading ? (
+            <SkeletonBlock className="h-6 w-20 rounded-full" />
+          ) : (
+            statusCfg && (
+              <Badge
+                className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusCfg.className}`}
+              >
                 {statusCfg.label}
               </Badge>
             )
-          }
+          )}
         </div>
       </header>
 
@@ -403,14 +602,15 @@ function BookingDetailView() {
           <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-500">
             <CalendarDays className="h-10 w-10 text-slate-300" />
             <div className="text-lg font-semibold">Booking not found</div>
-            <Button variant="outline" onClick={() => navigate(-1)}>Go back</Button>
+            <Button variant="outline" onClick={() => navigate(-1)}>
+              Go back
+            </Button>
           </div>
         )}
 
         {!loading && booking && (
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="space-y-5 lg:col-span-2">
-
               {/* Customer */}
               <Card className="border-0 bg-white shadow-sm">
                 <CardHeader className="pb-2">
@@ -423,12 +623,16 @@ function BookingDetailView() {
                   <Field label="Full name" value={booking.customerName} />
                   <div className="flex items-center gap-2 text-sm">
                     <Phone className="h-3.5 w-3.5 text-slate-400" />
-                    <span className="text-slate-900">{booking.customerPhone}</span>
+                    <span className="text-slate-900">
+                      {booking.customerPhone}
+                    </span>
                   </div>
                   {booking.customerEmail && (
                     <div className="flex items-center gap-2 text-sm sm:col-span-2">
                       <Mail className="h-3.5 w-3.5 text-slate-400" />
-                      <span className="text-slate-900">{booking.customerEmail}</span>
+                      <span className="text-slate-900">
+                        {booking.customerEmail}
+                      </span>
                     </div>
                   )}
                 </CardContent>
@@ -444,32 +648,47 @@ function BookingDetailView() {
                 <Separator />
                 <CardContent className="grid gap-4 pt-4 sm:grid-cols-2">
                   <div className="sm:col-span-2">
-                    <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">Service type</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">
+                      Service type
+                    </div>
                     <div className="mt-1 flex flex-wrap gap-2">
-                      {booking.serviceType.split(',').map((s) => (
-                        <span key={s.trim()} className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">
-                          <CheckCircle2 className="h-3 w-3" />{s.trim()}
+                      {booking.serviceType.split(",").map((s) => (
+                        <span
+                          key={s.trim()}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200"
+                        >
+                          <CheckCircle2 className="h-3 w-3" />
+                          {s.trim()}
                         </span>
                       ))}
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">Date</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">
+                      Date
+                    </div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-900">
-                      <CalendarDays className="h-3.5 w-3.5 text-slate-400" />{formattedDate}
+                      <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
+                      {formattedDate}
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">Drop-off time</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">
+                      Drop-off time
+                    </div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-sm font-semibold text-amber-600">
-                      <Clock className="h-3.5 w-3.5" />{booking.dropOffTime}
+                      <Clock className="h-3.5 w-3.5" />
+                      {booking.dropOffTime}
                     </div>
                   </div>
                   {booking.pickupTime && (
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">Pick-up time</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400">
+                        Pick-up time
+                      </div>
                       <div className="mt-0.5 flex items-center gap-1.5 text-sm font-semibold text-sky-600">
-                        <Clock className="h-3.5 w-3.5" />{booking.pickupTime}
+                        <Clock className="h-3.5 w-3.5" />
+                        {booking.pickupTime}
                       </div>
                     </div>
                   )}
@@ -488,7 +707,12 @@ function BookingDetailView() {
                   <CardContent className="grid gap-4 pt-4 sm:grid-cols-2">
                     <Field label="Vehicle" value={vehicleLabel} />
                     <Field label="Registration" value={booking.vehicleRego} />
-                    <Field label="Year" value={booking.vehicleYear ? String(booking.vehicleYear) : null} />
+                    <Field
+                      label="Year"
+                      value={
+                        booking.vehicleYear ? String(booking.vehicleYear) : null
+                      }
+                    />
                   </CardContent>
                 </Card>
               )}
@@ -503,7 +727,9 @@ function BookingDetailView() {
                   </CardHeader>
                   <Separator />
                   <CardContent className="pt-4">
-                    <p className="whitespace-pre-wrap text-sm text-slate-700">{booking.notes}</p>
+                    <p className="whitespace-pre-wrap text-sm text-slate-700">
+                      {booking.notes}
+                    </p>
                   </CardContent>
                 </Card>
               )}
@@ -554,7 +780,11 @@ function BookingDetailView() {
                   </CardContent>
                 </Card> */}
 
-                <Button variant="outline" className="w-full" onClick={() => navigate(-1)}>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => navigate(-1)}
+                >
                   Back to Bookings
                 </Button>
 
@@ -569,25 +799,37 @@ function BookingDetailView() {
                   <CardContent className="p-0">
                     {MOCK_OTHER_BOOKINGS.map((b, idx) => {
                       const sc = STATUS_CONFIG[b.status];
-                      const d = (() => { try { return format(parseISO(b.bookingDate), 'dd MMM yyyy'); } catch { return b.bookingDate; } })();
+                      const d = (() => {
+                        try {
+                          return format(parseISO(b.bookingDate), "dd MMM yyyy");
+                        } catch {
+                          return b.bookingDate;
+                        }
+                      })();
                       return (
                         <button
                           key={b.id}
                           type="button"
                           onClick={() => navigate(`/bookings/${b.id}`)}
-                          className={`w-full px-4 py-3 text-left transition-colors hover:bg-slate-50 ${idx !== 0 ? 'border-t border-slate-100' : ''}`}
+                          className={`w-full px-4 py-3 text-left transition-colors hover:bg-slate-50 ${idx !== 0 ? "border-t border-slate-100" : ""}`}
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <div className="truncate text-xs font-semibold text-slate-800">{b.serviceType}</div>
+                              <div className="truncate text-xs font-semibold text-slate-800">
+                                {b.serviceType}
+                              </div>
                               <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-400">
-                                <CalendarDays className="h-3 w-3" />{d}
+                                <CalendarDays className="h-3 w-3" />
+                                {d}
                               </div>
                               <div className="mt-0.5 flex items-center gap-1 text-[11px] text-amber-600">
-                                <Clock className="h-3 w-3" />{b.dropOffTime}
+                                <Clock className="h-3 w-3" />
+                                {b.dropOffTime}
                               </div>
                             </div>
-                            <Badge className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sc.className}`}>
+                            <Badge
+                              className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${sc.className}`}
+                            >
                               {sc.label}
                             </Badge>
                           </div>
@@ -598,121 +840,171 @@ function BookingDetailView() {
                 </Card>
 
                 {/* Task Progress Bar */}
-                {booking.tasks && booking.tasks.length > 0 && (() => {
-                  const doneCount = booking.tasks.filter(t => t.done).length;
-                  const totalCount = booking.tasks.length;
-                  const pct = booking.taskProgress || 0;
-                  const isComplete = pct === 100;
-                  return (
-                    <Card className="border-0 bg-white shadow-sm overflow-hidden">
-                      <CardContent className="p-3">
-                        <button
-                          onClick={() => setExpandedTaskCard((v) => !v)}
-                          className="w-full text-left group"
-                        >
-                          <div className={`relative rounded-2xl border p-4 transition-all duration-500 overflow-hidden ${
-                            isComplete
-                              ? 'bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 border-emerald-200/80'
-                              : 'bg-gradient-to-br from-neutral-50 via-white to-neutral-50/80 border-neutral-200/80'
-                          }`}>
+                {booking.tasks &&
+                  booking.tasks.length > 0 &&
+                  (() => {
+                    const doneCount = booking.tasks.filter(
+                      (t) => t.done,
+                    ).length;
+                    const totalCount = booking.tasks.length;
+                    const pct = booking.taskProgress || 0;
+                    const isComplete = pct === 100;
+                    return (
+                      <Card className="border-0 bg-white shadow-sm overflow-hidden">
+                        <CardContent className="p-3">
+                          <button
+                            onClick={() => setExpandedTaskCard((v) => !v)}
+                            className="w-full text-left group"
+                          >
+                            <div
+                              className={`relative rounded-2xl border p-4 transition-all duration-500 overflow-hidden ${
+                                isComplete
+                                  ? "bg-gradient-to-br from-emerald-50 via-green-50 to-teal-50 border-emerald-200/80"
+                                  : "bg-gradient-to-br from-neutral-50 via-white to-neutral-50/80 border-neutral-200/80"
+                              }`}
+                            >
+                              {/* Decorative background glow */}
+                              {isComplete && (
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-400/10 rounded-full blur-2xl -translate-y-6 translate-x-6" />
+                              )}
 
-                            {/* Decorative background glow */}
-                            {isComplete && (
-                              <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-400/10 rounded-full blur-2xl -translate-y-6 translate-x-6" />
-                            )}
-
-                            {/* Header row */}
-                            <div className="flex items-center justify-between mb-3 relative z-10">
-                              <div className="flex items-center gap-2">
-                                <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
-                                  isComplete
-                                    ? 'bg-emerald-500 shadow-md shadow-emerald-500/25'
-                                    : 'bg-neutral-900 shadow-md shadow-neutral-900/15'
-                                }`}>
-                                  <i className={`fas ${isComplete ? 'fa-check-double' : 'fa-tasks'} text-white text-[10px]`} />
-                                </div>
-                                <div>
-                                  <span className="text-[11px] font-extrabold text-neutral-800 tracking-tight">Service Progress</span>
-                                  <p className="text-[9px] text-neutral-400 font-medium -mt-0.5">
-                                    {isComplete
-                                      ? 'All tasks completed'
-                                      : `${totalCount - doneCount} task${totalCount - doneCount !== 1 ? 's' : ''} remaining`}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                {/* Circular percentage */}
-                                <div className="relative w-10 h-10">
-                                  <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
-                                    <circle cx="18" cy="18" r="14" fill="none" stroke={isComplete ? '#d1fae5' : '#f5f5f5'} strokeWidth="3" />
-                                    <circle
-                                      cx="18" cy="18" r="14" fill="none"
-                                      stroke={isComplete ? '#10b981' : pct > 50 ? '#f59e0b' : '#3b82f6'}
-                                      strokeWidth="3"
-                                      strokeLinecap="round"
-                                      strokeDasharray={`${pct * 0.88} 88`}
-                                      className="transition-all duration-1000 ease-out"
+                              {/* Header row */}
+                              <div className="flex items-center justify-between mb-3 relative z-10">
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                                      isComplete
+                                        ? "bg-emerald-500 shadow-md shadow-emerald-500/25"
+                                        : "bg-neutral-900 shadow-md shadow-neutral-900/15"
+                                    }`}
+                                  >
+                                    <i
+                                      className={`fas ${isComplete ? "fa-check-double" : "fa-tasks"} text-white text-[10px]`}
                                     />
-                                  </svg>
-                                  <span className={`absolute inset-0 flex items-center justify-center text-[9px] font-black ${
-                                    isComplete ? 'text-emerald-600' : 'text-neutral-700'
-                                  }`}>
-                                    {pct}%
-                                  </span>
-                                </div>
-                                <i className={`fas fa-chevron-down text-[9px] text-neutral-400 transition-transform duration-300 ${
-                                  expandedTaskCard ? 'rotate-180' : ''
-                                }`} />
-                              </div>
-                            </div>
-
-                            {/* Segmented step bars */}
-                            <div className="flex items-center gap-1 relative z-10">
-                              {booking.tasks.map((task, i) => (
-                                <div key={task.id || i} className="flex-1">
-                                  <div className={`w-full h-2 rounded-full transition-all duration-500 ${
-                                    task.done
-                                      ? isComplete
-                                        ? 'bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-sm shadow-emerald-500/20'
-                                        : 'bg-gradient-to-r from-amber-400 to-amber-500 shadow-sm shadow-amber-500/20'
-                                      : 'bg-neutral-200/80'
-                                  }`} />
-                                </div>
-                              ))}
-                            </div>
-
-                            {/* Expanded task list */}
-                            {expandedTaskCard && (
-                              <div className="mt-4 space-y-2 relative z-10">
-                                <Separator className="mb-3" />
-                                {booking.tasks.map((task, i) => (
-                                  <div key={task.id || i} className="flex items-center gap-2.5">
-                                    <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${
-                                      task.done
-                                        ? isComplete
-                                          ? 'bg-emerald-500'
-                                          : 'bg-amber-400'
-                                        : 'bg-neutral-200'
-                                    }`}>
-                                      {task.done && <i className="fas fa-check text-white text-[7px]" />}
-                                    </div>
-                                    <span className={`text-xs ${
-                                      task.done ? 'line-through text-neutral-400' : 'text-neutral-700 font-medium'
-                                    }`}>
-                                      {task.label}
+                                  </div>
+                                  <div>
+                                    <span className="text-[11px] font-extrabold text-neutral-800 tracking-tight">
+                                      Service Progress
                                     </span>
+                                    <p className="text-[9px] text-neutral-400 font-medium -mt-0.5">
+                                      {isComplete
+                                        ? "All tasks completed"
+                                        : `${totalCount - doneCount} task${totalCount - doneCount !== 1 ? "s" : ""} remaining`}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  {/* Circular percentage */}
+                                  <div className="relative w-10 h-10">
+                                    <svg
+                                      className="w-10 h-10 -rotate-90"
+                                      viewBox="0 0 36 36"
+                                    >
+                                      <circle
+                                        cx="18"
+                                        cy="18"
+                                        r="14"
+                                        fill="none"
+                                        stroke={
+                                          isComplete ? "#d1fae5" : "#f5f5f5"
+                                        }
+                                        strokeWidth="3"
+                                      />
+                                      <circle
+                                        cx="18"
+                                        cy="18"
+                                        r="14"
+                                        fill="none"
+                                        stroke={
+                                          isComplete
+                                            ? "#10b981"
+                                            : pct > 50
+                                              ? "#f59e0b"
+                                              : "#3b82f6"
+                                        }
+                                        strokeWidth="3"
+                                        strokeLinecap="round"
+                                        strokeDasharray={`${pct * 0.88} 88`}
+                                        className="transition-all duration-1000 ease-out"
+                                      />
+                                    </svg>
+                                    <span
+                                      className={`absolute inset-0 flex items-center justify-center text-[9px] font-black ${
+                                        isComplete
+                                          ? "text-emerald-600"
+                                          : "text-neutral-700"
+                                      }`}
+                                    >
+                                      {pct}%
+                                    </span>
+                                  </div>
+                                  <i
+                                    className={`fas fa-chevron-down text-[9px] text-neutral-400 transition-transform duration-300 ${
+                                      expandedTaskCard ? "rotate-180" : ""
+                                    }`}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Segmented step bars */}
+                              <div className="flex items-center gap-1 relative z-10">
+                                {booking.tasks.map((task, i) => (
+                                  <div key={task.id || i} className="flex-1">
+                                    <div
+                                      className={`w-full h-2 rounded-full transition-all duration-500 ${
+                                        task.done
+                                          ? isComplete
+                                            ? "bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-sm shadow-emerald-500/20"
+                                            : "bg-gradient-to-r from-amber-400 to-amber-500 shadow-sm shadow-amber-500/20"
+                                          : "bg-neutral-200/80"
+                                      }`}
+                                    />
                                   </div>
                                 ))}
                               </div>
-                            )}
-                          </div>
-                        </button>
-                      </CardContent>
-                    </Card>
-                  );
-                })()}
 
+                              {/* Expanded task list */}
+                              {expandedTaskCard && (
+                                <div className="mt-4 space-y-2 relative z-10">
+                                  <Separator className="mb-3" />
+                                  {booking.tasks.map((task, i) => (
+                                    <div
+                                      key={task.id || i}
+                                      className="flex items-center gap-2.5"
+                                    >
+                                      <div
+                                        className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                          task.done
+                                            ? isComplete
+                                              ? "bg-emerald-500"
+                                              : "bg-amber-400"
+                                            : "bg-neutral-200"
+                                        }`}
+                                      >
+                                        {task.done && (
+                                          <i className="fas fa-check text-white text-[7px]" />
+                                        )}
+                                      </div>
+                                      <span
+                                        className={`text-xs ${
+                                          task.done
+                                            ? "line-through text-neutral-400"
+                                            : "text-neutral-700 font-medium"
+                                        }`}
+                                      >
+                                        {task.label}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </button>
+                        </CardContent>
+                      </Card>
+                    );
+                  })()}
               </div>
             </div>
           </div>
@@ -732,10 +1024,11 @@ export default function BookingDetailsPage() {
   return (
     <div className="flex h-screen overflow-hidden">
       <BookingSidebar />
-      {!id && pageMeta
-        ? <BookingListView meta={pageMeta} pathname={location.pathname} />
-        : <BookingDetailView />
-      }
+      {!id && pageMeta ? (
+        <BookingListView meta={pageMeta} pathname={location.pathname} />
+      ) : (
+        <BookingDetailView />
+      )}
     </div>
   );
 }
