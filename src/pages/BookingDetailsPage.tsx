@@ -15,159 +15,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
-// ── Task type ─────────────────────────────────────────────────────────────────
+import { getBookings } from '@/services/bookingsApi';
 
 type Task = { id: string; label: string; done: boolean };
 
-type BookingRecordWithTasks = BookingRecord & {
-  tasks?: Task[];
-  taskProgress?: number;
-};
+type BookingRecordWithTasks = any; 
 
-// ── Mock data ────────────────────────────────────────────────────────────────
-
-const ALL_MOCK_BOOKINGS: BookingRecordWithTasks[] = [
-  {
-    id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'confirmed',
-    customerName: 'James Perera', customerPhone: '+94 77 123 4567', customerEmail: 'james.perera@gmail.com',
-    serviceType: 'Oil Change, Brake Inspection, Wheel Alignment',
-    bookingDate: '2026-04-02', dropOffTime: '08:30 AM', pickupTime: '05:00 PM',
-    vehicleMake: 'Toyota', vehicleModel: 'Corolla', vehicleYear: 2020, vehicleRego: 'CAB-1234',
-    notes: 'Please check the front left tire — customer mentioned vibration at high speed.',
-    createdAt: '2026-04-01T10:22:00Z', updatedAt: '2026-04-02T08:15:00Z',
-    tasks: [
-      { id: 't1', label: 'Oil Change',       done: true  },
-      { id: 't2', label: 'Brake Inspection', done: true  },
-      { id: 't3', label: 'Wheel Alignment',  done: false },
-      { id: 't4', label: 'Filter Check',     done: false },
-    ],
-    taskProgress: 50,
-  },
-  {
-    id: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'pending',
-    customerName: 'Ashan Silva', customerPhone: '+94 71 987 6543', customerEmail: 'ashan.silva@gmail.com',
-    serviceType: 'General Service',
-    bookingDate: '2026-04-02', dropOffTime: '09:00 AM', pickupTime: '03:00 PM',
-    vehicleMake: 'Honda', vehicleModel: 'Civic', vehicleYear: 2019, vehicleRego: 'WP-5678',
-    notes: null,
-    createdAt: '2026-03-30T08:00:00Z', updatedAt: '2026-03-30T08:00:00Z',
-    tasks: [
-      { id: 't1', label: 'Engine Check',   done: false },
-      { id: 't2', label: 'Fluid Top-Up',   done: false },
-      { id: 't3', label: 'Tyre Pressure',  done: false },
-    ],
-    taskProgress: 0,
-  },
-  {
-    id: 'c3d4e5f6-a7b8-9012-cdef-012345678902',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'pending',
-    customerName: 'Nimal Rajapaksa', customerPhone: '+94 76 555 1234', customerEmail: null,
-    serviceType: 'Roadworthy Inspection',
-    bookingDate: '2026-04-02', dropOffTime: '10:00 AM', pickupTime: null,
-    vehicleMake: 'Nissan', vehicleModel: 'X-Trail', vehicleYear: 2021, vehicleRego: 'NW-9012',
-    notes: 'Customer needs certificate urgently.',
-    createdAt: '2026-04-01T09:00:00Z', updatedAt: '2026-04-01T09:00:00Z',
-    tasks: [
-      { id: 't1', label: 'Visual Inspection', done: false },
-      { id: 't2', label: 'Brake Test',        done: false },
-      { id: 't3', label: 'Lights Check',      done: false },
-      { id: 't4', label: 'Certificate Issue', done: false },
-    ],
-    taskProgress: 0,
-  },
-  {
-    id: 'd4e5f6a7-b8c9-0123-def0-123456789003',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'confirmed',
-    customerName: 'Sachini Fernando', customerPhone: '+94 77 333 9876', customerEmail: 'sachini@email.com',
-    serviceType: 'AC Service, Oil Change',
-    bookingDate: '2026-04-02', dropOffTime: '11:00 AM', pickupTime: '04:00 PM',
-    vehicleMake: 'Suzuki', vehicleModel: 'Swift', vehicleYear: 2022, vehicleRego: 'SP-3456',
-    notes: null,
-    createdAt: '2026-03-29T10:00:00Z', updatedAt: '2026-04-01T14:00:00Z',
-    tasks: [
-      { id: 't1', label: 'AC Gas Refill',    done: true  },
-      { id: 't2', label: 'AC Filter Clean',  done: true  },
-      { id: 't3', label: 'Oil Change',       done: true  },
-    ],
-    taskProgress: 100,
-  },
-  {
-    id: 'e5f6a7b8-c9d0-1234-ef01-234567890004',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'completed',
-    customerName: 'Ruwan Bandara', customerPhone: '+94 70 222 8765', customerEmail: null,
-    serviceType: 'Brake Inspection',
-    bookingDate: '2026-03-28', dropOffTime: '08:00 AM', pickupTime: '01:00 PM',
-    vehicleMake: 'Mitsubishi', vehicleModel: 'Outlander', vehicleYear: 2018, vehicleRego: 'CP-7890',
-    notes: null,
-    createdAt: '2026-03-25T07:00:00Z', updatedAt: '2026-03-28T13:00:00Z',
-    tasks: [
-      { id: 't1', label: 'Brake Pad Check',  done: true },
-      { id: 't2', label: 'Brake Fluid',      done: true },
-      { id: 't3', label: 'Rotor Inspection', done: true },
-    ],
-    taskProgress: 100,
-  },
-  {
-    id: 'f6a7b8c9-d0e1-2345-f012-345678900005',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'completed',
-    customerName: 'Kavindi Dissanayake', customerPhone: '+94 72 111 5432', customerEmail: 'kavindi@gmail.com',
-    serviceType: 'Full Service Package',
-    bookingDate: '2026-03-25', dropOffTime: '09:00 AM', pickupTime: '05:00 PM',
-    vehicleMake: 'Toyota', vehicleModel: 'Prius', vehicleYear: 2020, vehicleRego: 'WP-2233',
-    notes: null,
-    createdAt: '2026-03-20T09:00:00Z', updatedAt: '2026-03-25T17:00:00Z',
-    tasks: [
-      { id: 't1', label: 'Oil Change',      done: true },
-      { id: 't2', label: 'Filter Replace',  done: true },
-      { id: 't3', label: 'Tyre Rotation',   done: true },
-      { id: 't4', label: 'Full Inspection', done: true },
-    ],
-    taskProgress: 100,
-  },
-  {
-    id: 'a7b8c9d0-e1f2-3456-0123-456789000006',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'cancelled',
-    customerName: 'Priya Jayawardena', customerPhone: '+94 75 444 3210', customerEmail: null,
-    serviceType: 'Wheel Alignment',
-    bookingDate: '2026-03-20', dropOffTime: '10:00 AM', pickupTime: null,
-    vehicleMake: 'Ford', vehicleModel: 'Ranger', vehicleYear: 2017, vehicleRego: 'SG-4455',
-    notes: 'Customer cancelled due to schedule conflict.',
-    createdAt: '2026-03-15T10:00:00Z', updatedAt: '2026-03-18T14:00:00Z',
-  },
-  {
-    id: 'b8c9d0e1-f2a3-4567-1234-567890000007',
-    tenantId: 't-test-001', customerId: null, vehicleId: null,
-    status: 'cancelled',
-    customerName: 'Dinesh Kumara', customerPhone: '+94 78 666 7654', customerEmail: 'dinesh.k@mail.com',
-    serviceType: 'AC Service',
-    bookingDate: '2026-03-15', dropOffTime: '02:00 PM', pickupTime: null,
-    vehicleMake: 'Hyundai', vehicleModel: 'Tucson', vehicleYear: 2019, vehicleRego: 'NW-6677',
-    notes: null,
-    createdAt: '2026-03-10T12:00:00Z', updatedAt: '2026-03-13T09:00:00Z',
-  },
-];
-
-const TODAY = '2026-04-02';
-
-const BOOKINGS_BY_VIEW: Record<string, BookingRecordWithTasks[]> = {
-  '/bookings/dashboard': ALL_MOCK_BOOKINGS.filter((b) => b.bookingDate === TODAY),
-  '/bookings/pending':   ALL_MOCK_BOOKINGS.filter((b) => b.status === 'pending'),
-  '/bookings/confirmed': ALL_MOCK_BOOKINGS.filter((b) => b.status === 'confirmed'),
-  '/bookings/completed': ALL_MOCK_BOOKINGS.filter((b) => b.status === 'completed'),
-  '/bookings/cancelled': ALL_MOCK_BOOKINGS.filter((b) => b.status === 'cancelled'),
-};
-
-const MOCK_BOOKING = ALL_MOCK_BOOKINGS[0];
-const MOCK_OTHER_BOOKINGS = ALL_MOCK_BOOKINGS.slice(1, 4);
+const MOCK_OTHER_BOOKINGS: any[] = [];
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -214,8 +68,8 @@ function SkeletonBlock({ className = '' }: { className?: string }) {
 // ── Booking row ───────────────────────────────────────────────────────────────
 
 function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onView: () => void }) {
-  const sc = STATUS_CONFIG[booking.status];
-  const d = (() => { try { return format(parseISO(booking.bookingDate), 'EEE, dd MMM yyyy'); } catch { return booking.bookingDate; } })();
+  const sc = STATUS_CONFIG[(booking.status as BookingStatus) || 'pending'] || STATUS_CONFIG.pending;
+  const d = (() => { try { return format(parseISO(booking.bookingDate), 'EEE, dd MMM yyyy'); } catch { return booking.bookingDate || 'N/A'; } })();
   const vehicleLabel = [booking.vehicleMake, booking.vehicleModel].filter(Boolean).join(' ');
 
   return (
@@ -230,7 +84,7 @@ function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onVi
             <div className="text-sm font-semibold text-slate-900">{booking.customerName}</div>
             <div className="text-xs text-slate-400">{booking.customerPhone}</div>
             <div className="mt-1 flex flex-wrap gap-1">
-              {booking.serviceType.split(',').map((s) => (
+              {String(booking.serviceType || '').split(',').map((s) => (
                 <span key={s.trim()} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200">
                   {s.trim()}
                 </span>
@@ -287,7 +141,55 @@ function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onVi
 
 function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string }) {
   const navigate = useNavigate();
-  const bookings = BOOKINGS_BY_VIEW[pathname] ?? [];
+  const location = useLocation();
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
+    const branchId = location.state?.branchId;
+
+    getBookings(ownerUid, 100).then(data => {
+      let filtered = data;
+      if (branchId) {
+        filtered = filtered.filter(b => b.branchId === branchId);
+      }
+      
+      const mapped = filtered.map(b => ({
+         id: b.id,
+         status: (b as any).status || 'pending',
+         customerName: b.client || 'Unknown',
+         customerPhone: b.clientPhone || '',
+         customerEmail: b.clientEmail || '',
+         serviceType: b.services?.map(s => s.serviceName).join(', ') || 'General Service',
+         bookingDate: b.date || '',
+         dropOffTime: b.time || '',
+         pickupTime: b.pickupTime || '',
+         vehicleMake: '',
+         vehicleModel: '',
+         vehicleYear: null,
+         vehicleRego: b.vehicleNumber || '',
+         notes: b.notes || '',
+         tasks: [],
+      }));
+
+      // If we are on a specific filter tab
+      let finalBookings = mapped;
+      if (pathname === '/bookings/pending') {
+        finalBookings = mapped.filter(b => b.status === 'pending');
+      } else if (pathname === '/bookings/confirmed') {
+        finalBookings = mapped.filter(b => b.status === 'confirmed');
+      } else if (pathname === '/bookings/completed') {
+        finalBookings = mapped.filter(b => b.status === 'completed');
+      } else if (pathname === '/bookings/cancelled') {
+        finalBookings = mapped.filter(b => b.status === 'cancelled');
+      }
+
+      setBookings(finalBookings);
+    })
+    .catch(console.error)
+    .finally(() => setLoading(false));
+  }, [pathname, location.state]);
 
   return (
     <div className="cc-fade-in flex-1 overflow-y-auto bg-[#f5f5f5]">
@@ -316,15 +218,19 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
         </div> */}
       </div>
 
-      {/* Table */}
       <div className="p-6">
-        {bookings.length === 0 ? (
+        {loading ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-400">
+            <div className="animate-spin h-8 w-8 border-4 border-amber-400 border-t-transparent rounded-full" />
+            <p className="text-sm">Loading bookings from Firebase...</p>
+          </div>
+        ) : bookings.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-400">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
               {meta.icon}
             </div>
             <div className="text-lg font-semibold text-slate-500">{meta.title}</div>
-            <p className="text-sm text-slate-400">No bookings found.</p>
+            <p className="text-sm text-slate-400">No bookings found for this branch.</p>
           </div>
         ) : (
           <Card className="border-0 bg-white shadow-sm overflow-hidden">
@@ -368,14 +274,38 @@ function BookingDetailView() {
   const [updating, setUpdating] = useState(false);
   const [expandedTaskCard, setExpandedTaskCard] = useState(false);
 
+  const location = useLocation();
+
   useEffect(() => {
     setLoading(true);
-    setTimeout(() => {
-      const found = ALL_MOCK_BOOKINGS.find((b) => b.id === id) ?? MOCK_BOOKING;
-      setBooking(found);
-      setLoading(false);
-    }, 800);
-  }, [id]);
+    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
+    
+    // For single detail view, fetch all and find it, or use getBookingById if it exists
+    getBookings(ownerUid, 100).then(data => {
+      const b: any = data.find(x => x.id === id);
+      if (b) {
+        setBooking({
+           id: b.id,
+           status: b.status || 'pending',
+           customerName: b.client || 'Unknown',
+           customerPhone: b.clientPhone || '',
+           customerEmail: b.clientEmail || '',
+           serviceType: b.services?.map((s: any) => s.serviceName).join(', ') || 'General Service',
+           bookingDate: b.date || '',
+           dropOffTime: b.time || '',
+           pickupTime: b.pickupTime || '',
+           vehicleMake: '',
+           vehicleModel: '',
+           vehicleYear: null,
+           vehicleRego: b.vehicleNumber || '',
+           notes: b.notes || '',
+           tasks: [],
+        });
+      }
+    })
+    .catch(console.error)
+    .finally(() => setLoading(false));
+  }, [id, location.state]);
 
   const handleStatusChange = async (to: BookingStatus) => {
     if (!booking) return;

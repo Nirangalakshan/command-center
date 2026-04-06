@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { getServices, type WorkshopService } from "@/services/servicesApi";
+import { getServices, getServicesByBranch, type WorkshopService } from "@/services/servicesApi";
 
 interface BookingPageState {
   tenantId: string;
@@ -48,6 +48,8 @@ interface BookingPageState {
   availableVehicles: VehicleRecord[];
   workshopName?: string;
   workshopColor?: string;
+  branchId?: string;
+  ownerId?: string;
 }
 
 interface ServiceType {
@@ -246,14 +248,21 @@ export default function BookingPage() {
   const [servicesError, setServicesError] = useState<string | null>(null);
 
   useEffect(() => {
-    getServices(OWNER_UID)
+    const ownerIdToUse = state?.ownerId || OWNER_UID;
+    const branchIdToUse = state?.branchId;
+
+    const fetchPromise = branchIdToUse
+      ? getServicesByBranch(ownerIdToUse, branchIdToUse)
+      : getServices(ownerIdToUse);
+
+    fetchPromise
       .then((data) => {
         console.log("[BookingPage] services:", data);
         setServices(data);
       })
       .catch((err: Error) => setServicesError(err.message))
       .finally(() => setServicesLoading(false));
-  }, []);
+  }, [state?.branchId, state?.ownerId]);
 
   const availableVehicles: VehicleRecord[] = state?.availableVehicles ?? [];
   const workshopColor = state?.workshopColor || "var(--cc-color-cyan)";
@@ -333,8 +342,9 @@ export default function BookingPage() {
       duration: s.duration,
     }));
 
-    // Use first branch from the first selected service
-    const branchId = chosenServices[0]?.branches?.[0] ?? "";
+    // Use branchId from state, fallback to first branch from selected service
+    const branchId = state?.branchId || (chosenServices[0]?.branches?.[0] ?? "");
+    const ownerUidToUse = state?.ownerId || OWNER_UID;
 
     const vehicleDetails: VehicleDetails = {
       make: vehicleMake || undefined,
@@ -349,7 +359,7 @@ export default function BookingPage() {
     };
 
     const payload = {
-      ownerUid: OWNER_UID,
+      ownerUid: ownerUidToUse,
       branchId,
       date: format(selectedDate, "yyyy-MM-dd"),
       time: dropOffTime,
@@ -377,7 +387,7 @@ export default function BookingPage() {
 
         await (supabase as any).from("bms_bookings").insert({
           bms_booking_id: result.bookingId ?? null,
-          owner_uid: OWNER_UID,
+          owner_uid: ownerUidToUse,
           branch_id: branchId || null,
           agent_uid: firebaseUser?.uid ?? null,
           agent_email: firebaseUser?.email ?? null,

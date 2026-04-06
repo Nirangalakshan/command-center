@@ -28,6 +28,7 @@ import {
   fetchCallerContext,
   fetchLatestBookingByPhone,
 } from "@/services/dashboardApi";
+import { getServicesByBranch, type WorkshopService } from "@/services/servicesApi";
 import { useToast } from "@/hooks/use-toast";
 import { formatDuration, formatPhone } from "@/utils/formatters";
 import { Badge } from "@/components/ui/badge";
@@ -140,6 +141,9 @@ export function CallDetailsSheet({
   );
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
+  
+  const [branchServices, setBranchServices] = useState<WorkshopService[] | null>(null);
+  const [branchServicesLoading, setBranchServicesLoading] = useState(false);
   const commandButtons = useMemo(
     () => [
       { label: "Book Now", icon: CalendarPlus2 },
@@ -189,6 +193,35 @@ export function CallDetailsSheet({
       cancelled = true;
     };
   }, [detail?.id, detail?.tenantId, detail?.customerPhone, open]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!open || !detail?.branchId || !detail?.ownerId) {
+      setBranchServices(null);
+      setBranchServicesLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setBranchServicesLoading(true);
+
+    getServicesByBranch(detail.ownerId, detail.branchId)
+      .then((services) => {
+        if (!cancelled) setBranchServices(services);
+      })
+      .catch((error) => {
+        console.error("Failed to load branch services", error);
+      })
+      .finally(() => {
+        if (!cancelled) setBranchServicesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.branchId, detail?.ownerId, open]);
 
   const latestServiceByVehicle = useMemo(
     () => buildLatestServiceMap(callerContext?.services || []),
@@ -360,18 +393,25 @@ export function CallDetailsSheet({
                                 availableVehicles,
                                 workshopName: detail.workshopName,
                                 workshopColor: detail.workshopColor,
+                                branchId: detail.branchId,
+                                ownerId: detail.ownerId,
                               },
                             });
                             return;
                           }
                           if (command.label === "Booking Details") {
                             const booking = await fetchLatestBookingByPhone(
-                              detail.tenantId,
+                              detail.ownerId || detail.tenantId,
                               detail.customerPhone,
                             );
                             // const booking = true;
                             if (booking) {
-                              navigate(`/bookingsdetails`);
+                              navigate(`/bookings/dashboard`, {
+                                state: {
+                                  branchId: detail.branchId,
+                                  ownerId: detail.ownerId,
+                                }
+                              });
                             } else {
                               toast({
                                 title: "No bookings found",
@@ -395,12 +435,15 @@ export function CallDetailsSheet({
               </Card>
 
               <Tabs defaultValue="vehicles" className="space-y-4">
-                <TabsList className="grid h-auto grid-cols-2 rounded-xl bg-slate-200/70 p-1">
+                <TabsList className="grid h-auto grid-cols-3 rounded-xl bg-slate-200/70 p-1">
                   <TabsTrigger value="vehicles" className="rounded-lg">
-                    Registered Vehicles
+                    Vehicles
                   </TabsTrigger>
                   <TabsTrigger value="services" className="rounded-lg">
-                    Recent Service History
+                    History
+                  </TabsTrigger>
+                  <TabsTrigger value="branch-services" className="rounded-lg">
+                    Branch Services
                   </TabsTrigger>
                 </TabsList>
 
@@ -488,6 +531,35 @@ export function CallDetailsSheet({
                             contextError ||
                             "No prior service history found for this caller yet."
                           }
+                        />
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="branch-services" className="mt-0">
+                  <Card className="border-slate-200 bg-white shadow-sm">
+                    <CardContent className="space-y-4 p-5">
+                      {branchServicesLoading ? (
+                        <div className="text-sm text-slate-600">
+                          Loading branch services...
+                        </div>
+                      ) : branchServices?.length ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {branchServices.map((service) => (
+                            <div key={service.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <div className="font-semibold text-slate-900">{service.name}</div>
+                              <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
+                                <span>{service.duration} mins</span>
+                                <div className="h-1 w-1 rounded-full bg-slate-300" />
+                                <span>${service.price}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <EmptyState
+                          message="No services found for this branch."
                         />
                       )}
                     </CardContent>
