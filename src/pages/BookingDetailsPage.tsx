@@ -15,9 +15,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
-const OWNER_UID = (import.meta.env.VITE_OWNER_UID as string) ?? '89UqVYLG4MRllNRCrDsgBrIXsCK2';
 
-// ── Status config ─────────────────────────────────────────────────────────────
+
+type Task = { id: string; label: string; done: boolean };
+
+type BookingRecordWithTasks = any; 
+
+const MOCK_OTHER_BOOKINGS: any[] = [];
+
+// ── Config ────────────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   Pending:   { label: 'Pending',   className: 'bg-amber-100 text-amber-800 border-amber-200' },
@@ -43,40 +49,131 @@ function SkeletonBlock({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-slate-200 ${className}`} />;
 }
 
-// ── Page meta for sidebar list views ─────────────────────────────────────────
+// ── Booking row ───────────────────────────────────────────────────────────────
 
-type PageMeta = { title: string; subtitle: string; icon: React.ReactNode; status: string | null };
+function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onView: () => void }) {
+  const sc = STATUS_CONFIG[(booking.status as BookingStatus) || 'pending'] || STATUS_CONFIG.pending;
+  const d = (() => { try { return format(parseISO(booking.bookingDate), 'EEE, dd MMM yyyy'); } catch { return booking.bookingDate || 'N/A'; } })();
+  const vehicleLabel = [booking.vehicleMake, booking.vehicleModel].filter(Boolean).join(' ');
 
-const PAGE_META: Record<string, PageMeta> = {
-  '/bookings/dashboard': { title: "Today's Bookings",   subtitle: 'View and manage bookings for today',  icon: <LayoutDashboard className="h-6 w-6 text-neutral-900" />, status: null },
-  '/bookings/pending':   { title: 'Pending Bookings',   subtitle: 'Manage your workshop bookings',        icon: <Clock className="h-6 w-6 text-neutral-900" />,         status: 'Pending' },
-  '/bookings/confirmed': { title: 'Confirmed Bookings', subtitle: 'All confirmed upcoming bookings',      icon: <CheckCircle2 className="h-6 w-6 text-neutral-900" />,   status: 'Confirmed' },
-  '/bookings/completed': { title: 'Completed Bookings', subtitle: 'History of completed bookings',       icon: <Flag className="h-6 w-6 text-neutral-900" />,           status: 'Completed' },
-  '/bookings/cancelled': { title: 'Cancelled Bookings', subtitle: 'Bookings that have been cancelled',   icon: <Ban className="h-6 w-6 text-neutral-900" />,            status: 'Canceled' },
-};
+  return (
+    <tr className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+      {/* Client & Service */}
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-neutral-800 text-sm font-bold text-white">
+            {booking.customerName.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">{booking.customerName}</div>
+            <div className="text-xs text-slate-400">{booking.customerPhone}</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {String(booking.serviceType || '').split(',').map((s) => (
+                <span key={s.trim()} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200">
+                  {s.trim()}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </td>
 
-// ── List view (sidebar routes) ────────────────────────────────────────────────
+      {/* Date & Time */}
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-1 text-xs text-slate-500">
+          <CalendarDays className="h-3.5 w-3.5" />{d}
+        </div>
+        <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
+          <Clock className="h-3.5 w-3.5" />{booking.dropOffTime}
+        </div>
+        {booking.pickupTime && (
+          <div className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-sky-600">
+            <Clock className="h-3.5 w-3.5" />{booking.pickupTime}
+          </div>
+        )}
+      </td>
+
+      {/* Vehicle */}
+      <td className="px-4 py-3">
+        <div className="text-xs font-semibold text-slate-800">{vehicleLabel}</div>
+        {booking.vehicleRego && (
+          <div className="mt-0.5 text-[11px] text-slate-400">{booking.vehicleRego}</div>
+        )}
+        {booking.vehicleYear && (
+          <div className="mt-0.5 text-[11px] text-slate-400">{booking.vehicleYear}</div>
+        )}
+      </td>
+
+      {/* Status */}
+      <td className="px-4 py-3">
+        <Badge className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${sc.className}`}>
+          {sc.label}
+        </Badge>
+      </td>
+
+      {/* Actions */}
+      <td className="px-4 py-3">
+        <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={onView}>
+          <Eye className="h-3.5 w-3.5" /> View
+        </Button>
+      </td>
+    </tr>
+  );
+}
+
+// ── List view ─────────────────────────────────────────────────────────────────
 
 function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string }) {
   const navigate = useNavigate();
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const location = useLocation();
+  const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const today = format(new Date(), 'yyyy-MM-dd');
 
   useEffect(() => {
-    getBookings(OWNER_UID, 100)
-      .then((all) => {
-        let filtered = all;
-        if (meta.status) {
-          filtered = all.filter((b) => b.status === meta.status);
-        } else if (pathname === '/bookings/dashboard') {
-          filtered = all.filter((b) => b.date === today);
-        }
-        setBookings(filtered);
-      })
-      .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
+    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
+    const branchId = location.state?.branchId;
+
+    getBookings(ownerUid, 100).then(data => {
+      let filtered = data;
+      if (branchId) {
+        filtered = filtered.filter(b => b.branchId === branchId);
+      }
+      
+      const mapped = filtered.map(b => ({
+         id: b.id,
+         status: (b as any).status || 'pending',
+         customerName: b.client || 'Unknown',
+         customerPhone: b.clientPhone || '',
+         customerEmail: b.clientEmail || '',
+         serviceType: b.services?.map(s => s.serviceName).join(', ') || 'General Service',
+         bookingDate: b.date || '',
+         dropOffTime: b.time || '',
+         pickupTime: b.pickupTime || '',
+         vehicleMake: '',
+         vehicleModel: '',
+         vehicleYear: null,
+         vehicleRego: b.vehicleNumber || '',
+         notes: b.notes || '',
+         tasks: [],
+      }));
+
+      // If we are on a specific filter tab
+      let finalBookings = mapped;
+      if (pathname === '/bookings/pending') {
+        finalBookings = mapped.filter(b => b.status === 'pending');
+      } else if (pathname === '/bookings/confirmed') {
+        finalBookings = mapped.filter(b => b.status === 'confirmed');
+      } else if (pathname === '/bookings/completed') {
+        finalBookings = mapped.filter(b => b.status === 'completed');
+      } else if (pathname === '/bookings/cancelled') {
+        finalBookings = mapped.filter(b => b.status === 'cancelled');
+      }
+
+      setBookings(finalBookings);
+    })
+    .catch(console.error)
+    .finally(() => setLoading(false));
+  }, [pathname, location.state]);
 
   return (
     <div className="cc-fade-in flex-1 overflow-y-auto bg-[#f5f5f5]">
@@ -93,14 +190,20 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       </div>
 
       <div className="p-6">
-        {loading && <p className="text-sm text-muted-foreground py-10 text-center">Loading bookings…</p>}
-
-        {!loading && bookings.length === 0 && (
+        {loading ? (
           <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-400">
-            <div className="text-lg font-semibold">{meta.title}</div>
-            <p className="text-sm">No bookings found.</p>
+            <div className="animate-spin h-8 w-8 border-4 border-amber-400 border-t-transparent rounded-full" />
+            <p className="text-sm">Loading bookings from Firebase...</p>
           </div>
-        )}
+        ) : bookings.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-400">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
+              {meta.icon}
+            </div>
+            <div className="text-lg font-semibold text-slate-500">{meta.title}</div>
+            <p className="text-sm text-slate-400">No bookings found.</p>
+          </div>
+        ):}
 
         {!loading && bookings.length > 0 && (
           <Card className="border-0 bg-white shadow-sm overflow-hidden">
@@ -213,23 +316,42 @@ function BookingDetailView() {
   const [detail, setDetail] = useState<BookingDetail | null>(null);
   const [otherBookings, setOtherBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedTaskCard, setExpandedTaskCard] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const [expandedTaskCard, setExpandedTaskCard] = useState(false);
+
+  const location = useLocation();
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    getBookingById(OWNER_UID, id)
-      .then(async (data) => {
-        setDetail(data);
-        try {
-          const all = await getBookings(OWNER_UID, 50);
-          setOtherBookings(all.filter((b) => b.id !== id && b.clientPhone === data.booking.clientPhone));
-        } catch { /* non-critical */ }
-      })
-      .catch((e: Error) => toast({ title: 'Failed to load booking', description: e.message, variant: 'destructive' }))
-      .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+    const ownerUid = location.state?.ownerId || "89UqVYLG4MRllNRCrDsgBrIXsCK2";
+    
+    // For single detail view, fetch all and find it, or use getBookingById if it exists
+    getBookings(ownerUid, 100).then(data => {
+      const b: any = data.find(x => x.id === id);
+      if (b) {
+        setBooking({
+           id: b.id,
+           status: b.status || 'pending',
+           customerName: b.client || 'Unknown',
+           customerPhone: b.clientPhone || '',
+           customerEmail: b.clientEmail || '',
+           serviceType: b.services?.map((s: any) => s.serviceName).join(', ') || 'General Service',
+           bookingDate: b.date || '',
+           dropOffTime: b.time || '',
+           pickupTime: b.pickupTime || '',
+           vehicleMake: '',
+           vehicleModel: '',
+           vehicleYear: null,
+           vehicleRego: b.vehicleNumber || '',
+           notes: b.notes || '',
+           tasks: [],
+        });
+      }
+    })
+    .catch(console.error)
+    .finally(() => setLoading(false));
+  }, [id, location.state]);
 
   const b = detail?.booking ?? null;
   const statusCfg = b ? (STATUS_CONFIG[b.status] ?? { label: b.status, className: 'bg-slate-100 text-slate-600' }) : null;

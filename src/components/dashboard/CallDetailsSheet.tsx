@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { CalendarCheck } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from "react";
+import { CalendarCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowRightLeft,
   CalendarPlus2,
@@ -14,26 +14,38 @@ import {
   Route,
   UserRound,
   Wrench,
-} from 'lucide-react';
-import type { Agent, CallerContext, IncomingCall, Queue, ServiceRecord, Tenant, VehicleRecord } from '@/services/types';
-import { fetchCallerContext, fetchLatestBookingByPhone } from '@/services/dashboardApi';
-import { useToast } from '@/hooks/use-toast';
-import { formatDuration, formatPhone } from '@/utils/formatters';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyState } from '@/components/dashboard/EmptyState';
-import { ScrollArea } from '@/components/ui/scroll-area';
+} from "lucide-react";
+import type {
+  Agent,
+  CallerContext,
+  IncomingCall,
+  Queue,
+  ServiceRecord,
+  Tenant,
+  VehicleRecord,
+} from "@/services/types";
+import {
+  fetchCallerContext,
+  fetchLatestBookingByPhone,
+} from "@/services/dashboardApi";
+import { getServicesByBranch, type WorkshopService } from "@/services/servicesApi";
+import { useToast } from "@/hooks/use-toast";
+import { formatDuration, formatPhone } from "@/utils/formatters";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/dashboard/EmptyState";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from '@/components/ui/sheet';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+} from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-type CallSheetMode = 'incoming' | 'live';
+type CallSheetMode = "incoming" | "live";
 
 export interface CallDetailSnapshot {
   id: string;
@@ -47,6 +59,10 @@ export interface CallDetailSnapshot {
   customerPhone: string;
   callStatusText: string;
   didLabel: string;
+  branchId: string;
+  branchName: string;
+  mappingWorkshopName: string;
+  ownerId: string;
 }
 
 interface CallDetailsSheetProps {
@@ -55,10 +71,13 @@ interface CallDetailsSheetProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function buildIncomingCallSnapshot(call: IncomingCall, now: number): CallDetailSnapshot {
+export function buildIncomingCallSnapshot(
+  call: IncomingCall,
+  now: number,
+): CallDetailSnapshot {
   return {
     id: call.id,
-    mode: 'incoming',
+    mode: "incoming",
     tenantId: call.tenantId,
     workshopName: call.tenantName,
     workshopColor: call.tenantBrandColor,
@@ -67,6 +86,10 @@ export function buildIncomingCallSnapshot(call: IncomingCall, now: number): Call
     customerPhone: call.callerNumber,
     customerName: call.callerName,
     didLabel: call.didLabel || call.did,
+    branchId: call.branchId ?? '',
+    branchName: call.branchName ?? '',
+    mappingWorkshopName: call.mappingWorkshopName ?? '',
+    ownerId: call.ownerId ?? '',
     callStatusText: `Incoming for ${formatDuration(now - call.waitingSince)}`,
   };
 }
@@ -79,39 +102,59 @@ export function buildLiveCallSnapshot(args: {
   now: number;
 }): CallDetailSnapshot {
   const { agent, queues, tenants, incomingCall, now } = args;
-  const activeNumber = agent.currentCaller || incomingCall?.callerNumber || '';
+  const activeNumber = agent.currentCaller || incomingCall?.callerNumber || "";
   const queue = queues.find((entry) => agent.queueIds.includes(entry.id));
   const tenant = tenants.find((entry) => entry.id === agent.tenantId);
 
   return {
     id: agent.id,
-    mode: 'live',
+    mode: "live",
     tenantId: agent.tenantId,
-    workshopName: tenant?.name || agent.tenantName || 'Workshop',
-    workshopColor: tenant?.brandColor || 'var(--cc-color-cyan)',
-    queueName: queue?.name || agent.queueName || 'Live Queue',
-    agentOrGroupLabel: `Agent: ${agent.name}${agent.extension ? ` · Ext ${agent.extension}` : ''}`,
+    workshopName: tenant?.name || agent.tenantName || "Workshop",
+    workshopColor: tenant?.brandColor || "var(--cc-color-cyan)",
+    queueName: queue?.name || agent.queueName || "Live Queue",
+    agentOrGroupLabel: `Agent: ${agent.name}${agent.extension ? ` · Ext ${agent.extension}` : ""}`,
     customerPhone: activeNumber,
     customerName: incomingCall?.callerName ?? null,
-    didLabel: incomingCall?.didLabel || incomingCall?.did || queue?.name || 'Active line',
-    callStatusText: `Live for ${agent.callStartTime ? formatDuration(now - agent.callStartTime) : '—'}`,
+    didLabel:
+      incomingCall?.didLabel ||
+      incomingCall?.did ||
+      queue?.name ||
+      "Active line",
+    branchId: incomingCall?.branchId ?? '',
+    branchName: incomingCall?.branchName ?? '',
+    mappingWorkshopName: incomingCall?.mappingWorkshopName ?? '',
+    ownerId: incomingCall?.ownerId ?? '',
+    callStatusText: `Live for ${agent.callStartTime ? formatDuration(now - agent.callStartTime) : "—"}`,
   };
 }
 
-export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsSheetProps) {
+export function CallDetailsSheet({
+  detail,
+  open,
+  onOpenChange,
+}: CallDetailsSheetProps) {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [callerContext, setCallerContext] = useState<CallerContext | null>(null);
+  const [callerContext, setCallerContext] = useState<CallerContext | null>(
+    null,
+  );
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
-  const commandButtons = useMemo(() => ([
-    { label: 'Book Now', icon: CalendarPlus2 },
-    { label: 'Log Note', icon: ClipboardPenLine },
-    { label: 'Profile', icon: UserRound },
-    { label: 'Booking Details', icon: CalendarCheck },
-    { label: 'Reroute Call', icon: Route },
-    { label: 'Call Dispatch', icon: ArrowRightLeft },
-  ]), []);
+  
+  const [branchServices, setBranchServices] = useState<WorkshopService[] | null>(null);
+  const [branchServicesLoading, setBranchServicesLoading] = useState(false);
+  const commandButtons = useMemo(
+    () => [
+      { label: "Book Now", icon: CalendarPlus2 },
+      { label: "Log Note", icon: ClipboardPenLine },
+      { label: "Profile", icon: UserRound },
+      { label: "Booking Details", icon: CalendarCheck },
+      { label: "Reroute Call", icon: Route },
+      { label: "Call Dispatch", icon: ArrowRightLeft },
+    ],
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +163,9 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
       setCallerContext(null);
       setContextError(null);
       setContextLoading(false);
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
 
     setContextLoading(true);
@@ -133,35 +178,78 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
       })
       .catch((error) => {
         if (!cancelled) {
-          setContextError(error instanceof Error ? error.message : 'Failed to load caller context');
+          setContextError(
+            error instanceof Error
+              ? error.message
+              : "Failed to load caller context",
+          );
         }
       })
       .finally(() => {
         if (!cancelled) setContextLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [detail?.id, detail?.tenantId, detail?.customerPhone, open]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!open || !detail?.branchId || !detail?.ownerId) {
+      setBranchServices(null);
+      setBranchServicesLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setBranchServicesLoading(true);
+
+    getServicesByBranch(detail.ownerId, detail.branchId)
+      .then((services) => {
+        if (!cancelled) setBranchServices(services);
+      })
+      .catch((error) => {
+        console.error("Failed to load branch services", error);
+      })
+      .finally(() => {
+        if (!cancelled) setBranchServicesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.branchId, detail?.ownerId, open]);
 
   const latestServiceByVehicle = useMemo(
     () => buildLatestServiceMap(callerContext?.services || []),
     [callerContext?.services],
   );
 
-  const resolvedCustomerName = callerContext?.customer.name || normalizeCustomerName(detail?.customerName);
-  const resolvedCustomerEmail = callerContext?.customer.email || '';
+  const resolvedCustomerName =
+    callerContext?.customer.name || normalizeCustomerName(detail?.customerName);
+  const resolvedCustomerEmail = callerContext?.customer.email || "";
   const availableVehicles = callerContext?.vehicles || [];
   const statusTone = callerContext
-    ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-    : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200';
-  const statusLabel = callerContext ? 'Known Customer' : contextLoading ? 'Searching...' : 'Unknown Caller';
-//  const canOpenBooking = detail?.mode === 'live';
-  const canOpenBooking = true;
+    ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+    : "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+  const statusLabel = callerContext
+    ? "Known Customer"
+    : contextLoading
+      ? "Searching..."
+      : "Unknown Caller";
+  const canOpenBooking = detail?.mode === "live";
+  // const canOpenBooking = true;
   if (!detail) return null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full border-l border-slate-200 bg-slate-50 p-0 sm:max-w-2xl">
+      <SheetContent
+        side="right"
+        className="w-full border-l border-slate-200 bg-slate-50 p-0 sm:max-w-2xl"
+      >
         <ScrollArea className="h-full">
           <div className="min-h-full">
             <SheetHeader className="border-b border-slate-200 bg-white px-6 py-6">
@@ -174,14 +262,18 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                     background: `${detail.workshopColor}18`,
                   }}
                 >
-                  {detail.mode === 'incoming' ? 'Incoming Call' : 'Live Call'}
+                  {detail.mode === "incoming" ? "Incoming Call" : "Live Call"}
                 </Badge>
-                <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${statusTone}`}>
+                <div
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${statusTone}`}
+                >
                   <UserRound className="h-3.5 w-3.5" />
                   {statusLabel}
                 </div>
               </div>
-              <SheetTitle className="mt-3 text-2xl">{resolvedCustomerName}</SheetTitle>
+              <SheetTitle className="mt-3 text-2xl">
+                {resolvedCustomerName}
+              </SheetTitle>
               <SheetDescription className="text-sm text-slate-600">
                 {detail.callStatusText}
               </SheetDescription>
@@ -191,26 +283,58 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
               <Card className="border-slate-200 bg-white shadow-sm">
                 <CardContent className="grid gap-4 p-6 md:grid-cols-2">
                   <div>
-                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">Workshop</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-950">{detail.workshopName}</div>
-                    <div className="mt-1 text-sm text-slate-600">{detail.queueName}</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Workshop / Branch
+                    </div>
+                    <div className="mt-2 text-lg font-semibold text-slate-950">
+                      {(detail.mappingWorkshopName || detail.workshopName) + (detail.branchName ? ` - ${detail.branchName}` : '')}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {detail.queueName}
+                    </div>
                   </div>
                   <div>
-                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">Caller</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-950">{formatPhone(detail.customerPhone)}</div>
-                    <div className="mt-1 text-sm text-slate-600">{detail.agentOrGroupLabel}</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Caller
+                    </div>
+                    <div className="mt-2 text-lg font-semibold text-slate-950">
+                      {formatPhone(detail.customerPhone)}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {detail.agentOrGroupLabel}
+                    </div>
                   </div>
                   <div>
-                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">Profile Status</div>
-                    <div className="mt-2 text-sm font-medium text-slate-900">{statusLabel}</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Profile Status
+                    </div>
+                    <div className="mt-2 text-sm font-medium text-slate-900">
+                      {statusLabel}
+                    </div>
                   </div>
                   <div>
-                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">Line / DID</div>
-                    <div className="mt-2 text-sm font-medium text-slate-900">{detail.didLabel}</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Line / DID
+                    </div>
+                    <div className="mt-2 text-sm font-medium text-slate-900">
+                      {detail.didLabel}
+                    </div>
                   </div>
+                  {detail.ownerId && (
+                    <div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                        Owner ID
+                      </div>
+                      <div className="mt-2 text-sm font-medium text-slate-900 font-mono text-xs">
+                        {detail.ownerId}
+                      </div>
+                    </div>
+                  )}
                   {callerContext?.customer.email && (
                     <div>
-                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">Email</div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                        Email
+                      </div>
                       <div className="mt-2 flex items-center gap-2 text-sm font-medium text-slate-900">
                         <Mail className="h-4 w-4 text-slate-500" />
                         {callerContext.customer.email}
@@ -219,7 +343,9 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                   )}
                   {callerContext?.customer.address && (
                     <div>
-                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">Address</div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                        Address
+                      </div>
                       <div className="mt-2 flex items-start gap-2 text-sm font-medium text-slate-900">
                         <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
                         <span>{callerContext.customer.address}</span>
@@ -250,12 +376,14 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                     return (
                       <Button
                         key={command.label}
-                        variant={command.label === 'Book Now' ? 'default' : 'outline'}
+                        variant={
+                          command.label === "Book Now" ? "default" : "outline"
+                        }
                         className="justify-start"
-                        disabled={command.label === 'Book Now' && !canOpenBooking}
+                        // disabled={command.label === 'Book Now' && !canOpenBooking}
                         onClick={async () => {
-                          if (command.label === 'Book Now') {
-                            navigate('/booking', {
+                          if (command.label === "Book Now") {
+                            navigate("/booking", {
                               state: {
                                 tenantId: detail.tenantId,
                                 customerId: callerContext?.customer.id ?? null,
@@ -265,17 +393,30 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                                 availableVehicles,
                                 workshopName: detail.workshopName,
                                 workshopColor: detail.workshopColor,
+                                branchId: detail.branchId,
+                                ownerId: detail.ownerId,
                               },
                             });
                             return;
                           }
-                          if (command.label === 'Booking Details') {
-                            // const booking = await fetchLatestBookingByPhone(detail.tenantId, detail.customerPhone);
-                             const booking = true;
+                          if (command.label === "Booking Details") {
+                            const booking = await fetchLatestBookingByPhone(
+                              detail.ownerId || detail.tenantId,
+                              detail.customerPhone,
+                            );
+                            // const booking = true;
                             if (booking) {
-                              navigate(`/bookingsdetails`);
+                              navigate(`/bookings/dashboard`, {
+                                state: {
+                                  branchId: detail.branchId,
+                                  ownerId: detail.ownerId,
+                                }
+                              });
                             } else {
-                              toast({ title: 'No bookings found', description: `No bookings found for ${resolvedCustomerName}.` });
+                              toast({
+                                title: "No bookings found",
+                                description: `No bookings found for ${resolvedCustomerName}.`,
+                              });
                             }
                             return;
                           }
@@ -294,9 +435,16 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
               </Card>
 
               <Tabs defaultValue="vehicles" className="space-y-4">
-                <TabsList className="grid h-auto grid-cols-2 rounded-xl bg-slate-200/70 p-1">
-                  <TabsTrigger value="vehicles" className="rounded-lg">Registered Vehicles</TabsTrigger>
-                  <TabsTrigger value="services" className="rounded-lg">Recent Service History</TabsTrigger>
+                <TabsList className="grid h-auto grid-cols-3 rounded-xl bg-slate-200/70 p-1">
+                  <TabsTrigger value="vehicles" className="rounded-lg">
+                    Vehicles
+                  </TabsTrigger>
+                  <TabsTrigger value="services" className="rounded-lg">
+                    History
+                  </TabsTrigger>
+                  <TabsTrigger value="branch-services" className="rounded-lg">
+                    Branch Services
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="vehicles" className="mt-0">
@@ -312,14 +460,21 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                         <VehicleCard
                           key={vehicle.id}
                           vehicle={vehicle}
-                          latestService={latestServiceByVehicle.get(vehicle.id) ?? null}
+                          latestService={
+                            latestServiceByVehicle.get(vehicle.id) ?? null
+                          }
                         />
                       ))}
                     </div>
                   ) : (
                     <Card className="border-slate-200 bg-white shadow-sm">
                       <CardContent className="p-5">
-                        <EmptyState message={contextError || 'No vehicles found for this caller yet.'} />
+                        <EmptyState
+                          message={
+                            contextError ||
+                            "No vehicles found for this caller yet."
+                          }
+                        />
                       </CardContent>
                     </Card>
                   )}
@@ -329,21 +484,40 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                   <Card className="border-slate-200 bg-white shadow-sm">
                     <CardContent className="space-y-4 p-5">
                       {contextLoading ? (
-                        <div className="text-sm text-slate-600">Loading recent service history...</div>
+                        <div className="text-sm text-slate-600">
+                          Loading recent service history...
+                        </div>
                       ) : callerContext?.services.length ? (
                         callerContext.services.map((service, index) => (
                           <div key={service.id} className="flex gap-4">
                             <div className="flex flex-col items-center">
                               <div className="rounded-full bg-slate-100 p-2 text-slate-700">
-                                {index === 0 ? <PhoneCall className="h-4 w-4" /> : index % 2 === 0 ? <History className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
+                                {index === 0 ? (
+                                  <PhoneCall className="h-4 w-4" />
+                                ) : index % 2 === 0 ? (
+                                  <History className="h-4 w-4" />
+                                ) : (
+                                  <Wrench className="h-4 w-4" />
+                                )}
                               </div>
-                              {index < callerContext.services.length - 1 && <div className="mt-2 h-full w-px bg-slate-200" />}
+                              {index < callerContext.services.length - 1 && (
+                                <div className="mt-2 h-full w-px bg-slate-200" />
+                              )}
                             </div>
                             <div className="pb-4">
-                              <div className="text-sm font-semibold text-slate-950">{service.serviceType}</div>
-                              <div className="mt-1 text-sm text-slate-600">{describeService(service, callerContext.vehicles)}</div>
+                              <div className="text-sm font-semibold text-slate-950">
+                                {service.serviceType}
+                              </div>
+                              <div className="mt-1 text-sm text-slate-600">
+                                {describeService(
+                                  service,
+                                  callerContext.vehicles,
+                                )}
+                              </div>
                               {service.advisorNotes && (
-                                <div className="mt-1 text-sm text-slate-600">{service.advisorNotes}</div>
+                                <div className="mt-1 text-sm text-slate-600">
+                                  {service.advisorNotes}
+                                </div>
                               )}
                               <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
                                 {formatServiceDate(service.serviceDate)}
@@ -352,7 +526,41 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
                           </div>
                         ))
                       ) : (
-                        <EmptyState message={contextError || 'No prior service history found for this caller yet.'} />
+                        <EmptyState
+                          message={
+                            contextError ||
+                            "No prior service history found for this caller yet."
+                          }
+                        />
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="branch-services" className="mt-0">
+                  <Card className="border-slate-200 bg-white shadow-sm">
+                    <CardContent className="space-y-4 p-5">
+                      {branchServicesLoading ? (
+                        <div className="text-sm text-slate-600">
+                          Loading branch services...
+                        </div>
+                      ) : branchServices?.length ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {branchServices.map((service) => (
+                            <div key={service.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <div className="font-semibold text-slate-900">{service.name}</div>
+                              <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
+                                <span>{service.duration} mins</span>
+                                <div className="h-1 w-1 rounded-full bg-slate-300" />
+                                <span>${service.price}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <EmptyState
+                          message="No services found for this branch."
+                        />
                       )}
                     </CardContent>
                   </Card>
@@ -360,22 +568,25 @@ export function CallDetailsSheet({ detail, open, onOpenChange }: CallDetailsShee
               </Tabs>
 
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-600">
-                Quick context: this panel now uses workshop customer records tied to the incoming caller number, so agents see real vehicles and service history instead of generated placeholder data.
+                Quick context: this panel now uses workshop customer records
+                tied to the incoming caller number, so agents see real vehicles
+                and service history instead of generated placeholder data.
               </div>
             </div>
           </div>
         </ScrollArea>
       </SheetContent>
-
     </Sheet>
   );
 }
 
 function normalizeCustomerName(name?: string | null): string {
-  return name && name.trim() ? name.trim() : 'Unknown caller';
+  return name && name.trim() ? name.trim() : "Unknown caller";
 }
 
-function buildLatestServiceMap(services: ServiceRecord[]): Map<string, ServiceRecord> {
+function buildLatestServiceMap(
+  services: ServiceRecord[],
+): Map<string, ServiceRecord> {
   const map = new Map<string, ServiceRecord>();
   for (const service of services) {
     if (!map.has(service.vehicleId)) {
@@ -391,7 +602,7 @@ function formatVehicleLabel(vehicle: VehicleRecord): string {
     vehicle.make,
     vehicle.model,
   ].filter(Boolean);
-  return parts.join(' ') || 'Vehicle';
+  return parts.join(" ") || "Vehicle";
 }
 
 function formatServiceDate(serviceDate: string): string {
@@ -402,21 +613,26 @@ function formatServiceDate(serviceDate: string): string {
 
 function formatAmount(amount: number | null): string | null {
   if (amount == null) return null;
-  return new Intl.NumberFormat('en-AU', {
-    style: 'currency',
-    currency: 'AUD',
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency",
+    currency: "AUD",
     maximumFractionDigits: 2,
   }).format(amount);
 }
 
-function describeService(service: ServiceRecord, vehicles: VehicleRecord[]): string {
+function describeService(
+  service: ServiceRecord,
+  vehicles: VehicleRecord[],
+): string {
   const vehicle = vehicles.find((entry) => entry.id === service.vehicleId);
   const parts = [
     vehicle ? `${vehicle.rego} · ${formatVehicleLabel(vehicle)}` : null,
-    service.odometerKm != null ? `${service.odometerKm.toLocaleString()} km` : null,
+    service.odometerKm != null
+      ? `${service.odometerKm.toLocaleString()} km`
+      : null,
     formatAmount(service.amount),
   ].filter(Boolean);
-  return parts.join(' · ');
+  return parts.join(" · ");
 }
 
 function VehicleCard({
@@ -435,15 +651,25 @@ function VehicleCard({
           </div>
           <div>
             <div className="font-semibold text-slate-950">{vehicle.rego}</div>
-            <div className="text-sm text-slate-600">{formatVehicleLabel(vehicle)}</div>
-            {vehicle.notes && <div className="mt-1 text-sm text-slate-500">{vehicle.notes}</div>}
+            <div className="text-sm text-slate-600">
+              {formatVehicleLabel(vehicle)}
+            </div>
+            {vehicle.notes && (
+              <div className="mt-1 text-sm text-slate-500">{vehicle.notes}</div>
+            )}
           </div>
         </div>
         <div className="space-y-1 text-sm text-slate-600 sm:text-right">
           <div className="font-medium text-slate-900">
-            {latestService ? latestService.serviceType : 'No service history yet'}
+            {latestService
+              ? latestService.serviceType
+              : "No service history yet"}
           </div>
-          <div>{latestService ? formatServiceDate(latestService.serviceDate) : 'Waiting for first visit'}</div>
+          <div>
+            {latestService
+              ? formatServiceDate(latestService.serviceDate)
+              : "Waiting for first visit"}
+          </div>
         </div>
       </CardContent>
     </Card>

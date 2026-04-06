@@ -14,6 +14,7 @@ import {
   getGoLiveBlockers,
   getGoLiveWarnings,
 } from '@/utils/onboardingValidation';
+import { getBookings } from './bookingsApi';
 
 export { ONBOARDING_STAGES };
 
@@ -195,13 +196,17 @@ export async function fetchAgentGroups(tenantId?: string | null): Promise<AgentG
 /* ─── DID Mappings ─── */
 
 export async function fetchDIDMappings(): Promise<DIDMapping[]> {
-  const { data, error } = await supabase.from('did_mappings').select('*');
+  const { data, error } = await dynamicSupabase.from('did_mappings').select('*');
   if (error) throw new Error(error.message);
-  return (data || []).map((d) => ({
-    did: d.did,
-    tenantId: d.tenant_id,
-    queueId: d.queue_id,
-    label: d.label,
+  return (data || []).map((d: Record<string, unknown>) => ({
+    did: String(d.did ?? ''),
+    tenantId: String(d.tenant_id ?? ''),
+    queueId: String(d.queue_id ?? ''),
+    label: String(d.label ?? ''),
+    branchId: String(d.branch_id ?? ''),
+    branchName: String(d.branch_name ?? ''),
+    mappingWorkshopName: String(d.workshop_name ?? ''),
+    ownerId: String(d.owner_id ?? ''),
   }));
 }
 
@@ -586,16 +591,25 @@ export async function updateBookingStatus(id: string, status: BookingStatus): Pr
 }
 
 export async function fetchLatestBookingByPhone(tenantId: string, phone: string): Promise<BookingRecord | null> {
-  const { data, error } = await (supabase as unknown as UntypedSupabase)
-    .from('bookings')
-    .select('*')
-    .eq('tenant_id', tenantId)
-    .eq('customer_phone', phone)
-    .order('booking_date', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error || !data) return null;
-  return mapBookingRecord(data as Record<string, unknown>);
+  try {
+    const bookings = await getBookings(tenantId, 100);
+    const normalizedPhone = phone.replace(/\D/g, '');
+    
+    const matching = bookings.filter(b => {
+      if (!b.clientPhone) return false;
+      return b.clientPhone === phone || b.clientPhone.replace(/\D/g, '') === normalizedPhone;
+    });
+
+    if (matching.length === 0) return null;
+    
+    // Sort descending by date
+    matching.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    
+    return matching[0] as unknown as BookingRecord;
+  } catch (error) {
+    console.warn("fetchLatestBookingByPhone Firebase error:", error);
+    return null;
+  }
 }
 
 export async function createClient(data: NewClientForm, createdBy: string): Promise<TenantOnboarding> {

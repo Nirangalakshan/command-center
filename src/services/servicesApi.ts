@@ -1,5 +1,5 @@
 import { db, auth } from '@/lib/firebase';
-import { getIdToken } from 'firebase/auth';
+import { getIdToken, signInWithEmailAndPassword } from 'firebase/auth';
 import {
   addDoc,
   arrayRemove,
@@ -8,6 +8,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -182,7 +183,22 @@ const BASE_URL = import.meta.env.VITE_BMS_API_URL as string ?? 'https://black.bm
 const STATIC_TOKEN = import.meta.env.VITE_BMS_BEARER_TOKEN as string ?? '';
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
-  const user = auth.currentUser;
+  let user = auth.currentUser;
+
+  // Auto-login fallback if the dashboard user is not logged in directly to Firebase
+  if (!user) {
+    const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
+    const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
+    if (email && password) {
+      try {
+        const cred = await signInWithEmailAndPassword(auth, email, password);
+        user = cred.user;
+      } catch (err) {
+        console.error('[servicesApi] Auto-login failed:', err);
+      }
+    }
+  }
+
   const token = user ? await getIdToken(user) : STATIC_TOKEN;
   return {
     'Content-Type': 'application/json',
