@@ -6,7 +6,7 @@ import BookingSidebar from '../tabs/BookingSidebar';
 import {
   ArrowLeft, CalendarDays, CarFront, CheckCircle2, Clock,
   FileText, Phone, Mail, User, Wrench, Flag, Ban, LayoutDashboard,
-  Eye, ChevronDown, ChevronUp, Activity, CalendarCheck,
+  Eye, ChevronDown, ChevronUp, Activity, CalendarCheck, AlertCircle,
 } from 'lucide-react';
 import { getBookingById, getBookings, resolveOwnerUid, type Booking, type BookingDetail, type BookingService, type BookingTask } from '@/services/bookingsApi';
 import type { BookingStatus } from '@/services/types';
@@ -28,6 +28,7 @@ const PAGE_META: Record<string, PageMeta> = {
 
 type BookingRecordWithTasks = {
   id: string;
+  bookingCode:string;
   status: string;
   customerName: string;
   customerPhone: string;
@@ -166,6 +167,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
         }
         const mapped = filtered.map(b => ({
           id: b.id,
+          bookingCode: b.bookingCode || '',
           status: (b.status || 'pending').toLowerCase(),
           customerName: b.clientName || 'Unknown',
           customerPhone: b.clientPhone || '',
@@ -267,7 +269,11 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                             </div>
                             <div>
                               <div className="text-sm font-semibold text-slate-900">{b.customerName}</div>
-                              <div className="text-xs text-slate-400">{b.customerPhone}</div>
+                              {b.bookingCode && (
+                                <div className="mt-0.5 inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-600">
+                                  #{b.bookingCode}
+                                </div>
+                              )}
                               <div className="mt-1 flex flex-wrap gap-1">
                                 {String(b.serviceType || '').split(',').map((s) => (
                                   <span key={s.trim()} className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 border border-amber-200">
@@ -575,6 +581,128 @@ function BookingDetailView() {
                         ))}
                       </div>
                     )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Additional Works */}
+              {detail.additionalIssues && detail.additionalIssues.length > 0 && (
+                <Card className="border-0 bg-white shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      <AlertCircle className="h-4 w-4 text-amber-500" />
+                      Additional Works
+                      <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                        {detail.additionalIssues.length}
+                      </span>
+                    </CardTitle>
+                  </CardHeader>
+                  <Separator />
+                  <CardContent className="pt-4 space-y-4">
+                    {detail.additionalIssues.map((issue, idx) => {
+                      const i = issue as Record<string, unknown>;
+                      const isCompleted = String(i.completionStatus ?? '') === 'completed';
+                      const customerResponse = String(i.customerResponse ?? '');
+                      const responseColor = customerResponse === 'accept'
+                        ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                        : customerResponse === 'decline'
+                          ? 'bg-rose-100 text-rose-700 border-rose-200'
+                          : 'bg-slate-100 text-slate-600 border-slate-200';
+
+                      return (
+                        <div key={String(i.id ?? idx)} className="rounded-2xl border border-slate-100 bg-slate-50 p-4 space-y-3">
+                          {/* Title row */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${isCompleted ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                              <span className="text-sm font-semibold text-slate-900">{String(i.issueTitle ?? 'Untitled')}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {customerResponse && (
+                                <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${responseColor}`}>
+                                  {customerResponse === 'accept' ? '✓ Accepted' : customerResponse === 'decline' ? '✗ Declined' : customerResponse}
+                                </span>
+                              )}
+                              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${isCompleted ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                                {isCompleted ? 'Completed' : 'Pending'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Details grid */}
+                          <div className="grid gap-2 sm:grid-cols-2 text-xs">
+                            {i.description && (
+                              <div>
+                                <div className="font-semibold uppercase tracking-[0.12em] text-slate-400">Description</div>
+                                <div className="mt-0.5 text-slate-700">{String(i.description)}</div>
+                              </div>
+                            )}
+                            {i.recommendedRepair && (
+                              <div>
+                                <div className="font-semibold uppercase tracking-[0.12em] text-slate-400">Recommended Repair</div>
+                                <div className="mt-0.5 text-slate-700">{String(i.recommendedRepair)}</div>
+                              </div>
+                            )}
+                            {i.partsRequired && (
+                              <div>
+                                <div className="font-semibold uppercase tracking-[0.12em] text-slate-400">Parts Required</div>
+                                <div className="mt-0.5 text-slate-700">{String(i.partsRequired)}</div>
+                              </div>
+                            )}
+                            {i.labourTimeHours != null && (
+                              <div>
+                                <div className="font-semibold uppercase tracking-[0.12em] text-slate-400">Labour Time</div>
+                                <div className="mt-0.5 text-slate-700">{String(i.labourTimeHours)} hrs</div>
+                              </div>
+                            )}
+                            {i.price != null && (
+                              <div>
+                                <div className="font-semibold uppercase tracking-[0.12em] text-slate-400">Price</div>
+                                <div className="mt-0.5 font-bold text-slate-900">${Number(i.price).toLocaleString()}</div>
+                              </div>
+                            )}
+                            {i.reportedByStaffName && (
+                              <div>
+                                <div className="font-semibold uppercase tracking-[0.12em] text-slate-400">Reported By</div>
+                                <div className="mt-0.5 text-slate-700">{String(i.reportedByStaffName)}</div>
+                              </div>
+                            )}
+                            {i.completionNote && (
+                              <div className="sm:col-span-2">
+                                <div className="font-semibold uppercase tracking-[0.12em] text-slate-400">Completion Note</div>
+                                <div className="mt-0.5 text-slate-700 italic">"{String(i.completionNote)}"</div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Before / After photos */}
+                          {(i.imageUrl || i.completionImageUrl) && (
+                            <div className="flex gap-3">
+                              {i.imageUrl && (
+                                <div className="flex-1">
+                                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Before</div>
+                                  <img
+                                    src={String(i.imageUrl)}
+                                    alt="Issue"
+                                    className="h-28 w-full rounded-xl object-cover border border-slate-200"
+                                  />
+                                </div>
+                              )}
+                              {i.completionImageUrl && (
+                                <div className="flex-1">
+                                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">After</div>
+                                  <img
+                                    src={String(i.completionImageUrl)}
+                                    alt="Completion"
+                                    className="h-28 w-full rounded-xl object-cover border border-slate-200"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </CardContent>
                 </Card>
               )}

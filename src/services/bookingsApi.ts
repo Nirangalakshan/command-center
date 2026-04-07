@@ -267,7 +267,65 @@ export async function getBookingById(
   return await res.json();
 }
 
-// ─── 5. Additional Issues ─────────────────────────────────────────────────────
+// ─── 5. Notifications ────────────────────────────────────────────────────────
+
+export type BookingNotification = {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  bookingId: string;
+  bookingCode: string;
+  bookingDate: string;
+  bookingTime: string;
+  branchId: string;
+  branchName: string;
+  clientName: string;
+  serviceName: string;
+  services: { name: string; staffName: string; status: string }[];
+  ownerUid: string;
+  targetAdminUid: string;
+  read: boolean;
+  createdAt: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export async function fetchNotifications(ownerUid: string): Promise<BookingNotification[]> {
+  const { db } = await import('@/lib/firebase');
+  const { collection, query, where, orderBy, getDocs, limit } = await import('firebase/firestore');
+
+  const q = query(
+    collection(db, 'notifications'),
+    where('ownerUid', '==', ownerUid),
+    orderBy('createdAt', 'desc'),
+    limit(50),
+  );
+
+  const snap = await getDocs(q);
+  return snap.docs.map((doc) => {
+    const d = doc.data();
+    return {
+      id: doc.id,
+      type: d.type ?? '',
+      title: d.title ?? '',
+      message: d.message ?? '',
+      bookingId: d.bookingId ?? '',
+      bookingCode: d.bookingCode ?? '',
+      bookingDate: d.bookingDate ?? '',
+      bookingTime: d.bookingTime ?? '',
+      branchId: d.branchId ?? '',
+      branchName: d.branchName ?? '',
+      clientName: d.clientName ?? '',
+      serviceName: d.serviceName ?? '',
+      services: d.services ?? [],
+      ownerUid: d.ownerUid ?? '',
+      targetAdminUid: d.targetAdminUid ?? '',
+      read: d.read ?? false,
+      createdAt: d.createdAt ?? null,
+    } as BookingNotification;
+  });
+}
+
+// ─── 6. Additional Issues ─────────────────────────────────────────────────────
 
 export async function getAdditionalIssues(
   ownerUid: string,

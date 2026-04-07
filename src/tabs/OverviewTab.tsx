@@ -23,6 +23,7 @@ import { LiveDot } from "@/components/dashboard/LiveDot";
 import { LoadingSkeleton } from "@/components/dashboard/LoadingSkeleton";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { AgentShiftPanel } from "@/components/dashboard/AgentShiftPanel";
+import { NotificationsCard } from "@/tabs/NotificationsCard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -79,10 +80,11 @@ export function OverviewTab({
       // The realtime IncomingCall broadcast is fast but volatile.
       // We try broadcast first (fastest), then agent DB fallback.
 
-      //  const incomingForQueue = (incomingCalls || []).find(
-      //    (call) => call.queueId === queue.id && call.callerNumber,
-      //  );
-       const incomingForQueue = true;
+      // const incomingForQueue = (incomingCalls || []).find(
+      //   (call) => call.queueId === queue.id && call.callerNumber,
+      // ) || null;
+
+const incomingForQueue =true;
 
       // Priority 1: broadcast with a caller number
       if (incomingForQueue) {
@@ -225,38 +227,45 @@ export function OverviewTab({
         />
       </div>
 
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
-          <LiveDot color="var(--cc-color-cyan)" />
-          Queue Status
+      {/* Queue Status + Notifications — side by side */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Left: Queue Status */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
+            <LiveDot color="var(--cc-color-cyan)" />
+            Queue Status
+          </div>
+          <div className="grid gap-4">
+            {queues
+              .filter(
+                (q) =>
+                  permissions.allowedQueueIds.length === 0 ||
+                  permissions.allowedQueueIds.includes(q.id),
+              )
+              .map((q) => {
+                const tenant = tenants.find((t) => t.id === q.tenantId);
+                const queueDetail = queueCallDetails.get(q.id);
+                return (
+                  <QueueSummaryCard
+                    key={q.id}
+                    queue={q}
+                    tenant={tenant}
+                    showTenant={permissions.canViewTenantNames}
+                    interactive={Boolean(queueDetail)}
+                    callHint={queueDetail?.hint}
+                    onClick={
+                      queueDetail
+                        ? () => setSelectedCall(queueDetail.detail)
+                        : undefined
+                    }
+                  />
+                );
+              })}
+          </div>
         </div>
-        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-          {queues
-            .filter(
-              (q) =>
-                permissions.allowedQueueIds.length === 0 ||
-                permissions.allowedQueueIds.includes(q.id),
-            )
-            .map((q) => {
-              const tenant = tenants.find((t) => t.id === q.tenantId);
-              const queueDetail = queueCallDetails.get(q.id);
-              return (
-                <QueueSummaryCard
-                  key={q.id}
-                  queue={q}
-                  tenant={tenant}
-                  showTenant={permissions.canViewTenantNames}
-                  interactive={Boolean(queueDetail)}
-                  callHint={queueDetail?.hint}
-                  onClick={
-                    queueDetail
-                      ? () => setSelectedCall(queueDetail.detail)
-                      : undefined
-                  }
-                />
-              );
-            })}
-        </div>
+
+        {/* Right: Notifications */}
+        <NotificationsCard queues={queues} agents={agents} summary={summary} />
       </div>
 
       <Card className="border-border/80 bg-white shadow-sm">
@@ -408,3 +417,4 @@ function findIncomingCallForAgent(
     null
   );
 }
+
