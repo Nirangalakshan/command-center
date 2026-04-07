@@ -28,6 +28,7 @@ import {
   fetchCallerContext,
   fetchLatestBookingByPhone,
 } from "@/services/dashboardApi";
+import { fetchFirebaseCallerContext } from "@/services/customersApi";
 import {
   getServicesByBranch,
   type WorkshopService,
@@ -164,7 +165,7 @@ export function CallDetailsSheet({
   useEffect(() => {
     let cancelled = false;
 
-    if (!open || !detail?.tenantId || !detail.customerPhone) {
+    if (!open || !detail?.customerPhone) {
       setCallerContext(null);
       setContextError(null);
       setContextLoading(false);
@@ -177,12 +178,21 @@ export function CallDetailsSheet({
     setContextError(null);
     setCallerContext(null);
 
-    fetchCallerContext(detail.tenantId, detail.customerPhone)
+    // Use Firebase when ownerId is available (BMS workshop),
+    // fall back to Supabase for legacy tenants
+    const contextPromise = detail.ownerId
+      ? fetchFirebaseCallerContext(detail.ownerId, detail.customerPhone)
+      : detail.tenantId
+        ? fetchCallerContext(detail.tenantId, detail.customerPhone)
+        : Promise.resolve(null);
+
+    contextPromise
       .then((context) => {
         if (!cancelled) setCallerContext(context);
       })
       .catch((error) => {
         if (!cancelled) {
+          console.error('[CallDetailsSheet] Caller context fetch failed:', error);
           setContextError(
             error instanceof Error
               ? error.message
@@ -197,7 +207,7 @@ export function CallDetailsSheet({
     return () => {
       cancelled = true;
     };
-  }, [detail?.id, detail?.tenantId, detail?.customerPhone, open]);
+  }, [detail?.id, detail?.tenantId, detail?.ownerId, detail?.customerPhone, open]);
 
   useEffect(() => {
     let cancelled = false;

@@ -1,6 +1,11 @@
 import { auth } from '@/lib/firebase';
 import { getIdToken } from 'firebase/auth';
 
+/** Resolves the workshop ownerUid from .env */
+export async function resolveOwnerUid(): Promise<string> {
+  return (import.meta.env.VITE_OWNER_UID as string) ?? '';
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type BookingServiceItem = {
@@ -10,21 +15,39 @@ export type BookingServiceItem = {
   duration: number;
 };
 
+export type BookingService = {
+  id?: string;
+  name: string;
+  price: number;
+  staffName: string | null;
+  completionStatus: string;
+};
+
 export type Booking = {
   id: string;
   ownerUid: string;
+  bookingCode?: string;
+  status?: string;
   branchId: string;
+  branchName?: string;
   date: string;
   time: string;
   pickupTime?: string;
-  services: BookingServiceItem[];
+  services: BookingServiceItem[] | BookingService[];
   client: string;
+  clientName?: string;
   clientEmail: string;
   clientPhone: string;
   customerId?: string;
   vehicleNumber?: string;
+  vehicleMake?: string;
   notes?: string;
   source?: string;
+  totalPrice?: number;
+  progress?: { completed: number; total: number; percentage: number };
+  additionalIssueCount?: number;
+  pendingApprovalCount?: number;
+  createdAt?: { _seconds: number; _nanoseconds: number };
 };
 
 export type AvailabilityResponse = {
@@ -156,10 +179,84 @@ export async function createBooking(data: {
 
 // ─── 4. GET Booking Detail ───────────────────────────────────────────────────
 
+export type BookingTask = {
+  id: string;
+  serviceId: string;
+  serviceName: string;
+  name: string;
+  description: string;
+  done: boolean;
+  imageUrl: string;
+  staffNote: string;
+  completedAt: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export type BookingServiceDetail = {
+  id: string;
+  name: string;
+  price: number;
+  duration: number;
+  staffId: string | null;
+  staffName: string | null;
+  approvalStatus: string;
+  completionStatus: string;
+  completedAt: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export type BookingActivity = {
+  id: string;
+  type: string;
+  message: string;
+  performedByName: string;
+  performedByRole: string;
+  timestamp: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export type BookingDetail = {
+  booking: {
+    id: string;
+    bookingCode: string;
+    status: string;
+    date: string;
+    time: string;
+    pickupTime?: string;
+    duration?: number;
+    totalPrice: number;
+    ownerUid: string;
+    branchId: string;
+    branchName: string;
+    client: string;
+    clientEmail: string;
+    clientPhone: string;
+    customerId?: string;
+    vehicleNumber?: string;
+    vehicleBodyType?: string;
+    vehicleColour?: string;
+    vehicleMileage?: string;
+    vehicleMake?: string;
+    vehicleModel?: string;
+    vehicleYear?: string;
+    vehicleVinChassis?: string;
+    vehicleEngineNumber?: string;
+    notes?: string;
+    source?: string;
+    createdAt: { _seconds: number; _nanoseconds: number };
+    updatedAt: { _seconds: number; _nanoseconds: number };
+  };
+  services: BookingServiceDetail[];
+  tasks: BookingTask[];
+  additionalIssues: Record<string, unknown>[];
+  progress: {
+    services: { completed: number; total: number; percentage: number };
+    tasks: { completed: number; total: number; percentage: number };
+  };
+  activities: BookingActivity[];
+};
+
 export async function getBookingById(
   ownerUid: string,
   bookingId: string,
-): Promise<any> {
+): Promise<BookingDetail> {
   const res = await fetch(
     `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`,
     {
@@ -216,7 +313,65 @@ export async function updateIssueDecision(
   return await res.json();
 }
 
-// ─── 6. Call Logs ────────────────────────────────────────────────────────────
+// ─── 6. Notifications ────────────────────────────────────────────────────────
+
+export type BookingNotification = {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  bookingId: string;
+  bookingCode: string;
+  bookingDate: string;
+  bookingTime: string;
+  branchId: string;
+  branchName: string;
+  clientName: string;
+  serviceName: string;
+  services: { name: string; staffName: string; status: string }[];
+  ownerUid: string;
+  targetAdminUid: string;
+  read: boolean;
+  createdAt: { _seconds: number; _nanoseconds: number } | null;
+};
+
+export async function fetchNotifications(ownerUid: string): Promise<BookingNotification[]> {
+  const { db } = await import('@/lib/firebase');
+  const { collection, query, where, orderBy, getDocs, limit } = await import('firebase/firestore');
+
+  const q = query(
+    collection(db, 'notifications'),
+    where('ownerUid', '==', ownerUid),
+    orderBy('createdAt', 'desc'),
+    limit(50),
+  );
+
+  const snap = await getDocs(q);
+  return snap.docs.map((doc) => {
+    const d = doc.data();
+    return {
+      id: doc.id,
+      type: d.type ?? '',
+      title: d.title ?? '',
+      message: d.message ?? '',
+      bookingId: d.bookingId ?? '',
+      bookingCode: d.bookingCode ?? '',
+      bookingDate: d.bookingDate ?? '',
+      bookingTime: d.bookingTime ?? '',
+      branchId: d.branchId ?? '',
+      branchName: d.branchName ?? '',
+      clientName: d.clientName ?? '',
+      serviceName: d.serviceName ?? '',
+      services: d.services ?? [],
+      ownerUid: d.ownerUid ?? '',
+      targetAdminUid: d.targetAdminUid ?? '',
+      read: d.read ?? false,
+      createdAt: d.createdAt ?? null,
+    } as BookingNotification;
+  });
+}
+
+// ─── 7. Call Logs ────────────────────────────────────────────────────────────
 
 export async function createCallLog(data: {
   ownerUid: string;
@@ -244,10 +399,21 @@ export async function createCallLog(data: {
   return await res.json();
 }
 
+export type CallLog = {
+  id: string;
+  callerPhone: string;
+  direction: string;
+  purpose: string;
+  duration: number;
+  notes?: string;
+  outcome?: string;
+  createdAt: { _seconds: number; _nanoseconds: number };
+};
+
 export async function getCallLogs(
   ownerUid: string,
   limit: number = 10,
-): Promise<any[]> {
+): Promise<CallLog[]> {
   const res = await fetch(
     `${BASE_URL}/call-logs?ownerUid=${ownerUid}&limit=${limit}`,
     {
@@ -267,7 +433,7 @@ export async function getCallLogs(
 
 // ─── 7. Webhooks ─────────────────────────────────────────────────────────────
 
-export async function getWebhooks(): Promise<any[]> {
+export async function getWebhooks(): Promise<Record<string, unknown>[]> {
   const res = await fetch(`${BASE_URL}/webhooks`, {
     headers: {
       'Content-Type': 'application/json',
