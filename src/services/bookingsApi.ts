@@ -3,7 +3,7 @@ import { getIdToken } from 'firebase/auth';
 
 /** Resolves the workshop ownerUid from .env */
 export async function resolveOwnerUid(): Promise<string> {
-  return (import.meta.env.VITE_OWNER_UID as string) ?? '';
+  return (import.meta.env.VITE_BMS_OWNER_UID as string) ?? '';
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -336,10 +336,22 @@ export type BookingNotification = {
 };
 
 export async function fetchNotifications(ownerUid: string): Promise<BookingNotification[]> {
-  const { db } = await import('@/lib/firebase');
+  const { db, auth: fbAuth } = await import('@/lib/firebase');
   const { collection, query, where, getDocs } = await import('firebase/firestore');
+  const { signInWithEmailAndPassword } = await import('firebase/auth');
 
-  // Firebase lacks composite index: sort in memory instead
+  if (!fbAuth.currentUser) {
+    const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
+    const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
+    if (email && password) {
+      try {
+        await signInWithEmailAndPassword(fbAuth, email, password);
+      } catch (err) {
+        console.error('[fetchNotifications] Firebase auto-login failed:', err);
+      }
+    }
+  }
+
   const q = query(
     collection(db, 'notifications'),
     where('ownerUid', '==', ownerUid)
@@ -393,6 +405,93 @@ export async function fetchNotifications(ownerUid: string): Promise<BookingNotif
     return acc;
   }, {} as Record<string, number>);
   console.log('[fetchNotifications] Branch breakdown:', branchCounts);
+
+  return finalItems;
+}
+
+/**
+ * Fetch notifications for multiple ownerUids (all branches) and merge them.
+ * Firestore 'in' supports max 30 values per query.
+ */
+export async function fetchAllBranchNotifications(ownerUids: string[]): Promise<BookingNotification[]> {
+  const unique = [...new Set(ownerUids.filter(Boolean))];
+  if (unique.length === 0) return [];
+
+  // For a single owner, reuse the existing function
+  if (unique.length === 1) return fetchNotifications(unique[0]);
+
+  const { db, auth: fbAuth } = await import('@/lib/firebase');
+  const { collection, query, where, getDocs } = await import('firebase/firestore');
+  const { signInWithEmailAndPassword } = await import('firebase/auth');
+
+  if (!fbAuth.currentUser) {
+    const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
+    const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
+    if (email && password) {
+      try {
+        await signInWithEmailAndPassword(fbAuth, email, password);
+      } catch (err) {
+        console.error('[fetchAllBranchNotifications] Firebase auto-login failed:', err);
+      }
+    }
+  }
+
+  // Firestore 'in' operator supports max 30 values; chunk if needed
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += 30) {
+    chunks.push(unique.slice(i, i + 30));
+  }
+
+  const allItems: BookingNotification[] = [];
+
+  for (const chunk of chunks) {
+    const q = query(
+      collection(db, 'notifications'),
+      where('ownerUid', 'in', chunk),
+    );
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      const data = d.data();
+      allItems.push({
+        id: d.id,
+        type: data.type ?? '',
+        title: data.title ?? '',
+        message: data.message ?? '',
+        bookingId: data.bookingId ?? '',
+        bookingCode: data.bookingCode ?? '',
+        bookingDate: data.bookingDate ?? '',
+        bookingTime: data.bookingTime ?? '',
+        branchId: data.branchId ?? '',
+        branchName: data.branchName ?? '',
+        clientName: data.clientName ?? '',
+        serviceName: data.serviceName ?? '',
+        services: data.services ?? [],
+        ownerUid: data.ownerUid ?? '',
+        targetAdminUid: data.targetAdminUid ?? '',
+        read: data.read ?? false,
+        createdAt: data.createdAt ?? null,
+      } as BookingNotification);
+    }
+  }
+
+  const getTs = (val: any) => {
+    if (!val) return 0;
+    if (typeof val.toDate === 'function') return val.toDate().getTime();
+    if (val.seconds) return val.seconds * 1000;
+    if (val._seconds) return val._seconds * 1000;
+    return new Date(val).getTime() || 0;
+  };
+
+  allItems.sort((a, b) => getTs(b.createdAt) - getTs(a.createdAt));
+
+  const finalItems = allItems.slice(0, 200);
+
+  const branchCounts = finalItems.reduce((acc, curr) => {
+    const branch = curr.branchName || 'Unknown Branch';
+    acc[branch] = (acc[branch] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  console.log('[fetchAllBranchNotifications] Branch breakdown:', branchCounts);
 
   return finalItems;
 }

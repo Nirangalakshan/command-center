@@ -16,7 +16,7 @@ interface AuthState {
 
 const EMPTY_PERMISSIONS: Permissions = {
   canViewAllTenants: false, canSwitchTenant: false, canViewSipInfrastructure: false,
-  canViewTenantNames: false, canViewCallsTab: false, canViewAgentsTab: false,
+  canViewTenantNames: false, canViewCallsTab: false, canViewBookingsTab: false, canViewAgentsTab: false,
   canViewOverviewTab: false, canViewSipTab: false, canViewClientsTab: false,
   canSignUpClients: false, canAdvanceOnboarding: false, canEditClientDetails: false,
   canApproveGoLive: false, canRegressStage: false, canViewShiftPanel: false,
@@ -42,15 +42,23 @@ export function useAuth(): AuthState {
       const role = (roleRes.data?.role as UserRole) || 'agent';
       const tenantId = profile?.tenant_id || null;
 
-      // For agents, fetch allowed queue IDs
+      // For agents, try to fetch allowed queue IDs (row may not exist yet)
       let allowedQueueIds: string[] = [];
       if (role === 'agent') {
         const { data: agentData } = await supabase
           .from('agents')
           .select('allowed_queue_ids')
           .eq('user_id', authUser.id)
-          .single();
+          .maybeSingle();
         allowedQueueIds = agentData?.allowed_queue_ids || [];
+        // "Online" in this app is represented as "available".
+        const { error: presenceErr } = await supabase
+          .from('agents')
+          .update({ status: 'available' })
+          .eq('user_id', authUser.id);
+        if (presenceErr) {
+          console.warn('Failed to set agent online status:', presenceErr.message);
+        }
       }
 
       const userSession: UserSession = {
@@ -125,10 +133,19 @@ export function useAuth(): AuthState {
   }, []);
 
   const signOut = useCallback(async () => {
+    if (session?.role === 'agent') {
+      const { error: presenceErr } = await supabase
+        .from('agents')
+        .update({ status: 'offline' })
+        .eq('user_id', session.userId);
+      if (presenceErr) {
+        console.warn('Failed to set agent offline status:', presenceErr.message);
+      }
+    }
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
-  }, []);
+  }, [session]);
 
   return { user, session, permissions, loading, signIn, signOut };
 }

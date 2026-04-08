@@ -45,6 +45,9 @@ export interface Agent {
   queueIds: string[];
   name: string;
   extension: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
   role: 'agent' | 'senior-agent' | 'team-lead';
   status: AgentStatus;
   currentCaller: string | null;
@@ -388,6 +391,7 @@ export interface Permissions {
   canViewSipInfrastructure: boolean;
   canViewTenantNames: boolean;
   canViewCallsTab: boolean;
+  canViewBookingsTab: boolean;
   canViewAgentsTab: boolean;
   canViewOverviewTab: boolean;
   canViewSipTab: boolean;

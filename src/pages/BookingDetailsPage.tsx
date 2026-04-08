@@ -2,7 +2,7 @@ import '@/styles/dashboard.css';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import BookingSidebar from '../tabs/BookingSidebar';
+import BookingSidebar from './BookingSidebar';
 import {
   ArrowLeft, CalendarDays, CarFront, CheckCircle2, Clock,
   FileText, Phone, Mail, User, Wrench, Flag, Ban, LayoutDashboard,

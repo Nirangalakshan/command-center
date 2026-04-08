@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   DashboardSummary,
   Queue,
@@ -69,6 +69,24 @@ export function OverviewTab({
   const [selectedCall, setSelectedCall] = useState<CallDetailSnapshot | null>(
     null,
   );
+
+  useEffect(() => {
+    if (!selectedCall) return;
+
+    const isStillActive =
+      selectedCall.mode === "incoming"
+        ? (incomingCalls || []).some((call) => call.id === selectedCall.id)
+        : agents.some(
+            (agent) =>
+              agent.id === selectedCall.id &&
+              (agent.status === "on-call" || agent.status === "ringing"),
+          );
+
+    if (!isStillActive) {
+      setSelectedCall(null);
+    }
+  }, [selectedCall, incomingCalls, agents]);
+
   const queueCallDetails = useMemo(() => {
     const map = new Map<string, { detail: CallDetailSnapshot; hint: string; isIncoming: boolean; incomingCallers: Array<{number: string; name: string | null}> }>();
 

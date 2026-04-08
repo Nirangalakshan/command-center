@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import {
   Activity,
-  Ban,
   BookOpen,
-  CalendarCheck,
   ChevronDown,
   ChevronRight,
   LayoutDashboard,
@@ -30,7 +28,6 @@ const TAB_ITEMS = [
   { key: 'agents',            label: 'Agents',             icon: Users,           perm: 'canViewAgentsTab' },
   { key: 'agent-onboarding',  label: 'Agent Onboarding',   icon: UserPlus,        perm: 'canViewAgentOnboardingTab' },
   { key: 'calls',             label: 'Calls',              icon: Phone,           perm: 'canViewCallsTab' },
-  { key: 'bookings',          label: 'Bookings',           icon: CalendarCheck,   perm: null },
   { key: 'sip',               label: 'SIP Lines',          icon: Radio,           perm: 'canViewSipTab' },
   { key: 'clients',           label: 'Clients',            icon: BookOpen,        perm: 'canViewClientsTab' },
   { key: 'audit-logs',        label: 'Audit Logs',         icon: History,         perm: 'canViewAuditLogs' },

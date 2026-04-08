@@ -100,7 +100,7 @@ export async function fetchQueues(tenantId?: string | null): Promise<Queue[]> {
 /* ─── Agents ─── */
 
 export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
-  let query = supabase.from('agents').select('*, tenants!inner(name)');
+  let query = supabase.from('agents').select('*, tenants(name)');
   if (tenantId) query = query.eq('tenant_id', tenantId);
   const { data, error } = await query.order('name');
   if (error) {
@@ -117,12 +117,15 @@ export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
 function mapAgent(a: Record<string, unknown> & { tenants?: { name?: string } }): Agent {
   return {
     id: a.id as string,
-    tenantId: a.tenant_id as string,
+    tenantId: (a.tenant_id as string) || '',
     queueIds: (a.queue_ids as string[]) || [],
     name: a.name as string,
-    extension: a.extension as string,
-    role: a.role as Agent['role'],
-    status: a.status as Agent['status'],
+    extension: (a.extension as string) || '',
+    email: (a.email as string) || undefined,
+    phone: (a.phone_number as string) || (a.phone as string) || undefined,
+    notes: (a.notes as string) || undefined,
+    role: ((a.role as Agent['role']) || 'agent'),
+    status: ((a.status as Agent['status']) || 'offline'),
     currentCaller: (a.current_caller as string | null) ?? null,
     callStartTime: a.call_start_time ? Number(a.call_start_time) : null,
     allowedQueueIds: (a.allowed_queue_ids as string[]) || [],

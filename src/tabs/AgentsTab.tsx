@@ -47,6 +47,14 @@ export function AgentsTab({ agents, queues, tenants, permissions, now }: AgentsT
     return counts;
   }, [filtered]);
 
+  const queueNameById = useMemo(() => {
+    return new Map(queues.map((q) => [q.id, q.name]));
+  }, [queues]);
+
+  const tenantNameById = useMemo(() => {
+    return new Map(tenants.map((t) => [t.id, t.name]));
+  }, [tenants]);
+
   return (
     <div className="cc-fade-in space-y-6">
       <Card className="border-border/80 bg-white shadow-sm">
@@ -127,6 +135,10 @@ export function AgentsTab({ agents, queues, tenants, permissions, now }: AgentsT
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((a) => {
             const isLive = a.status === 'on-call' || a.status === 'ringing';
+            const queueNames = a.queueIds
+              .map((qid) => queueNameById.get(qid))
+              .filter((name): name is string => Boolean(name));
+            const tenantDisplay = a.tenantName || (a.tenantId ? tenantNameById.get(a.tenantId) : '') || 'Unassigned';
             return (
               <Card key={a.id} className="overflow-hidden border-border/80 bg-white shadow-sm">
                 {isLive && <div className="h-1 w-full bg-rose-500" />}
@@ -135,11 +147,19 @@ export function AgentsTab({ agents, queues, tenants, permissions, now }: AgentsT
                     <div>
                       <div className="text-base font-semibold text-slate-950">{a.name}</div>
                       <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                      {a.queueName} · Ext {a.extension}
-                      {permissions.canViewTenantNames && <> · {a.tenantName}</>}
+                        {queueNames.length > 0 ? queueNames.join(', ') : 'No queue'}
+                        {' · '}Ext {a.extension || '-'}
+                        {permissions.canViewTenantNames && <> {' · '}{tenantDisplay}</>}
                       </div>
                     </div>
                     <StatusBadge status={a.status} />
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 text-sm text-slate-700">
+                    <div><span className="font-medium text-slate-900">Email:</span> {a.email || '-'}</div>
+                    <div><span className="font-medium text-slate-900">Phone:</span> {a.phone || '-'}</div>
+                    <div><span className="font-medium text-slate-900">Role:</span> {a.role}</div>
+                    <div><span className="font-medium text-slate-900">Agent ID:</span> {a.id}</div>
+                    {a.notes && <div><span className="font-medium text-slate-900">Notes:</span> {a.notes}</div>}
                   </div>
                 {isLive && a.callStartTime && (
                     <div className="flex items-center justify-between gap-3 rounded-xl bg-rose-50 px-3 py-2">

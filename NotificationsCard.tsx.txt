@@ -1,8 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import type { Queue, Agent, DashboardSummary } from '@/services/types';
-import { fetchCustomerNotifications, type CustomerNotification } from '@/services/notificationsApi';
-import { resolveOwnerUid } from '@/services/bookingsApi';
+import {
+  fetchCustomerNotifications,
+  markNotificationReviewed,
+  markCalledCustomer,
+  markNotificationReviewedClosed,
+  type CustomerNotification,
+} from '@/services/notificationsApi';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -319,16 +324,33 @@ function NotificationModal({
   notification,
   open,
   onClose,
+  onCalledCustomer,
 }: {
   notification: DisplayItem | null;
   open: boolean;
   onClose: () => void;
+  onCalledCustomer: (id: string) => void;
 }) {
+  const [callingCustomer, setCallingCustomer] = useState(false);
+
   if (!notification) return null;
 
   const kind = getKind(notification.type);
   const cfg = KIND_CONFIG[kind];
-  const phone = MOCK_PHONES[notification.clientName ?? ''] ?? '';
+  const phone = notification.customerPhone ?? MOCK_PHONES[notification.clientName ?? ''] ?? '';
+
+  async function handleCalledCustomer() {
+    setCallingCustomer(true);
+    try {
+      await markCalledCustomer(notification!.id);
+      onCalledCustomer(notification!.id);
+      onClose();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCallingCustomer(false);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -440,22 +462,34 @@ function NotificationModal({
 
         <Separator />
 
-        {/* Call button */}
-        <div className="flex items-center justify-between">
+        {/* Call + Customer Answered */}
+        <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-slate-600">
             <Phone className="h-4 w-4 text-slate-400 shrink-0" />
             <span className="text-sm font-medium">{phone || 'No phone number'}</span>
           </div>
-          {phone && (
+          <div className="flex items-center gap-2">
+            {phone && (
+              <Button
+                size="sm"
+                className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={() => window.open(`tel:${phone}`, '_self')}
+              >
+                <Phone className="h-3.5 w-3.5" />
+                Call Customer
+              </Button>
+            )}
             <Button
               size="sm"
-              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-              onClick={() => window.open(`tel:${phone}`, '_self')}
+              variant="outline"
+              className="gap-1.5 border-sky-300 text-sky-700 hover:bg-sky-50"
+              disabled={callingCustomer || notification.calledCustomer}
+              onClick={handleCalledCustomer}
             >
-              <Phone className="h-3.5 w-3.5" />
-              Call Customer
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              {notification.calledCustomer ? 'Answered ✓' : callingCustomer ? 'Saving…' : 'Customer Answered'}
             </Button>
-          )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -476,6 +510,7 @@ function toDisplayItem(n: CustomerNotification) {
     branchName: n.workshopName,
     clientName: n.customerName,
     customerEmail: n.customerEmail,
+    customerPhone: n.customerPhone,
     customerId: n.customerId,
     price: n.price,
     issueTitle: n.issueTitle,
@@ -484,6 +519,8 @@ function toDisplayItem(n: CustomerNotification) {
     bookingId: n.bookingId,
     source: n.source,
     ownerUid: n.ownerUid,
+    notificationReviewed: n.notificationReviewed,
+    calledCustomer: n.calledCustomer,
   };
 }
 
@@ -495,22 +532,56 @@ export function NotificationsCard(_props: NotificationsCardProps) {
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DisplayItem | null>(null);
+  // Track IDs reviewed in this session so other agents/tabs aren't interrupted mid-session
+  const [localReviewed, setLocalReviewed] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    resolveOwnerUid()
-      .then((uid) => fetchCustomerNotifications(uid))
-      .then((data) => setItems(
-        data
-          .filter((n) => n.type !== 'estimate_reply') // estimate_reply — hidden for now
-          .filter((n) => n.type !== 'booking_canceled') // booking_canceled — hidden for now
-          .filter((n) => n.type !== 'booking_confirmed') // booking_confirmed — hidden for now
-          .map(toDisplayItem),
-      ))
-      .catch(console.error)
-      .finally(() => setLoading(false));
+  const loadNotifications = useCallback(() => {
+    return fetchCustomerNotifications()
+      .then((data) => {
+        setItems(
+          data
+            .filter((n) => n.type !== 'estimate_reply')    // hidden for now
+            .filter((n) => n.type !== 'booking_canceled')  // hidden for now
+            .filter((n) => n.type !== 'booking_confirmed') // hidden for now
+            .filter((n) => !n.notificationReviewed)        // reviewed items hidden
+            .filter((n) => !n.calledCustomer)              // called items hidden
+            .map(toDisplayItem),
+        );
+        // Clear local reviewed set — fresh data from API is authoritative
+        setLocalReviewed(new Set());
+      });
   }, []);
 
-  const unreadCount = items.filter((n) => !n.read).length;
+  useEffect(() => {
+    // Initial load
+    loadNotifications()
+      .catch(console.error)
+      .finally(() => setLoading(false));
+
+    // Poll every 30s — keeps all agents in sync
+    const interval = setInterval(() => {
+      loadNotifications().catch(console.error);
+    }, 30_000);
+
+    return () => clearInterval(interval);
+  }, [loadNotifications]);
+
+  function handleSelect(n: DisplayItem) {
+    setSelected(n);
+    // Hide immediately in this session so the list doesn't show it while modal is open
+    setLocalReviewed((prev) => new Set(prev).add(n.id));
+    // Refresh list so other agents' changes are reflected
+    loadNotifications().catch(console.error);
+  }
+
+  function handleCalledCustomer(id: string) {
+    // Remove from list immediately in this session
+    setItems((prev) => prev.filter((n) => n.id !== id));
+  }
+
+  // Exclude locally-reviewed items so the list hides them immediately on click
+  const visibleItems = items.filter((n) => !localReviewed.has(n.id));
+  const unreadCount = visibleItems.filter((n) => !n.read).length;
 
   return (
     <>
@@ -541,14 +612,14 @@ export function NotificationsCard(_props: NotificationsCardProps) {
                 </div>
               )}
 
-              {!loading && items.length === 0 && (
+              {!loading && visibleItems.length === 0 && (
                 <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
                   <CheckCircle2 className="h-8 w-8 text-slate-200" />
                   <span className="text-sm">No notifications</span>
                 </div>
               )}
 
-              {!loading && items.map((n, i) => {
+              {!loading && visibleItems.map((n, i) => {
                 const k = getKind(n.type);
                 const c = KIND_CONFIG[k];
                 const timeStr = n.createdAtIso
@@ -557,19 +628,25 @@ export function NotificationsCard(_props: NotificationsCardProps) {
                 return (
                   <div
                     key={n.id}
-                    onClick={() => setSelected(n)}
-                    className={`flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-slate-50 ${!n.read ? 'bg-sky-50/50' : ''} ${i < items.length - 1 ? 'border-b border-border/60' : ''}`}
+                   onClick={async () => {
+  // Wait for server to set notificationReviewed=true BEFORE fetching,
+  // so the fresh list excludes this notification for all agents
+  await markNotificationReviewed(n.id).catch(console.error);
+  handleSelect(n);
+}}
+                    className={`flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-slate-50 ${!n.read ? 'bg-sky-50/50' : ''} ${i < visibleItems.length - 1 ? 'border-b border-border/60' : ''}`}
                   >
                     {/* Left: icon + call button */}
                     <div className="flex shrink-0 flex-col items-center gap-2">
                       <div className={`flex h-8 w-8 items-center justify-center rounded-full ${c.iconBg}`}>
                         {c.icon}
                       </div>
-                      {MOCK_PHONES[n.clientName ?? ''] && (
+                      {/* <p>{(n.id)}</p> */}
+                      {(n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']) && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); window.open(`tel:${MOCK_PHONES[n.clientName ?? '']}`, '_self'); }}
+                          onClick={(e) => { e.stopPropagation(); window.open(`tel:${n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}`, '_self'); }}
                           className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 transition-colors hover:bg-emerald-200"
-                          title={MOCK_PHONES[n.clientName ?? '']}
+                          title={n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}
                         >
                           <Phone className="h-3.5 w-3.5" />
                         </button>
@@ -598,10 +675,10 @@ export function NotificationsCard(_props: NotificationsCardProps) {
                             {n.clientName}
                           </span>
                         )}
-                        {MOCK_PHONES[n.clientName ?? ''] && (
+                        {(n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']) && (
                           <span className="flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                             <Phone className="h-3 w-3" />
-                            {MOCK_PHONES[n.clientName ?? '']}
+                            {n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}
                           </span>
                         )}
                       </div>
@@ -623,6 +700,9 @@ export function NotificationsCard(_props: NotificationsCardProps) {
                             ${n.price.toLocaleString()}
                           </span>
                         )}
+                        {/* <span className="rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+                          id:{n.id}
+                        </span> */}
                         <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${c.badgeClass}`}>
                           {c.badgeLabel}
                         </span>
@@ -639,7 +719,18 @@ export function NotificationsCard(_props: NotificationsCardProps) {
       <NotificationModal
         notification={selected}
         open={Boolean(selected)}
-        onClose={() => setSelected(null)}
+        onClose={() => {
+          if (selected) {
+            // Only mark reviewed on close — so agent must open to trigger it
+            markNotificationReviewedClosed(selected.id).catch(console.error);
+          }
+          setSelected(null);
+          setLoading(true);
+          loadNotifications()
+            .catch(console.error)
+            .finally(() => setLoading(false));
+        }}
+        onCalledCustomer={handleCalledCustomer}
       />
     </>
   );

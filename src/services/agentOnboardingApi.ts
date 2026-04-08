@@ -46,16 +46,25 @@ export async function createAgentViaEdge(params: {
   email: string;
   phone: string;
   password: string;
-  tenantId: string;
-  queueIds: string[];
-  groupIds: string[];
   extension: string;
   notes: string;
 }): Promise<{ agentId: string; userId: string }> {
   const { data, error } = await supabase.functions.invoke('create-agent', {
     body: params,
   });
-  if (error) throw new Error(error.message);
+  if (error) {
+    // The real JSON body is in error.context (a Response object)
+    let serverMessage = error.message;
+    try {
+      const ctx = (error as any).context;
+      if (ctx instanceof Response) {
+        const body = await ctx.json();
+        console.error('[create-agent] server body:', body);
+        if (body?.error) serverMessage = body.error;
+      }
+    } catch { /* ignore parse failures */ }
+    throw new Error(serverMessage);
+  }
   if (data?.error) throw new Error(data.error);
   return { agentId: data.agentId, userId: data.userId };
 }

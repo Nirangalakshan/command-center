@@ -1,6 +1,7 @@
 import '@/styles/dashboard.css';
 
 import { useState, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '@/services/types';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useLiveClock } from '@/hooks/useLiveClock';
@@ -29,10 +30,38 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
   const d = useDashboardData({ session });
   const { formatted: clockStr } = useLiveClock();
   const [clients, setClients] = useState<TenantOnboarding[]>([]);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchClients(d.selectedTenant).then(setClients).catch(() => {});
   }, [d.selectedTenant]);
+
+  // If the current tab becomes unavailable due to role changes, fall back safely.
+  useEffect(() => {
+    const isAllowed = (key: string) => {
+      if (key === 'overview') return permissions.canViewOverviewTab;
+      if (key === 'calls') return permissions.canViewCallsTab;
+      if (key === 'bookings') return permissions.canViewBookingsTab;
+      if (key === 'agents') return permissions.canViewAgentsTab;
+      if (key === 'agent-onboarding') return permissions.canViewAgentOnboardingTab;
+      if (key === 'sip') return permissions.canViewSipTab;
+      if (key === 'clients') return permissions.canViewClientsTab;
+      if (key === 'audit-logs') return permissions.canViewAuditLogs;
+      return false;
+    };
+
+    if (!isAllowed(d.selectedTab)) {
+      d.setSelectedTab('overview');
+    }
+  }, [d.selectedTab, d.setSelectedTab, permissions]);
+
+  const handleSelectTab = useCallback((tab: string) => {
+    if (tab === 'bookings') {
+      navigate('/bookings/dashboard');
+      return;
+    }
+    d.setSelectedTab(tab);
+  }, [d.setSelectedTab, navigate]);
 
   const handleCreateClient = useCallback(async (data: NewClientForm) => {
     if (!session) return;
@@ -53,7 +82,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       {/* Sidebar */}
       <DashboardSidebar
         selectedTab={d.selectedTab}
-        onSelect={d.setSelectedTab}
+        onSelect={handleSelectTab}
         permissions={permissions}
         displayName={session.displayName}
         currentRole={session.role}
@@ -118,9 +147,6 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
               {d.selectedTab === 'agent-onboarding' && (
                 <AgentOnboardingTab
                   agentOnboarding={d.agentOnboarding}
-                  tenants={d.tenants}
-                  queues={d.queues}
-                  agentGroups={d.agentGroups}
                   permissions={permissions}
                   onRefresh={d.refresh}
                 />

@@ -114,50 +114,10 @@ export default function BookingSidebar() {
             </Link>
           </>
         )}
-{/* 
-        <Link
-          to="/customers"
-          className="flex items-center space-x-3 px-4 py-3 rounded-xl text-sm transition text-neutral-400 hover:bg-neutral-800 hover:text-white"
-        >
-          <i className="fas fa-user-group w-5" />
-          <span>Customers</span>
-        </Link> */}
-{/* 
-        <Link
-          to="/services"
-          className="flex items-center space-x-3 px-4 py-3 rounded-xl text-sm transition text-neutral-400 hover:bg-neutral-800 hover:text-white"
-        >
-          <i className="fas fa-tags w-5" />
-          <span>Services</span>
-        </Link> */}
-{/* 
-        <Link
-          to="/settings"
-          className="flex items-center space-x-3 px-4 py-3 rounded-xl text-sm transition text-neutral-400 hover:bg-neutral-800 hover:text-white"
-        >
-          <i className="fas fa-cog w-5" />
-          <span>Settings</span>
-        </Link> */}
       </div>
 
       {/* User footer */}
       <div className="p-4 border-t border-neutral-800">
-        {/* <div className="flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-neutral-800 cursor-pointer transition">
-          <div className="w-10 h-10 rounded-full bg-neutral-700 flex items-center justify-center text-white font-semibold text-sm">
-            A
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-white truncate">Account</p>
-            <p className="text-xs text-neutral-400">Workshop Owner</p>
-          </div>
-        </div> */}
-        {/* <button
-          onClick={() => navigate('/login')}
-          className="mt-3 w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white text-sm font-semibold transition border border-neutral-700"
-        >
-          <i className="fas fa-right-from-bracket" />
-          Sign Out
-        </button> */}
       </div>
     </nav>
   );
