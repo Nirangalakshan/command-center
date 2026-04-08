@@ -401,6 +401,7 @@ export interface Permissions {
   canOnboardAgents: boolean;
   canViewAgentOnboarding: boolean;
   canViewAgentOnboardingTab: boolean;
+  canViewAuditLogs: boolean;
   allowedTenantId: string | null;
   allowedQueueIds: string[];
 }

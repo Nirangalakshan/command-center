@@ -21,6 +21,8 @@ import {
   type VehicleDetails,
 } from "@/services/bookingsApi";
 import { auth } from "@/lib/firebase";
+import { useAuth } from "@/hooks/useAuth";
+import { logSystemActivity } from "@/services/auditLogApi";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -212,6 +214,7 @@ function ServiceCard({
 }
 
 export default function BookingPage() {
+  const { session } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -428,6 +431,13 @@ export default function BookingPage() {
         // Don't fail the whole flow if Supabase save fails — BMS booking already created
         console.warn("[Supabase] Failed to save local booking copy:", sbErr);
       }
+
+      await logSystemActivity(session, 'CREATE_BOOKING', 'BOOKING', result.bookingId, {
+        customerName,
+        service: chosenServices.map((s) => s.name).join(", "),
+        date: format(selectedDate, "yyyy-MM-dd"),
+        time: dropOffTime
+      });
 
       toast({
         title: "Booking confirmed!",

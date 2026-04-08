@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { UserSession, UserRole, Permissions } from '@/services/types';
 import { derivePermissions } from '@/utils/permissions';
 import type { User } from '@supabase/supabase-js';
+import { logSystemActivity } from '@/services/auditLogApi';
 
 interface AuthState {
   user: User | null;
@@ -20,6 +21,7 @@ const EMPTY_PERMISSIONS: Permissions = {
   canSignUpClients: false, canAdvanceOnboarding: false, canEditClientDetails: false,
   canApproveGoLive: false, canRegressStage: false, canViewShiftPanel: false,
   canOnboardAgents: false, canViewAgentOnboarding: false, canViewAgentOnboardingTab: false,
+  canViewAuditLogs: false,
   allowedTenantId: null, allowedQueueIds: [],
 };
 
@@ -100,7 +102,25 @@ export function useAuth(): AuthState {
   }, [session]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (!error && authData?.user) {
+      setTimeout(async () => {
+        try {
+          const profileRes = await supabase.from('profiles').select('display_name, tenant_id').eq('id', authData.user.id).single();
+          const roleRes = await supabase.from('user_roles').select('role').eq('user_id', authData.user.id).single();
+          const userSession: UserSession = {
+            userId: authData.user.id,
+            role: (roleRes.data?.role as UserRole) || 'agent',
+            tenantId: profileRes.data?.tenant_id || null,
+            allowedQueueIds: [],
+            displayName: profileRes.data?.display_name || authData.user.email || '',
+          };
+          await logSystemActivity(userSession, 'LOGIN', 'SESSION', authData.user.id, { email });
+        } catch (e) {
+          console.error('Failed to log login activity:', e);
+        }
+      }, 0);
+    }
     return { error: error?.message || null };
   }, []);
 

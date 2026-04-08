@@ -337,17 +337,16 @@ export type BookingNotification = {
 
 export async function fetchNotifications(ownerUid: string): Promise<BookingNotification[]> {
   const { db } = await import('@/lib/firebase');
-  const { collection, query, where, orderBy, getDocs, limit } = await import('firebase/firestore');
+  const { collection, query, where, getDocs } = await import('firebase/firestore');
 
+  // Firebase lacks composite index: sort in memory instead
   const q = query(
     collection(db, 'notifications'),
-    where('ownerUid', '==', ownerUid),
-    orderBy('createdAt', 'desc'),
-    limit(50),
+    where('ownerUid', '==', ownerUid)
   );
 
   const snap = await getDocs(q);
-  return snap.docs.map((doc) => {
+  const items = snap.docs.map((doc) => {
     const d = doc.data();
     return {
       id: doc.id,
@@ -369,6 +368,33 @@ export async function fetchNotifications(ownerUid: string): Promise<BookingNotif
       createdAt: d.createdAt ?? null,
     } as BookingNotification;
   });
+
+  // Client-side sort descending by createdAt
+  const getTs = (val: any) => {
+    if (!val) return 0;
+    if (typeof val.toDate === 'function') return val.toDate().getTime();
+    if (val.seconds) return val.seconds * 1000;
+    if (val._seconds) return val._seconds * 1000;
+    return new Date(val).getTime() || 0;
+  };
+
+  items.sort((a, b) => {
+    const tA = getTs(a.createdAt);
+    const tB = getTs(b.createdAt);
+    return tB - tA;
+  });
+
+  const finalItems = items.slice(0, 200);
+
+  // DEBUG: Let's log the branches found
+  const branchCounts = finalItems.reduce((acc, curr) => {
+    const branch = curr.branchName || 'Unknown Branch';
+    acc[branch] = (acc[branch] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  console.log('[fetchNotifications] Branch breakdown:', branchCounts);
+
+  return finalItems;
 }
 
 // ─── 7. Call Logs ────────────────────────────────────────────────────────────

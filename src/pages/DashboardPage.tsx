@@ -13,6 +13,7 @@ import { CallsTab } from '@/tabs/CallsTab';
 import { SipLinesTab } from '@/tabs/SipLinesTab';
 import { ClientsTab } from '@/tabs/ClientsTab';
 import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
+import { AuditLogsTab } from '@/tabs/AuditLogsTab';
 // import { BookingsTab } from '@/tabs/BookingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { AlertCircle } from 'lucide-react';
@@ -35,16 +36,17 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
 
   const handleCreateClient = useCallback(async (data: NewClientForm) => {
     if (!session) return;
-    await createClient(data, session.userId);
+    await createClient(data, session);
     const updated = await fetchClients(d.selectedTenant);
     setClients(updated);
   }, [session, d.selectedTenant]);
 
   const handleAdvanceStage = useCallback(async (clientId: string) => {
-    await advanceClientStage(clientId);
+    if (!session) return;
+    await advanceClientStage(clientId, session);
     const updated = await fetchClients(d.selectedTenant);
     setClients(updated);
-  }, [d.selectedTenant]);
+  }, [session, d.selectedTenant]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
@@ -152,6 +154,9 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   onCreateClient={handleCreateClient}
                   onAdvanceStage={handleAdvanceStage}
                 />
+              )}
+              {d.selectedTab === 'audit-logs' && (
+                <AuditLogsTab />
               )}
             </>
           )}

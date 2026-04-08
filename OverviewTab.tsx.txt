@@ -70,7 +70,7 @@ export function OverviewTab({
     null,
   );
   const queueCallDetails = useMemo(() => {
-    const map = new Map<string, { detail: CallDetailSnapshot; hint: string; isIncoming: boolean; incomingCallers: Array<{number: string; name: string | null}> }>();
+    const map = new Map<string, { detail: CallDetailSnapshot; hint: string }>();
 
     for (const queue of queues) {
       // --- Build the best snapshot from all available sources ---
@@ -80,16 +80,18 @@ export function OverviewTab({
       // The realtime IncomingCall broadcast is fast but volatile.
       // We try broadcast first (fastest), then agent DB fallback.
 
-      const allIncomingForQueue = (incomingCalls || []).filter(
-        (call) => call.queueId === queue.id && call.callerNumber,
-      );
-      const incomingCallers = allIncomingForQueue.map(c => ({ number: c.callerNumber, name: c.callerName || null }));
+      // const incomingForQueue = (incomingCalls || []).find(
+      //   (call) => call.queueId === queue.id && call.callerNumber,
+      // ) || null;
 
-      if (allIncomingForQueue.length > 0) {
+const incomingForQueue =true;
+
+      // Priority 1: broadcast with a caller number
+      if (incomingForQueue) {
         map.set(queue.id, {
           detail: buildLiveOrIncomingDetail(
             "incoming",
-            allIncomingForQueue[0],
+            incomingForQueue,
             null,
             queues,
             tenants,
@@ -97,8 +99,6 @@ export function OverviewTab({
             now,
           ),
           hint: "Click to open the incoming caller details.",
-          isIncoming: true,
-          incomingCallers,
         });
         continue;
       }
@@ -108,7 +108,6 @@ export function OverviewTab({
         agent.queueIds.includes(queue.id),
       );
       if (ringingAgentForQueue) {
-        const cPhone = ringingAgentForQueue.currentCaller;
         map.set(queue.id, {
           detail: buildLiveOrIncomingDetail(
             "incoming",
@@ -120,8 +119,6 @@ export function OverviewTab({
             now,
           ),
           hint: "Click to open the incoming caller details.",
-          isIncoming: true,
-          incomingCallers: cPhone ? [{ number: cPhone, name: null }] : [],
         });
         continue;
       }
@@ -142,8 +139,6 @@ export function OverviewTab({
             now,
           ),
           hint: "Click to open the live caller details.",
-          isIncoming: false,
-          incomingCallers: [],
         });
         continue;
       }
@@ -164,8 +159,6 @@ export function OverviewTab({
             now,
           ),
           hint: "Click to open the incoming caller details.",
-          isIncoming: true,
-          incomingCallers: [],
         });
       }
     }
@@ -259,8 +252,6 @@ export function OverviewTab({
                     tenant={tenant}
                     showTenant={permissions.canViewTenantNames}
                     interactive={Boolean(queueDetail)}
-                    isIncoming={queueDetail?.isIncoming}
-                    incomingCallers={queueDetail?.incomingCallers}
                     callHint={queueDetail?.hint}
                     onClick={
                       queueDetail
@@ -426,3 +417,4 @@ function findIncomingCallForAgent(
     null
   );
 }
+

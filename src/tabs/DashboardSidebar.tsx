@@ -12,6 +12,7 @@ import {
   Radio,
   Users,
   UserPlus,
+  History,
 } from 'lucide-react';
 import type { Permissions, UserRole } from '@/services/types';
 
@@ -32,6 +33,7 @@ const TAB_ITEMS = [
   { key: 'bookings',          label: 'Bookings',           icon: CalendarCheck,   perm: null },
   { key: 'sip',               label: 'SIP Lines',          icon: Radio,           perm: 'canViewSipTab' },
   { key: 'clients',           label: 'Clients',            icon: BookOpen,        perm: 'canViewClientsTab' },
+  { key: 'audit-logs',        label: 'Audit Logs',         icon: History,         perm: 'canViewAuditLogs' },
 ] as const;
 
 export default function DashboardSidebar({

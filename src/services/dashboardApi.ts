@@ -15,6 +15,8 @@ import {
   getGoLiveWarnings,
 } from '@/utils/onboardingValidation';
 import { getBookings } from './bookingsApi';
+import { logSystemActivity } from './auditLogApi';
+import type { UserSession } from './types';
 
 export { ONBOARDING_STAGES };
 
@@ -215,6 +217,9 @@ export async function fetchDIDMappings(): Promise<DIDMapping[]> {
 type UntypedSupabase = {
   from: (table: string) => {
     select: (...args: unknown[]) => any;
+    insert: (...args: unknown[]) => any;
+    update: (...args: unknown[]) => any;
+    delete: (...args: unknown[]) => any;
   };
 };
 
@@ -644,7 +649,7 @@ export async function fetchLatestBookingByPhone(
   }
 }
 
-export async function createClient(data: NewClientForm, createdBy: string): Promise<TenantOnboarding> {
+export async function createClient(data: NewClientForm, session: UserSession): Promise<TenantOnboarding> {
   // Create tenant first
   const tenantId = `t-${Date.now()}`;
   const { error: tErr } = await supabase.from('tenants').insert({
@@ -664,7 +669,7 @@ export async function createClient(data: NewClientForm, createdBy: string): Prom
     contact_name: data.contactName.trim(),
     contact_phone: data.contactPhone.trim(),
     contact_email: data.contactEmail.trim(),
-    created_by: createdBy,
+    created_by: session.userId,
     notes: data.notes.trim(),
     client_details: {
       businessName: data.businessName.trim(),
@@ -676,14 +681,21 @@ export async function createClient(data: NewClientForm, createdBy: string): Prom
   });
   if (oErr) throw new Error(oErr.message);
 
+  await logSystemActivity(
+    session,
+    'CREATE_CLIENT',
+    'TENANT_ONBOARDING',
+    tenantId,
+    { businessName: data.businessName.trim() }
+  );
+
   const clients = await fetchClients(tenantId);
   return clients[0];
 }
 
 export async function advanceClientStage(
   clientId: string,
-  _userId: string = 'unknown',
-  _userName: string = 'Unknown',
+  session?: UserSession
 ): Promise<{ client: TenantOnboarding | null; transition: StageTransitionResult | null }> {
   const clients = await fetchClients(clientId);
   const client = clients[0];
@@ -710,6 +722,16 @@ export async function advanceClientStage(
       .update({ onboarding_stage: nextStage })
       .eq('id', clientId);
 
+    if (session) {
+      await logSystemActivity(
+        session,
+        'ADVANCE_CLIENT_STAGE',
+        'TENANT_ONBOARDING',
+        clientId,
+        { fromStage: client.onboardingStage, toStage: nextStage }
+      );
+    }
+
     const updated = await fetchClients(clientId);
     return { client: updated[0], transition };
   }
@@ -719,14 +741,23 @@ export async function advanceClientStage(
 
 export async function regressClientStage(
   clientId: string,
-  _userId: string = 'unknown',
-  _userName: string = 'Unknown',
-  _reason: string = '',
+  session?: UserSession,
+  reason: string = '',
 ): Promise<TenantOnboarding | null> {
   await supabase
     .from('tenant_onboarding')
     .update({ onboarding_stage: 'needs-revision' })
     .eq('id', clientId);
+
+  if (session) {
+    await logSystemActivity(
+      session,
+      'REGRESS_CLIENT_STAGE',
+      'TENANT_ONBOARDING',
+      clientId,
+      { toStage: 'needs-revision', reason }
+    );
+  }
 
   const clients = await fetchClients(clientId);
   return clients[0] || null;
