@@ -1,5 +1,9 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { AgentOnboarding, AgentOnboardingStage, TrainingChecklist } from './types';
+import { db } from '@/lib/firebase';
+import { initializeApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 
 /* ─── Fetch ─── */
 
@@ -49,24 +53,60 @@ export async function createAgentViaEdge(params: {
   extension: string;
   notes: string;
 }): Promise<{ agentId: string; userId: string }> {
+  // 1. Supabase Creation
   const { data, error } = await supabase.functions.invoke('create-agent', {
     body: params,
   });
   if (error) {
-    // The real JSON body is in error.context (a Response object)
     let serverMessage = error.message;
     try {
       const ctx = (error as any).context;
       if (ctx instanceof Response) {
         const body = await ctx.json();
-        console.error('[create-agent] server body:', body);
         if (body?.error) serverMessage = body.error;
       }
     } catch { /* ignore parse failures */ }
     throw new Error(serverMessage);
   }
   if (data?.error) throw new Error(data.error);
-  return { agentId: data.agentId, userId: data.userId };
+
+  const { agentId, userId } = data;
+
+  // 2. Firebase Creation
+  const secondaryApp = initializeApp({
+    apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  }, `AgentCreationApp_${Date.now()}`);
+  
+  const secondaryAuth = getAuth(secondaryApp);
+
+  try {
+    const userCredential = await createUserWithEmailAndPassword(secondaryAuth, params.email, params.password);
+    const firebaseUid = userCredential.user.uid;
+    
+    await setDoc(doc(db, 'call_center_agents', firebaseUid), {
+      name: params.name,
+      email: params.email,
+      phone: params.phone || '',
+      extension: params.extension || '',
+      notes: params.notes || '',
+      tenantId: '',
+      queueIds: [],
+      groupIds: [],
+      supabaseUserId: userId,
+      invitedAt: new Date().toISOString(),
+      role: 'agent',
+      status: 'offline'
+    });
+  } catch (err: any) {
+    console.error('Firebase agent creation failed', err);
+    throw new Error(`Agent created in Supabase but failed in Firebase: ${err.message}`);
+  } finally {
+    await signOut(secondaryAuth);
+  }
+
+  return { agentId, userId };
 }
 
 /* ─── Advance Stage ─── */

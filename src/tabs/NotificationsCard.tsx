@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import type { Queue, Agent, DashboardSummary } from '@/services/types';
+import type { Queue, Agent, DashboardSummary, UserSession } from '@/services/types';
 import {
   fetchCustomerNotifications,
   markNotificationReviewed,
@@ -8,6 +8,7 @@ import {
   markNotificationReviewedClosed,
   type CustomerNotification,
 } from '@/services/notificationsApi';
+import { logSystemActivity } from '@/services/auditLogApi';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,6 +26,7 @@ interface NotificationsCardProps {
   queues: Queue[];
   agents: Agent[];
   summary: DashboardSummary | null;
+  session?: UserSession | null;
 }
 
 /* ─── Mock Data (disabled) ───
@@ -325,11 +327,13 @@ function NotificationModal({
   open,
   onClose,
   onCalledCustomer,
+  session,
 }: {
   notification: DisplayItem | null;
   open: boolean;
   onClose: () => void;
   onCalledCustomer: (id: string) => void;
+  session?: UserSession | null;
 }) {
   const [callingCustomer, setCallingCustomer] = useState(false);
 
@@ -343,6 +347,21 @@ function NotificationModal({
     setCallingCustomer(true);
     try {
       await markCalledCustomer(notification!.id);
+      
+      // Audit Log
+      await logSystemActivity(
+        session,
+        'notification_called_customer',
+        'notification',
+        notification!.id,
+        {
+          title: notification!.title,
+          clientName: notification!.clientName,
+          phone: phone,
+          bookingCode: notification!.bookingCode,
+        }
+      );
+
       onCalledCustomer(notification!.id);
       onClose();
     } catch (e) {
@@ -521,6 +540,8 @@ function toDisplayItem(n: CustomerNotification) {
     ownerUid: n.ownerUid,
     notificationReviewed: n.notificationReviewed,
     calledCustomer: n.calledCustomer,
+    calledCustomerByDisplayName: n.calledCustomerByDisplayName,
+    calledCustomerByName: n.calledCustomerByName,
   };
 }
 
@@ -528,8 +549,10 @@ type DisplayItem = ReturnType<typeof toDisplayItem>;
 
 /* ─── Main Card ─── */
 
-export function NotificationsCard(_props: NotificationsCardProps) {
+export function NotificationsCard({ queues, agents, summary, session }: NotificationsCardProps) {
   const [items, setItems] = useState<DisplayItem[]>([]);
+  const [answeredItems, setAnsweredItems] = useState<DisplayItem[]>([]);
+  const [showAnswered, setShowAnswered] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DisplayItem | null>(null);
   // Track IDs reviewed in this session so other agents/tabs aren't interrupted mid-session
@@ -538,13 +561,20 @@ export function NotificationsCard(_props: NotificationsCardProps) {
   const loadNotifications = useCallback(() => {
     return fetchCustomerNotifications()
       .then((data) => {
+        const base = data
+          .filter((n) => n.type !== 'estimate_reply')
+          .filter((n) => n.type !== 'booking_canceled')
+          .filter((n) => n.type !== 'booking_confirmed');
+
         setItems(
-          data
-            .filter((n) => n.type !== 'estimate_reply')    // hidden for now
-            .filter((n) => n.type !== 'booking_canceled')  // hidden for now
-            .filter((n) => n.type !== 'booking_confirmed') // hidden for now
-            .filter((n) => !n.notificationReviewed)        // reviewed items hidden
-            .filter((n) => !n.calledCustomer)              // called items hidden
+          base
+            .filter((n) => !n.notificationReviewed)
+            .filter((n) => !n.calledCustomer)
+            .map(toDisplayItem),
+        );
+        setAnsweredItems(
+          base
+            .filter((n) => n.calledCustomer)
             .map(toDisplayItem),
         );
         // Clear local reviewed set — fresh data from API is authoritative
@@ -587,20 +617,42 @@ export function NotificationsCard(_props: NotificationsCardProps) {
     <>
       <div className="space-y-4">
         {/* Header */}
-        <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
-          </span>
-          Notifications
-          {unreadCount > 0 && (
-            <span className="ml-auto rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-600">
-              {unreadCount} new
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAnswered(false)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              !showAnswered ? 'bg-rose-100 text-rose-600' : 'text-muted-foreground hover:bg-slate-100'
+            }`}
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
             </span>
-          )}
+            Notifications
+            {unreadCount > 0 && (
+              <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setShowAnswered(true)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              showAnswered ? 'bg-emerald-100 text-emerald-700' : 'text-muted-foreground hover:bg-slate-100'
+            }`}
+          >
+            <Phone className="h-3 w-3" />
+            Customer Answered
+            {answeredItems.length > 0 && (
+              <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {answeredItems.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Single card with internal scroll */}
+        {/* Card */}
         <Card className="border-border/80 bg-white shadow-sm overflow-hidden">
           <CardContent className="p-0">
             <div className="max-h-[480px] overflow-y-auto">
@@ -608,18 +660,20 @@ export function NotificationsCard(_props: NotificationsCardProps) {
               {loading && (
                 <div className="flex items-center justify-center gap-2 py-10 text-slate-400">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                  <span className="text-sm">Loading notifications…</span>
+                  <span className="text-sm">Loading…</span>
                 </div>
               )}
 
-              {!loading && visibleItems.length === 0 && (
-                <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
-                  <CheckCircle2 className="h-8 w-8 text-slate-200" />
-                  <span className="text-sm">No notifications</span>
-                </div>
-              )}
-
-              {!loading && visibleItems.map((n, i) => {
+              {/* ── Notifications list ── */}
+              {!loading && !showAnswered && (
+                <>
+                  {visibleItems.length === 0 && (
+                    <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
+                      <CheckCircle2 className="h-8 w-8 text-slate-200" />
+                      <span className="text-sm">No notifications</span>
+                    </div>
+                  )}
+                  {visibleItems.map((n, i) => {
                 const k = getKind(n.type);
                 const c = KIND_CONFIG[k];
                 const timeStr = n.createdAtIso
@@ -700,9 +754,6 @@ export function NotificationsCard(_props: NotificationsCardProps) {
                             ${n.price.toLocaleString()}
                           </span>
                         )}
-                        {/* <span className="rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
-                          id:{n.id}
-                        </span> */}
                         <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${c.badgeClass}`}>
                           {c.badgeLabel}
                         </span>
@@ -711,6 +762,77 @@ export function NotificationsCard(_props: NotificationsCardProps) {
                   </div>
                 );
               })}
+                </>
+              )}
+
+              {/* ── Customer Answered list ── */}
+              {!loading && showAnswered && (
+                <>
+                  {answeredItems.length === 0 && (
+                    <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
+                      <Phone className="h-8 w-8 text-slate-200" />
+                      <span className="text-sm">No answered customers yet</span>
+                    </div>
+                  )}
+                  {answeredItems.map((n, i) => {
+                    const k = getKind(n.type);
+                    const c = KIND_CONFIG[k];
+                    const timeStr = n.createdAtIso ? timeAgoFromIso(n.createdAtIso) : '';
+                    const callerName = n.calledCustomerByDisplayName ?? n.calledCustomerByName;
+                    return (
+                      <div key={n.id} className={`flex items-start gap-3 px-5 py-4 ${i < answeredItems.length - 1 ? 'border-b border-border/60' : ''}`}>
+                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${c.iconBg}`}>
+                          {c.icon}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-sm font-semibold text-slate-900 leading-snug">{n.title}</span>
+                            <span className="font-mono text-[10px] text-slate-400 shrink-0">{timeStr}</span>
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                            {n.clientName && (
+                              <span className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                                <User className="h-3 w-3 text-slate-400" />
+                                {n.clientName}
+                              </span>
+                            )}
+                            {n.customerPhone && (
+                              <span className="flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                <Phone className="h-3 w-3" />
+                                {n.customerPhone}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {n.bookingCode && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500">
+                                #{n.bookingCode}
+                              </span>
+                            )}
+                            {n.branchName && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                                {n.branchName}
+                              </span>
+                            )}
+                            <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${c.badgeClass}`}>
+                              {c.badgeLabel}
+                            </span>
+                            <span className="rounded-md bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                              Answered ✓
+                            </span>
+                            {callerName && (
+                              <span className="flex items-center gap-1 rounded-md bg-sky-50 border border-sky-200 px-1.5 py-0.5 text-[10px] text-sky-700">
+                                <User className="h-3 w-3" />
+                              CC-Agent Name:  {callerName}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -718,6 +840,7 @@ export function NotificationsCard(_props: NotificationsCardProps) {
 
       <NotificationModal
         notification={selected}
+        session={session}
         open={Boolean(selected)}
         onClose={() => {
           if (selected) {

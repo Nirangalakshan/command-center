@@ -24,6 +24,7 @@ import { LoadingSkeleton } from "@/components/dashboard/LoadingSkeleton";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { AgentShiftPanel } from "@/components/dashboard/AgentShiftPanel";
 import { NotificationsCard } from "@/tabs/NotificationsCard";
+import { CustomerAnsweredCard } from "@/tabs/CustomerAnsweredCard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -265,7 +266,10 @@ const incomingForQueue =true;
         </div>
 
         {/* Right: Notifications */}
-        <NotificationsCard queues={queues} agents={agents} summary={summary} />
+        <div className="space-y-6">
+          <NotificationsCard queues={queues} agents={agents} summary={summary} />
+        
+        </div>
       </div>
 
       <Card className="border-border/80 bg-white shadow-sm">

@@ -292,7 +292,7 @@ export function OverviewTab({
         </div>
 
         {/* Right: Notifications */}
-        <NotificationsCard queues={queues} agents={agents} summary={summary} />
+        <NotificationsCard queues={queues} agents={agents} summary={summary} session={session} />
       </div>
 
       <Card className="border-border/80 bg-white shadow-sm">

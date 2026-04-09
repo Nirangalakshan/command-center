@@ -57,6 +57,10 @@ export type CustomerNotification = {
   // review / call status
   notificationReviewed: boolean;
   calledCustomer: boolean;
+  calledCustomerByName: string | null;
+  calledCustomerByDisplayName: string | null;
+  notificationReviewedByName: string | null;
+  notificationReviewedByDisplayName: string | null;
 };
 
 // ─── Fetch ───────────────────────────────────────────────────────────────────
@@ -96,8 +100,12 @@ export async function fetchCustomerNotifications(): Promise<CustomerNotification
       customerPhone:        d.customerPhone ? String(d.customerPhone) : null,
       workshopName:         String(d.workshopName ?? ''),
       ownerUid:             d.ownerUid ? String(d.ownerUid) : null,
-      notificationReviewed: Boolean(d.notificationReviewed),
-      calledCustomer:       Boolean(d.calledCustomer),
+      notificationReviewed:              Boolean(d.notificationReviewed),
+      calledCustomer:                    Boolean(d.calledCustomer),
+      calledCustomerByName:              d.calledCustomerByName ? String(d.calledCustomerByName) : null,
+      calledCustomerByDisplayName:       d.calledCustomerByDisplayName ? String(d.calledCustomerByDisplayName) : null,
+      notificationReviewedByName:        d.notificationReviewedByName ? String(d.notificationReviewedByName) : null,
+      notificationReviewedByDisplayName: d.notificationReviewedByDisplayName ? String(d.notificationReviewedByDisplayName) : null,
     } as CustomerNotification;
   });
 }

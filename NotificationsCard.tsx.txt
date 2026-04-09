@@ -521,6 +521,8 @@ function toDisplayItem(n: CustomerNotification) {
     ownerUid: n.ownerUid,
     notificationReviewed: n.notificationReviewed,
     calledCustomer: n.calledCustomer,
+    calledCustomerByDisplayName: n.calledCustomerByDisplayName,
+    calledCustomerByName: n.calledCustomerByName,
   };
 }
 
@@ -530,6 +532,8 @@ type DisplayItem = ReturnType<typeof toDisplayItem>;
 
 export function NotificationsCard(_props: NotificationsCardProps) {
   const [items, setItems] = useState<DisplayItem[]>([]);
+  const [answeredItems, setAnsweredItems] = useState<DisplayItem[]>([]);
+  const [showAnswered, setShowAnswered] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DisplayItem | null>(null);
   // Track IDs reviewed in this session so other agents/tabs aren't interrupted mid-session
@@ -538,13 +542,20 @@ export function NotificationsCard(_props: NotificationsCardProps) {
   const loadNotifications = useCallback(() => {
     return fetchCustomerNotifications()
       .then((data) => {
+        const base = data
+          .filter((n) => n.type !== 'estimate_reply')
+          .filter((n) => n.type !== 'booking_canceled')
+          .filter((n) => n.type !== 'booking_confirmed');
+
         setItems(
-          data
-            .filter((n) => n.type !== 'estimate_reply')    // hidden for now
-            .filter((n) => n.type !== 'booking_canceled')  // hidden for now
-            .filter((n) => n.type !== 'booking_confirmed') // hidden for now
-            .filter((n) => !n.notificationReviewed)        // reviewed items hidden
-            .filter((n) => !n.calledCustomer)              // called items hidden
+          base
+            .filter((n) => !n.notificationReviewed)
+            .filter((n) => !n.calledCustomer)
+            .map(toDisplayItem),
+        );
+        setAnsweredItems(
+          base
+            .filter((n) => n.calledCustomer)
             .map(toDisplayItem),
         );
         // Clear local reviewed set — fresh data from API is authoritative
@@ -587,20 +598,42 @@ export function NotificationsCard(_props: NotificationsCardProps) {
     <>
       <div className="space-y-4">
         {/* Header */}
-        <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
-          </span>
-          Notifications
-          {unreadCount > 0 && (
-            <span className="ml-auto rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-600">
-              {unreadCount} new
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAnswered(false)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              !showAnswered ? 'bg-rose-100 text-rose-600' : 'text-muted-foreground hover:bg-slate-100'
+            }`}
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
             </span>
-          )}
+            Notifications
+            {unreadCount > 0 && (
+              <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setShowAnswered(true)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+              showAnswered ? 'bg-emerald-100 text-emerald-700' : 'text-muted-foreground hover:bg-slate-100'
+            }`}
+          >
+            <Phone className="h-3 w-3" />
+            Customer Answered
+            {answeredItems.length > 0 && (
+              <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {answeredItems.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Single card with internal scroll */}
+        {/* Card */}
         <Card className="border-border/80 bg-white shadow-sm overflow-hidden">
           <CardContent className="p-0">
             <div className="max-h-[480px] overflow-y-auto">
@@ -608,109 +641,164 @@ export function NotificationsCard(_props: NotificationsCardProps) {
               {loading && (
                 <div className="flex items-center justify-center gap-2 py-10 text-slate-400">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-                  <span className="text-sm">Loading notifications…</span>
+                  <span className="text-sm">Loading…</span>
                 </div>
               )}
 
-              {!loading && visibleItems.length === 0 && (
-                <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
-                  <CheckCircle2 className="h-8 w-8 text-slate-200" />
-                  <span className="text-sm">No notifications</span>
-                </div>
-              )}
-
-              {!loading && visibleItems.map((n, i) => {
-                const k = getKind(n.type);
-                const c = KIND_CONFIG[k];
-                const timeStr = n.createdAtIso
-                  ? timeAgoFromIso(n.createdAtIso)
-                  : '';
-                return (
-                  <div
-                    key={n.id}
-                   onClick={async () => {
-  // Wait for server to set notificationReviewed=true BEFORE fetching,
-  // so the fresh list excludes this notification for all agents
-  await markNotificationReviewed(n.id).catch(console.error);
-  handleSelect(n);
-}}
-                    className={`flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-slate-50 ${!n.read ? 'bg-sky-50/50' : ''} ${i < visibleItems.length - 1 ? 'border-b border-border/60' : ''}`}
-                  >
-                    {/* Left: icon + call button */}
-                    <div className="flex shrink-0 flex-col items-center gap-2">
-                      <div className={`flex h-8 w-8 items-center justify-center rounded-full ${c.iconBg}`}>
-                        {c.icon}
-                      </div>
-                      {/* <p>{(n.id)}</p> */}
-                      {(n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']) && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); window.open(`tel:${n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}`, '_self'); }}
-                          className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 transition-colors hover:bg-emerald-200"
-                          title={n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}
-                        >
-                          <Phone className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+              {/* ── Notifications list ── */}
+              {!loading && !showAnswered && (
+                <>
+                  {visibleItems.length === 0 && (
+                    <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
+                      <CheckCircle2 className="h-8 w-8 text-slate-200" />
+                      <span className="text-sm">No notifications</span>
                     </div>
-
-                    {/* Right: content */}
-                    <div className="min-w-0 flex-1">
-                      {/* Title + time */}
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-sm font-semibold text-slate-900 leading-snug">{n.title}</span>
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          <span className="font-mono text-[10px] text-slate-400">{timeStr}</span>
-                          {!n.read && <span className="h-2 w-2 rounded-full bg-rose-500" />}
+                  )}
+                  {visibleItems.map((n, i) => {
+                    const k = getKind(n.type);
+                    const c = KIND_CONFIG[k];
+                    const timeStr = n.createdAtIso ? timeAgoFromIso(n.createdAtIso) : '';
+                    return (
+                      <div
+                        key={n.id}
+                        onClick={async () => {
+                          await markNotificationReviewed(n.id).catch(console.error);
+                          handleSelect(n);
+                        }}
+                        className={`flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-slate-50 ${!n.read ? 'bg-sky-50/50' : ''} ${i < visibleItems.length - 1 ? 'border-b border-border/60' : ''}`}
+                      >
+                        <div className="flex shrink-0 flex-col items-center gap-2">
+                          <div className={`flex h-8 w-8 items-center justify-center rounded-full ${c.iconBg}`}>
+                            {c.icon}
+                          </div>
+                          {(n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']) && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); window.open(`tel:${n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}`, '_self'); }}
+                              className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 transition-colors hover:bg-emerald-200"
+                              title={n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}
+                            >
+                              <Phone className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-sm font-semibold text-slate-900 leading-snug">{n.title}</span>
+                            <div className="flex shrink-0 flex-col items-end gap-1">
+                              <span className="font-mono text-[10px] text-slate-400">{timeStr}</span>
+                              {!n.read && <span className="h-2 w-2 rounded-full bg-rose-500" />}
+                            </div>
+                          </div>
+                          <div className="mt-1.5 flex items-center gap-2">
+                            {n.clientName && (
+                              <span className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                                <User className="h-3 w-3 text-slate-400" />
+                                {n.clientName}
+                              </span>
+                            )}
+                            {(n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']) && (
+                              <span className="flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                <Phone className="h-3 w-3" />
+                                {n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {n.bookingCode && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500">
+                                #{n.bookingCode}
+                              </span>
+                            )}
+                            {n.branchName && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                                {n.branchName}
+                              </span>
+                            )}
+                            {n.price != null && (
+                              <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                ${n.price.toLocaleString()}
+                              </span>
+                            )}
+                            <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${c.badgeClass}`}>
+                              {c.badgeLabel}
+                            </span>
+                          </div>
                         </div>
                       </div>
+                    );
+                  })}
+                </>
+              )}
 
-                      {/* Message
-                      <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{n.message}</p> */}
-
-                      {/* Customer name + phone */}
-                      <div className="mt-1.5 flex items-center gap-2">
-                        {n.clientName && (
-                          <span className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
-                            <User className="h-3 w-3 text-slate-400" />
-                            {n.clientName}
-                          </span>
-                        )}
-                        {(n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']) && (
-                          <span className="flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                            <Phone className="h-3 w-3" />
-                            {n.customerPhone ?? MOCK_PHONES[n.clientName ?? '']}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Badges */}
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {n.bookingCode && (
-                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500">
-                            #{n.bookingCode}
-                          </span>
-                        )}
-                        {n.branchName && (
-                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
-                            {n.branchName}
-                          </span>
-                        )}
-                        {n.price != null && (
-                          <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            ${n.price.toLocaleString()}
-                          </span>
-                        )}
-                        {/* <span className="rounded-md bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
-                          id:{n.id}
-                        </span> */}
-                        <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${c.badgeClass}`}>
-                          {c.badgeLabel}
-                        </span>
-                      </div>
+              {/* ── Customer Answered list ── */}
+              {!loading && showAnswered && (
+                <>
+                  {answeredItems.length === 0 && (
+                    <div className="flex flex-col items-center justify-center gap-2 py-10 text-slate-400">
+                      <Phone className="h-8 w-8 text-slate-200" />
+                      <span className="text-sm">No answered customers yet</span>
                     </div>
-                  </div>
-                );
-              })}
+                  )}
+                  {answeredItems.map((n, i) => {
+                    const k = getKind(n.type);
+                    const c = KIND_CONFIG[k];
+                    const timeStr = n.createdAtIso ? timeAgoFromIso(n.createdAtIso) : '';
+                    const callerName = n.calledCustomerByDisplayName ?? n.calledCustomerByName;
+                    return (
+                      <div key={n.id} className={`flex items-start gap-3 px-5 py-4 ${i < answeredItems.length - 1 ? 'border-b border-border/60' : ''}`}>
+                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${c.iconBg}`}>
+                          {c.icon}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-sm font-semibold text-slate-900 leading-snug">{n.title}</span>
+                            <span className="font-mono text-[10px] text-slate-400 shrink-0">{timeStr}</span>
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                            {n.clientName && (
+                              <span className="flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                                <User className="h-3 w-3 text-slate-400" />
+                                {n.clientName}
+                              </span>
+                            )}
+                            {n.customerPhone && (
+                              <span className="flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                <Phone className="h-3 w-3" />
+                                {n.customerPhone}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {n.bookingCode && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500">
+                                #{n.bookingCode}
+                              </span>
+                            )}
+                            {n.branchName && (
+                              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                                {n.branchName}
+                              </span>
+                            )}
+                            <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${c.badgeClass}`}>
+                              {c.badgeLabel}
+                            </span>
+                            <span className="rounded-md bg-emerald-100 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                              Answered ✓
+                            </span>
+                            {callerName && (
+                              <span className="flex items-center gap-1 rounded-md bg-sky-50 border border-sky-200 px-1.5 py-0.5 text-[10px] text-sky-700">
+                                <User className="h-3 w-3" />
+                              CC-Agent Name:  {callerName}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
             </div>
           </CardContent>
         </Card>

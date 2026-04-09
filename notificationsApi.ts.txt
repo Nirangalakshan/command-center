@@ -38,6 +38,10 @@ export type CustomerNotification = {
   // review / call status
   notificationReviewed: boolean;
   calledCustomer: boolean;
+  calledCustomerByName: string | null;
+  calledCustomerByDisplayName: string | null;
+  notificationReviewedByName: string | null;
+  notificationReviewedByDisplayName: string | null;
 };
 
 // ─── Fetch ───────────────────────────────────────────────────────────────────
@@ -53,7 +57,7 @@ export async function fetchCustomerNotifications(): Promise<CustomerNotification
 
   const json = await res.json();
   const raw: unknown[] = Array.isArray(json) ? json : (json.notifications ?? []);
-  console.log('[fetchCustomerNotifications] raw first item:', raw[0]);
+ // console.log('[fetchCustomerNotifications] raw first item:', raw[0]);
 
   return raw.map((item) => {
     const d = item as Record<string, unknown>;
@@ -77,8 +81,12 @@ export async function fetchCustomerNotifications(): Promise<CustomerNotification
       customerPhone:        d.customerPhone ? String(d.customerPhone) : null,
       workshopName:         String(d.workshopName ?? ''),
       ownerUid:             d.ownerUid ? String(d.ownerUid) : null,
-      notificationReviewed: Boolean(d.notificationReviewed),
-      calledCustomer:       Boolean(d.calledCustomer),
+      notificationReviewed:              Boolean(d.notificationReviewed),
+      calledCustomer:                    Boolean(d.calledCustomer),
+      calledCustomerByName:              d.calledCustomerByName ? String(d.calledCustomerByName) : null,
+      calledCustomerByDisplayName:       d.calledCustomerByDisplayName ? String(d.calledCustomerByDisplayName) : null,
+      notificationReviewedByName:        d.notificationReviewedByName ? String(d.notificationReviewedByName) : null,
+      notificationReviewedByDisplayName: d.notificationReviewedByDisplayName ? String(d.notificationReviewedByDisplayName) : null,
     } as CustomerNotification;
   });
 }
@@ -86,7 +94,7 @@ export async function fetchCustomerNotifications(): Promise<CustomerNotification
 // ─── Mark reviewed ────────────────────────────────────────────────────────────
 
 export async function markNotificationReviewed(notificationId: string): Promise<void> {
-  console.log('[markNotificationReviewed] calling →', notificationId);
+//  console.log('[markNotificationReviewed] calling →', notificationId);
   const res = await fetch(
     `${BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
     {
@@ -94,11 +102,11 @@ export async function markNotificationReviewed(notificationId: string): Promise<
       headers: apiHeaders(),
     }
   );
-  console.log('[markNotificationReviewed] response ←', res.status, res.ok ? 'OK' : 'FAILED');
+ // console.log('[markNotificationReviewed] response ←', res.status, res.ok ? 'OK' : 'FAILED');
 }
 
 export async function markNotificationReviewedClosed(notificationId: string): Promise<void> {
-  console.log('[markNotificationReviewedClosed] calling →', notificationId);
+//('[markNotificationReviewedClosed] calling →', notificationId);
   const res = await fetch(
     `${BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
     {
@@ -107,14 +115,16 @@ export async function markNotificationReviewedClosed(notificationId: string): Pr
       body: JSON.stringify({ notificationReviewed: false }),
     }
   );
-  console.log('[markNotificationReviewedClosed] response ←', res.status, res.ok ? 'OK' : 'FAILED');
+ // console.log('[markNotificationReviewedClosed] response ←', res.status, res.ok ? 'OK' : 'FAILED');
 }
 
 // ─── Mark called ─────────────────────────────────────────────────────────────
 
 export async function markCalledCustomer(notificationId: string): Promise<void> {
-  await fetch(
+ // console.log('[markCalledCustomer] calling →', notificationId);
+  const res = await fetch(
     `${BASE_URL}/customer-notifications/${notificationId}/called-customer`,
-    { method: 'POST', headers: await apiHeaders() },
+    { method: 'POST', headers: apiHeaders() },
   );
+ // console.log('[markCalledCustomer] response ←', res.status, res.ok ? 'OK' : 'FAILED');
 }

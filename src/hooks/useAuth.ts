@@ -2,11 +2,14 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { UserSession, UserRole, Permissions } from '@/services/types';
 import { derivePermissions } from '@/utils/permissions';
-import type { User } from '@supabase/supabase-js';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
+import { auth, db } from '@/lib/firebase';
+import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged as firebaseOnAuthStateChange, type User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { logSystemActivity } from '@/services/auditLogApi';
 
 interface AuthState {
-  user: User | null;
+  user: SupabaseUser | FirebaseUser | null;
   session: UserSession | null;
   permissions: Permissions;
   loading: boolean;
@@ -26,11 +29,11 @@ const EMPTY_PERMISSIONS: Permissions = {
 };
 
 export function useAuth(): AuthState {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SupabaseUser | FirebaseUser | null>(null);
   const [session, setSession] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const loadUserSession = useCallback(async (authUser: User) => {
+  const loadUserSession = useCallback(async (authUser: SupabaseUser) => {
     try {
       // Fetch profile and role in parallel
       const [profileRes, roleRes] = await Promise.all([
@@ -83,13 +86,52 @@ export function useAuth(): AuthState {
           setUser(authSession.user);
           // Use setTimeout to avoid Supabase deadlock
           setTimeout(() => loadUserSession(authSession.user), 0);
-        } else {
+        } else if (!auth.currentUser) {
           setUser(null);
           setSession(null);
         }
         setLoading(false);
       }
     );
+
+    // Firebase Auth State Listener
+    const unsubscribeFirebase = firebaseOnAuthStateChange(auth, async (firebaseUser) => {
+      // Ignore the background service account used for data querying
+      if (firebaseUser && firebaseUser.email === import.meta.env.VITE_FIREBASE_AGENT_EMAIL) {
+        return;
+      }
+
+      if (firebaseUser) {
+        setUser(firebaseUser);
+        try {
+          const agentDoc = await getDoc(doc(db, 'call_center_agents', firebaseUser.uid));
+          if (agentDoc.exists()) {
+            const data = agentDoc.data();
+            const userSession: UserSession = {
+              userId: firebaseUser.uid,
+              role: 'agent',
+              tenantId: data.tenantId || null,
+              allowedQueueIds: data.queueIds || [],
+              displayName: data.name || firebaseUser.email || '',
+            };
+            // Set status to available
+            await updateDoc(doc(db, 'call_center_agents', firebaseUser.uid), { status: 'available' }).catch(console.warn);
+            setSession(userSession);
+          } else {
+             // If not in our custom collection, log them out
+             await firebaseSignOut(auth);
+             setUser(null);
+             setSession(null);
+          }
+        } catch (e) {
+            console.error('Failed to load firebase user info:', e);
+            setSession(null);
+        }
+        setLoading(false);
+      } else {
+         // Wait for supabase checked
+      }
+    });
 
     // Then check existing session
     supabase.auth.getSession().then(({ data: { session: existingSession } }) => {
@@ -101,7 +143,10 @@ export function useAuth(): AuthState {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      unsubscribeFirebase();
+    };
   }, [loadUserSession]);
 
   const permissions = useMemo(() => {
@@ -110,6 +155,7 @@ export function useAuth(): AuthState {
   }, [session]);
 
   const signIn = useCallback(async (email: string, password: string) => {
+    // Attempt Supabase first
     const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error && authData?.user) {
       setTimeout(async () => {
@@ -128,21 +174,52 @@ export function useAuth(): AuthState {
           console.error('Failed to log login activity:', e);
         }
       }, 0);
+      return { error: null };
     }
-    return { error: error?.message || null };
+
+    // If Supabase failed, try Firebase (for Agent Accounts)
+    try {
+      const fbCred = await signInWithEmailAndPassword(auth, email, password);
+      const agentDoc = await getDoc(doc(db, 'call_center_agents', fbCred.user.uid));
+      
+      if (agentDoc.exists()) {
+        const data = agentDoc.data();
+        const userSession: UserSession = {
+          userId: fbCred.user.uid,
+          role: 'agent',
+          tenantId: data.tenantId || null,
+          allowedQueueIds: data.queueIds || [],
+          displayName: data.name || fbCred.user.email || '',
+        };
+        await logSystemActivity(userSession, 'LOGIN', 'SESSION', fbCred.user.uid, { email, from: 'firebase' });
+        // setUser and setSession will be handled by the onAuthStateChanged listener
+        return { error: null };
+      } else {
+        await firebaseSignOut(auth);
+        return { error: 'Agent profile not found in Firebase.' };
+      }
+    } catch (fbErr: any) {
+      // If Firebase also fails, return the error
+      return { error: fbErr.message || 'Invalid login credentials' };
+    }
   }, []);
 
   const signOut = useCallback(async () => {
     if (session?.role === 'agent') {
+      // Offline status for supabase agents
       const { error: presenceErr } = await supabase
         .from('agents')
         .update({ status: 'offline' })
         .eq('user_id', session.userId);
-      if (presenceErr) {
-        console.warn('Failed to set agent offline status:', presenceErr.message);
+
+      // Offline status for firebase agents
+      if (auth.currentUser) {
+         await updateDoc(doc(db, 'call_center_agents', session.userId), { status: 'offline' }).catch(() => {});
       }
     }
-    await supabase.auth.signOut();
+    
+    await supabase.auth.signOut().catch(() => {});
+    await firebaseSignOut(auth).catch(() => {});
     setUser(null);
     setSession(null);
   }, [session]);
