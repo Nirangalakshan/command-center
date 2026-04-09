@@ -1,5 +1,5 @@
-import { db, auth } from '@/lib/firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { db, auth } from "@/lib/firebase";
+import { signInWithEmailAndPassword } from "firebase/auth";
 import {
   collection,
   query,
@@ -8,14 +8,14 @@ import {
   orderBy,
   limit as firestoreLimit,
   type DocumentData,
-} from 'firebase/firestore';
-import { buildPhoneLookupVariants } from './dashboardApi';
+} from "firebase/firestore";
+import { buildPhoneLookupVariants } from "./dashboardApi";
 import type {
   CallerContext,
   CustomerRecord,
   VehicleRecord,
   ServiceRecord,
-} from './types';
+} from "./types";
 
 // ─── Ensure Firebase Auth ────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ async function ensureFirebaseAuth(): Promise<void> {
     try {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (err) {
-      console.error('[customersApi] Auto-login failed:', err);
+      console.error("[customersApi] Auto-login failed:", err);
     }
   }
 }
@@ -86,23 +86,29 @@ async function findCustomerByPhone(
   ownerUid: string,
   phoneVariants: string[],
 ): Promise<CustomerRecord | null> {
-  const customersRef = collection(db, 'customers');
+  const customersRef = collection(db, "customers");
   // Firestore 'in' supports max 30 values
   const variants = phoneVariants.slice(0, 30);
 
   // Try common phone field names in priority order
-  for (const field of ['phone', 'mobile', 'phoneNumber', 'contactNumber']) {
+  for (const field of ["phone", "mobile", "phoneNumber", "contactNumber"]) {
     try {
       const q = query(
         customersRef,
-        where('ownerUid', '==', ownerUid),
-        where(field, 'in', variants),
+        where(field, "in", variants),
       );
       const snap = await getDocs(q);
-      if (!snap.empty) {
-        return mapFirebaseCustomer(snap.docs[0].id, snap.docs[0].data());
+      
+      // Client-side filter to resolve missing composite index
+      const matchedDoc = snap.docs.find(
+        (d) => String(d.data().ownerUid) === ownerUid || String(d.data().tenantId) === ownerUid
+      );
+      
+      if (matchedDoc) {
+        return mapFirebaseCustomer(matchedDoc.id, matchedDoc.data());
       }
-    } catch {
+    } catch (error) {
+      console.error(`[customersApi] Error querying customers by ${field}:`, error);
       // Field may not exist or have no index — silently try next
     }
   }
@@ -115,14 +121,14 @@ function mapFirebaseCustomer(
   data: DocumentData,
 ): CustomerRecord {
   const phone = String(
-    data.phone ?? data.mobile ?? data.phoneNumber ?? data.contactNumber ?? '',
+    data.phone ?? data.mobile ?? data.phoneNumber ?? data.contactNumber ?? "",
   );
   return {
     id: docId,
-    tenantId: String(data.ownerUid ?? ''),
-    name: String(data.name ?? data.customerName ?? ''),
+    tenantId: String(data.ownerUid ?? ""),
+    name: String(data.name ?? data.customerName ?? ""),
     primaryPhone: phone,
-    phoneNormalized: phone.replace(/\D/g, ''),
+    phoneNormalized: phone.replace(/\D/g, ""),
     email: data.email ? String(data.email) : null,
     address: data.address ? String(data.address) : null,
     notes: data.notes ? String(data.notes) : null,
@@ -137,7 +143,7 @@ async function fetchCustomerVehicles(
 ): Promise<VehicleRecord[]> {
   try {
     // Vehicles are a subcollection under the customer document
-    const vehiclesRef = collection(db, 'customers', customerId, 'vehicles');
+    const vehiclesRef = collection(db, "customers", customerId, "vehicles");
     const snap = await getDocs(vehiclesRef);
 
     if (snap.empty) {
@@ -155,7 +161,7 @@ async function fetchCustomerVehicles(
       mapFirebaseVehicle(d.id, d.data(), ownerUid, customerId),
     );
   } catch (err) {
-    console.warn('[customersApi] Failed to fetch vehicles:', err);
+    console.warn("[customersApi] Failed to fetch vehicles:", err);
     return [];
   }
 }
@@ -170,9 +176,9 @@ function mapFirebaseVehicle(
     id: docId,
     tenantId: ownerUid,
     customerId: customerId,
-    rego: String(data.registrationNumber ?? ''),
-    make: String(data.make ?? ''),
-    model: String(data.model ?? ''),
+    rego: String(data.registrationNumber ?? ""),
+    make: String(data.make ?? ""),
+    model: String(data.model ?? ""),
     year: data.year ? Number(data.year) : null,
     color: data.colour ? String(data.colour) : null,
     vin: data.vinChassis ? String(data.vinChassis) : null,
@@ -192,13 +198,13 @@ async function fetchCustomerServiceHistory(
   customerPhone: string,
   vehicles: VehicleRecord[],
 ): Promise<ServiceRecord[]> {
-  const bookingsRef = collection(db, 'bookings');
+  const bookingsRef = collection(db, "bookings");
 
   // 1. Try by customerId
   let records = await queryBookingsAsServices(
     bookingsRef,
     ownerUid,
-    'customerId',
+    "customerId",
     customerId,
     vehicles,
   );
@@ -210,7 +216,7 @@ async function fetchCustomerServiceHistory(
       records = await queryBookingsAsServices(
         bookingsRef,
         ownerUid,
-        'clientPhone',
+        "clientPhone",
         variant,
         vehicles,
       );
@@ -231,16 +237,27 @@ async function queryBookingsAsServices(
   try {
     const q = query(
       bookingsRef,
-      where('ownerUid', '==', ownerUid),
-      where(filterField, '==', filterValue),
-      orderBy('date', 'desc'),
-      firestoreLimit(20),
+      where(filterField, "==", filterValue),
     );
     const snap = await getDocs(q);
-    return snap.docs.map((d) =>
+    
+    // Client-side filter and sort to prevent composite index errors
+    const validDocs = snap.docs.filter((d) => {
+      const data = d.data();
+      return String(data.ownerUid) === ownerUid || String(data.tenantId) === ownerUid;
+    });
+
+    validDocs.sort((a, b) => {
+      const dateA = String(a.data().date ?? "");
+      const dateB = String(b.data().date ?? "");
+      return dateB.localeCompare(dateA); // Descending
+    });
+
+    return validDocs.slice(0, 20).map((d) =>
       mapBookingToServiceRecord(d.id, d.data(), vehicles),
     );
-  } catch {
+  } catch (err) {
+    console.warn(`[customersApi] queryBookingsAsServices failed:`, err);
     return [];
   }
 }
@@ -252,7 +269,7 @@ function mapBookingToServiceRecord(
 ): ServiceRecord {
   // Match vehicle by rego
   const vehicleNumber = String(
-    data.vehicleNumber ?? data.vehicleRego ?? '',
+    data.vehicleNumber ?? data.vehicleRego ?? "",
   ).toLowerCase();
   const matchedVehicle = vehicles.find(
     (v) => v.rego && v.rego.toLowerCase() === vehicleNumber,
@@ -262,17 +279,16 @@ function mapBookingToServiceRecord(
   const serviceNames = Array.isArray(data.services)
     ? data.services
         .map((s: Record<string, unknown>) =>
-          String(s.serviceName ?? s.name ?? ''),
+          String(s.serviceName ?? s.name ?? ""),
         )
         .filter(Boolean)
-        .join(', ')
-    : String(data.serviceType ?? 'General Service');
+        .join(", ")
+    : String(data.serviceType ?? "General Service");
 
   // Calculate total amount from services
   const totalAmount = Array.isArray(data.services)
     ? data.services.reduce(
-        (sum: number, s: Record<string, unknown>) =>
-          sum + Number(s.price ?? 0),
+        (sum: number, s: Record<string, unknown>) => sum + Number(s.price ?? 0),
         0,
       )
     : data.totalPrice
@@ -281,10 +297,10 @@ function mapBookingToServiceRecord(
 
   return {
     id: docId,
-    tenantId: String(data.ownerUid ?? ''),
-    customerId: String(data.customerId ?? ''),
-    vehicleId: matchedVehicle?.id ?? '',
-    serviceDate: String(data.date ?? ''),
+    tenantId: String(data.ownerUid ?? ""),
+    customerId: String(data.customerId ?? ""),
+    vehicleId: matchedVehicle?.id ?? "",
+    serviceDate: String(data.date ?? ""),
     serviceType: serviceNames,
     odometerKm: data.mileage ? Number(data.mileage) : null,
     amount: totalAmount,
