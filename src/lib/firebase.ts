@@ -33,7 +33,6 @@ function _settle() {
 
 /** Called by FirebaseAuthProvider once auth state is fully settled (including auto-login). */
 export function signalAuthReady(): void {
-  console.log('[waitForAuth] signalAuthReady called, currentUser:', auth.currentUser?.email ?? 'null');
   _settle();
 }
 
@@ -50,24 +49,23 @@ export function waitForAuth(): Promise<void> {
   if (!_waitPromise) {
     _waitPromise = new Promise<void>((resolve) => {
       let settled = false;
-      const done = (src: string) => {
+      const done = () => {
         if (settled) return;
         settled = true;
-        console.log(`[waitForAuth] resolved via ${src}, currentUser:`, auth.currentUser?.email ?? 'null');
         _settle();
         resolve();
       };
 
-      _pendingResolvers.push(() => done('signalAuthReady'));
+      _pendingResolvers.push(done);
 
       const unsub = onAuthStateChanged(auth, (user) => {
         if (user) {
           unsub();
-          done('onAuthStateChanged');
+          done();
         }
       });
 
-      setTimeout(() => { unsub(); done('timeout'); }, 10_000);
+      setTimeout(() => { unsub(); done(); }, 10_000);
     });
   }
 
