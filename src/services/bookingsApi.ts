@@ -1,9 +1,9 @@
-import { auth } from "@/lib/firebase";
-import { getIdToken } from "firebase/auth";
+import { auth } from '@/lib/firebase';
+import { getIdToken } from 'firebase/auth';
 
 /** Resolves the workshop ownerUid from .env */
 export async function resolveOwnerUid(): Promise<string> {
-  return (import.meta.env.VITE_BMS_OWNER_UID as string) ?? "";
+  return (import.meta.env.VITE_BMS_OWNER_UID as string) ?? '';
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -59,9 +59,10 @@ export type AvailabilityResponse = {
 
 const BASE_URL =
   (import.meta.env.VITE_BMS_API_URL as string) ??
-  "https://black.bmspros.com.au/api/call-center";
+  'https://black.bmspros.com.au/api/call-center';
 
-const STATIC_TOKEN = (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? "";
+const STATIC_TOKEN =
+  (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? '';
 
 // ─── Headers Helper ──────────────────────────────────────────────────────────
 
@@ -70,9 +71,9 @@ async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
   const token = user ? await getIdToken(user) : STATIC_TOKEN;
 
   return {
-    "Content-Type": "application/json",
+    'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
-    "X-Tenant-Id": ownerUid,
+    'X-Tenant-Id': ownerUid,
   };
 }
 
@@ -87,7 +88,7 @@ export async function getBookingAvailability(
   const url = `${BASE_URL}/bookings/availability?branchId=${encodeURIComponent(
     branchId,
   )}&date=${encodeURIComponent(date)}&serviceIds=${encodeURIComponent(
-    serviceIds.join(","),
+    serviceIds.join(','),
   )}`;
 
   const res = await fetch(url, {
@@ -109,7 +110,7 @@ export async function getBookings(
   branchId?: string,
 ): Promise<Booking[]> {
   const url = new URL(`${BASE_URL}/bookings`);
-  url.searchParams.set("limit", limit.toString());
+  url.searchParams.set('limit', limit.toString());
 
   const res = await fetch(url.toString(), {
     headers: await apiHeaders(ownerUid),
@@ -121,18 +122,16 @@ export async function getBookings(
 
   const json = await res.json();
   let bookings: Booking[] = json.bookings ?? [];
-
+  
   if (branchId) {
-    console.warn(
-      `[getBookings] Filtering ${bookings.length} bookings by branchId: "${branchId}"`,
-    );
+    console.warn(`[getBookings] Filtering ${bookings.length} bookings by branchId: "${branchId}"`);
     bookings = bookings.filter((b: any) => {
       const bBranchId = b.branchId || b.branch_id || b.branchId;
       return bBranchId === branchId;
     });
     console.warn(`[getBookings] Results after filter: ${bookings.length}`);
   }
-
+  
   return bookings;
 }
 
@@ -166,7 +165,7 @@ export async function createBooking(data: {
   notes?: string;
 }): Promise<{ bookingId: string }> {
   const res = await fetch(`${BASE_URL}/bookings`, {
-    method: "POST",
+    method: 'POST',
     headers: await apiHeaders(data.ownerUid),
     body: JSON.stringify(data),
   });
@@ -296,12 +295,12 @@ export async function updateIssueDecision(
   ownerUid: string,
   bookingId: string,
   issueId: string,
-  customerResponse: "accept" | "reject",
+  customerResponse: 'accept' | 'reject',
 ): Promise<any> {
   const res = await fetch(
     `${BASE_URL}/bookings/${bookingId}/additional-issues/${issueId}`,
     {
-      method: "PATCH",
+      method: 'PATCH',
       headers: await apiHeaders(ownerUid),
       body: JSON.stringify({ customerResponse }),
     },
@@ -336,13 +335,10 @@ export type BookingNotification = {
   createdAt: { _seconds: number; _nanoseconds: number } | null;
 };
 
-export async function fetchNotifications(
-  ownerUid: string,
-): Promise<BookingNotification[]> {
-  const { db, auth: fbAuth } = await import("@/lib/firebase");
-  const { collection, query, where, getDocs } =
-    await import("firebase/firestore");
-  const { signInWithEmailAndPassword } = await import("firebase/auth");
+export async function fetchNotifications(ownerUid: string): Promise<BookingNotification[]> {
+  const { db, auth: fbAuth } = await import('@/lib/firebase');
+  const { collection, query, where, getDocs } = await import('firebase/firestore');
+  const { signInWithEmailAndPassword } = await import('firebase/auth');
 
   if (!fbAuth.currentUser) {
     const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
@@ -351,14 +347,14 @@ export async function fetchNotifications(
       try {
         await signInWithEmailAndPassword(fbAuth, email, password);
       } catch (err) {
-        console.error("[fetchNotifications] Firebase auto-login failed:", err);
+        console.error('[fetchNotifications] Firebase auto-login failed:', err);
       }
     }
   }
 
   const q = query(
-    collection(db, "notifications"),
-    where("ownerUid", "==", ownerUid),
+    collection(db, 'notifications'),
+    where('ownerUid', '==', ownerUid)
   );
 
   const snap = await getDocs(q);
@@ -366,20 +362,20 @@ export async function fetchNotifications(
     const d = doc.data();
     return {
       id: doc.id,
-      type: d.type ?? "",
-      title: d.title ?? "",
-      message: d.message ?? "",
-      bookingId: d.bookingId ?? "",
-      bookingCode: d.bookingCode ?? "",
-      bookingDate: d.bookingDate ?? "",
-      bookingTime: d.bookingTime ?? "",
-      branchId: d.branchId ?? "",
-      branchName: d.branchName ?? "",
-      clientName: d.clientName ?? "",
-      serviceName: d.serviceName ?? "",
+      type: d.type ?? '',
+      title: d.title ?? '',
+      message: d.message ?? '',
+      bookingId: d.bookingId ?? '',
+      bookingCode: d.bookingCode ?? '',
+      bookingDate: d.bookingDate ?? '',
+      bookingTime: d.bookingTime ?? '',
+      branchId: d.branchId ?? '',
+      branchName: d.branchName ?? '',
+      clientName: d.clientName ?? '',
+      serviceName: d.serviceName ?? '',
       services: d.services ?? [],
-      ownerUid: d.ownerUid ?? "",
-      targetAdminUid: d.targetAdminUid ?? "",
+      ownerUid: d.ownerUid ?? '',
+      targetAdminUid: d.targetAdminUid ?? '',
       read: d.read ?? false,
       createdAt: d.createdAt ?? null,
     } as BookingNotification;
@@ -388,7 +384,7 @@ export async function fetchNotifications(
   // Client-side sort descending by createdAt
   const getTs = (val: any) => {
     if (!val) return 0;
-    if (typeof val.toDate === "function") return val.toDate().getTime();
+    if (typeof val.toDate === 'function') return val.toDate().getTime();
     if (val.seconds) return val.seconds * 1000;
     if (val._seconds) return val._seconds * 1000;
     return new Date(val).getTime() || 0;
@@ -403,15 +399,12 @@ export async function fetchNotifications(
   const finalItems = items.slice(0, 200);
 
   // DEBUG: Let's log the branches found
-  const branchCounts = finalItems.reduce(
-    (acc, curr) => {
-      const branch = curr.branchName || "Unknown Branch";
-      acc[branch] = (acc[branch] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
-  console.log("[fetchNotifications] Branch breakdown:", branchCounts);
+  const branchCounts = finalItems.reduce((acc, curr) => {
+    const branch = curr.branchName || 'Unknown Branch';
+    acc[branch] = (acc[branch] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  console.log('[fetchNotifications] Branch breakdown:', branchCounts);
 
   return finalItems;
 }
@@ -420,19 +413,16 @@ export async function fetchNotifications(
  * Fetch notifications for multiple ownerUids (all branches) and merge them.
  * Firestore 'in' supports max 30 values per query.
  */
-export async function fetchAllBranchNotifications(
-  ownerUids: string[],
-): Promise<BookingNotification[]> {
+export async function fetchAllBranchNotifications(ownerUids: string[]): Promise<BookingNotification[]> {
   const unique = [...new Set(ownerUids.filter(Boolean))];
   if (unique.length === 0) return [];
 
   // For a single owner, reuse the existing function
   if (unique.length === 1) return fetchNotifications(unique[0]);
 
-  const { db, auth: fbAuth } = await import("@/lib/firebase");
-  const { collection, query, where, getDocs } =
-    await import("firebase/firestore");
-  const { signInWithEmailAndPassword } = await import("firebase/auth");
+  const { db, auth: fbAuth } = await import('@/lib/firebase');
+  const { collection, query, where, getDocs } = await import('firebase/firestore');
+  const { signInWithEmailAndPassword } = await import('firebase/auth');
 
   if (!fbAuth.currentUser) {
     const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
@@ -441,10 +431,7 @@ export async function fetchAllBranchNotifications(
       try {
         await signInWithEmailAndPassword(fbAuth, email, password);
       } catch (err) {
-        console.error(
-          "[fetchAllBranchNotifications] Firebase auto-login failed:",
-          err,
-        );
+        console.error('[fetchAllBranchNotifications] Firebase auto-login failed:', err);
       }
     }
   }
@@ -459,28 +446,28 @@ export async function fetchAllBranchNotifications(
 
   for (const chunk of chunks) {
     const q = query(
-      collection(db, "notifications"),
-      where("ownerUid", "in", chunk),
+      collection(db, 'notifications'),
+      where('ownerUid', 'in', chunk),
     );
     const snap = await getDocs(q);
     for (const d of snap.docs) {
       const data = d.data();
       allItems.push({
         id: d.id,
-        type: data.type ?? "",
-        title: data.title ?? "",
-        message: data.message ?? "",
-        bookingId: data.bookingId ?? "",
-        bookingCode: data.bookingCode ?? "",
-        bookingDate: data.bookingDate ?? "",
-        bookingTime: data.bookingTime ?? "",
-        branchId: data.branchId ?? "",
-        branchName: data.branchName ?? "",
-        clientName: data.clientName ?? "",
-        serviceName: data.serviceName ?? "",
+        type: data.type ?? '',
+        title: data.title ?? '',
+        message: data.message ?? '',
+        bookingId: data.bookingId ?? '',
+        bookingCode: data.bookingCode ?? '',
+        bookingDate: data.bookingDate ?? '',
+        bookingTime: data.bookingTime ?? '',
+        branchId: data.branchId ?? '',
+        branchName: data.branchName ?? '',
+        clientName: data.clientName ?? '',
+        serviceName: data.serviceName ?? '',
         services: data.services ?? [],
-        ownerUid: data.ownerUid ?? "",
-        targetAdminUid: data.targetAdminUid ?? "",
+        ownerUid: data.ownerUid ?? '',
+        targetAdminUid: data.targetAdminUid ?? '',
         read: data.read ?? false,
         createdAt: data.createdAt ?? null,
       } as BookingNotification);
@@ -489,7 +476,7 @@ export async function fetchAllBranchNotifications(
 
   const getTs = (val: any) => {
     if (!val) return 0;
-    if (typeof val.toDate === "function") return val.toDate().getTime();
+    if (typeof val.toDate === 'function') return val.toDate().getTime();
     if (val.seconds) return val.seconds * 1000;
     if (val._seconds) return val._seconds * 1000;
     return new Date(val).getTime() || 0;
@@ -499,15 +486,12 @@ export async function fetchAllBranchNotifications(
 
   const finalItems = allItems.slice(0, 200);
 
-  const branchCounts = finalItems.reduce(
-    (acc, curr) => {
-      const branch = curr.branchName || "Unknown Branch";
-      acc[branch] = (acc[branch] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
-  console.log("[fetchAllBranchNotifications] Branch breakdown:", branchCounts);
+  const branchCounts = finalItems.reduce((acc, curr) => {
+    const branch = curr.branchName || 'Unknown Branch';
+    acc[branch] = (acc[branch] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  console.log('[fetchAllBranchNotifications] Branch breakdown:', branchCounts);
 
   return finalItems;
 }
@@ -518,7 +502,7 @@ export async function createCallLog(data: {
   ownerUid: string;
   branchId: string;
   callerPhone: string;
-  direction: "inbound" | "outbound";
+  direction: 'inbound' | 'outbound';
   purpose: string;
   duration: number;
   notes?: string;
@@ -528,7 +512,7 @@ export async function createCallLog(data: {
   callCenterCallId?: string;
 }): Promise<{ callLogId: string }> {
   const res = await fetch(`${BASE_URL}/call-logs`, {
-    method: "POST",
+    method: 'POST',
     headers: await apiHeaders(data.ownerUid),
     body: JSON.stringify(data),
   });
@@ -559,7 +543,7 @@ export async function getCallLogs(
     `${BASE_URL}/call-logs?ownerUid=${ownerUid}&limit=${limit}`,
     {
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
     },
   );
@@ -577,7 +561,7 @@ export async function getCallLogs(
 export async function getWebhooks(): Promise<Record<string, unknown>[]> {
   const res = await fetch(`${BASE_URL}/webhooks`, {
     headers: {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
     },
   });
 

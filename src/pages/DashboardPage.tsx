@@ -36,12 +36,6 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     fetchClients(d.selectedTenant).then(setClients).catch(() => {});
   }, [d.selectedTenant]);
 
-  useEffect(() => {
-    if (session?.role === 'agent') {
-      sessionStorage.removeItem('agent_booking_expiry');
-    }
-  }, [session?.role]);
-
   // If the current tab becomes unavailable due to role changes, fall back safely.
   useEffect(() => {
     const isAllowed = (key: string) => {

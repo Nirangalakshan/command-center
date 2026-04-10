@@ -92,14 +92,12 @@ async function findCustomerByPhone(
   const variants = phoneVariants.slice(0, 30);
 
   // Try common booking phone field names in priority order
-  for (const field of [
-    "clientPhone",
-    "customerPhone",
-    "phone",
-    "contactNumber",
-  ]) {
+  for (const field of ["clientPhone", "customerPhone", "phone", "contactNumber"]) {
     try {
-      const q = query(bookingsRef, where(field, "in", variants));
+      const q = query(
+        bookingsRef,
+        where(field, "in", variants),
+      );
       const snap = await getDocs(q);
 
       if (snap.empty) continue;
@@ -112,16 +110,9 @@ async function findCustomerByPhone(
       });
 
       const latestBooking = sortedDocs[0];
-      return mapBookingToCustomer(
-        latestBooking.id,
-        latestBooking.data(),
-        field,
-      );
+      return mapBookingToCustomer(latestBooking.id, latestBooking.data(), field);
     } catch (error) {
-      console.error(
-        `[customersApi] Error querying bookings by ${field}:`,
-        error,
-      );
+      console.error(`[customersApi] Error querying bookings by ${field}:`, error);
       // Field may not exist or have no index — silently try next
     }
   }
@@ -138,11 +129,7 @@ function mapBookingToCustomer(
   matchedPhoneField: string,
 ): CustomerRecord {
   const phone = String(
-    data[matchedPhoneField] ??
-      data.clientPhone ??
-      data.customerPhone ??
-      data.phone ??
-      "",
+    data[matchedPhoneField] ?? data.clientPhone ?? data.customerPhone ?? data.phone ?? "",
   );
   const name = String(
     data.client ?? data.clientName ?? data.customerName ?? data.name ?? "",
@@ -153,10 +140,7 @@ function mapBookingToCustomer(
     name,
     primaryPhone: phone,
     phoneNormalized: phone.replace(/\D/g, ""),
-    email:
-      (data.clientEmail ?? data.customerEmail ?? data.email)
-        ? String(data.clientEmail ?? data.customerEmail ?? data.email)
-        : null,
+    email: data.clientEmail ?? data.customerEmail ?? data.email ? String(data.clientEmail ?? data.customerEmail ?? data.email) : null,
     address: data.address ? String(data.address) : null,
     notes: data.notes ? String(data.notes) : null,
   };
@@ -262,15 +246,16 @@ async function queryBookingsAsServices(
   vehicles: VehicleRecord[],
 ): Promise<ServiceRecord[]> {
   try {
-    const q = query(bookingsRef, where(filterField, "==", filterValue));
+    const q = query(
+      bookingsRef,
+      where(filterField, "==", filterValue),
+    );
     const snap = await getDocs(q);
-
+    
     // Client-side filter and sort to prevent composite index errors
     const validDocs = snap.docs.filter((d) => {
       const data = d.data();
-      return (
-        String(data.ownerUid) === ownerUid || String(data.tenantId) === ownerUid
-      );
+      return String(data.ownerUid) === ownerUid || String(data.tenantId) === ownerUid;
     });
 
     validDocs.sort((a, b) => {
@@ -279,9 +264,9 @@ async function queryBookingsAsServices(
       return dateB.localeCompare(dateA); // Descending
     });
 
-    return validDocs
-      .slice(0, 20)
-      .map((d) => mapBookingToServiceRecord(d.id, d.data(), vehicles));
+    return validDocs.slice(0, 20).map((d) =>
+      mapBookingToServiceRecord(d.id, d.data(), vehicles),
+    );
   } catch (err) {
     console.warn(`[customersApi] queryBookingsAsServices failed:`, err);
     return [];
