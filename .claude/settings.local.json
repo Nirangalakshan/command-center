@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs=require\\(''fs''\\);const c=fs.readFileSync\\(''src/pages/BookingPage.tsx'',''utf8''\\);console.log\\(c.length,''bytes'',c.split\\(''\\\\n''\\).length,''lines''\\);console.log\\(''first 300:'',JSON.stringify\\(c.slice\\(0,300\\)\\)\\)\")",
+      "Bash(node write-booking.js)"
+    ]
+  }
+}

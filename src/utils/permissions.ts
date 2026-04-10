@@ -13,11 +13,12 @@ export function derivePermissions(session: UserSession): Permissions {
   const isAgent = role === 'agent';
 
   return {
-    canViewAllTenants: isSuperAdmin,
+    canViewAllTenants: isSuperAdmin || isAgent,
     canSwitchTenant: isSuperAdmin,
     canViewSipInfrastructure: isSuperAdmin,
-    canViewTenantNames: isSuperAdmin || isSupervisor,
+    canViewTenantNames: isSuperAdmin || isSupervisor || isAgent,
     canViewCallsTab: isSuperAdmin || isClientAdmin || isSupervisor || isAgent,
+    canViewBookingsTab: isSuperAdmin || isClientAdmin || isSupervisor || isAgent,
     canViewAgentsTab: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewOverviewTab: true,
     canViewSipTab: isSuperAdmin,
@@ -31,6 +32,7 @@ export function derivePermissions(session: UserSession): Permissions {
     canOnboardAgents: isSuperAdmin || isClientAdmin,
     canViewAgentOnboarding: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewAgentOnboardingTab: isSuperAdmin || isClientAdmin || isSupervisor,
+    canViewAuditLogs: isSuperAdmin,
     allowedTenantId: tenantId,
     allowedQueueIds: allowedQueueIds,
   };

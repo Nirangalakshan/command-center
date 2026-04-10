@@ -1,16 +1,31 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
 import type {
-  Tenant, Queue, Agent, Call, SipLine,
-  DashboardSummary, UserSession, ConnectionStatus,
-  AgentGroup, IncomingCall, AgentOnboarding,
-} from '@/services/types';
+  Tenant,
+  Queue,
+  Agent,
+  Call,
+  SipLine,
+  DashboardSummary,
+  UserSession,
+  ConnectionStatus,
+  AgentGroup,
+  IncomingCall,
+  AgentOnboarding,
+} from "@/services/types";
 import {
-  fetchTenants, fetchSummary,
-  fetchQueues, fetchAgents, fetchCalls, fetchSipLines,
-  fetchAgentGroups, fetchIncomingCalls,
-  subscribeToIncomingCalls, subscribeToAgents, subscribeToCalls,
-} from '@/services/dashboardApi';
-import { fetchAgentOnboarding } from '@/services/agentOnboardingApi';
+  fetchTenants,
+  fetchSummary,
+  fetchQueues,
+  fetchAgents,
+  fetchCalls,
+  fetchSipLines,
+  fetchAgentGroups,
+  fetchIncomingCalls,
+  subscribeToIncomingCalls,
+  subscribeToAgents,
+  subscribeToCalls,
+} from "@/services/dashboardApi";
+import { fetchAgentOnboarding } from "@/services/agentOnboardingApi";
 
 const POLL_INTERVAL = 8000;
 
@@ -39,10 +54,13 @@ interface UseDashboardDataProps {
   session: UserSession | null;
 }
 
-export function useDashboardData({ session }: UseDashboardDataProps): DashboardData {
+export function useDashboardData({
+  session,
+}: UseDashboardDataProps): DashboardData {
   const [selectedTenant, setSelectedTenant] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState('overview');
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connected');
+  const [selectedTab, setSelectedTab] = useState("overview");
+  const [connectionStatus, setConnectionStatus] =
+    useState<ConnectionStatus>("connected");
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [queues, setQueues] = useState<Queue[]>([]);
@@ -76,7 +94,7 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
     try {
       setError(null);
       const tid = effectiveTenant || null;
-      const isAgent = session.role === 'agent';
+      const isAgent = session.role === "agent";
       const [t, s, q, a, c, sl, ag, ic, ao] = await Promise.all([
         fetchTenants(),
         fetchSummary(tid),
@@ -85,7 +103,9 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
         fetchCalls(tid),
         fetchSipLines(tid),
         fetchAgentGroups(tid),
-        isAgent ? fetchIncomingCalls(session.allowedQueueIds) : Promise.resolve([]),
+        isAgent
+          ? fetchIncomingCalls(session.allowedQueueIds)
+          : Promise.resolve([]),
         fetchAgentOnboarding(tid),
       ]);
       setTenants(t);
@@ -96,10 +116,12 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
       setSipLines(sl);
       setAgentGroups(ag);
       setAgentOnboarding(ao);
-      setConnectionStatus('connected');
+      setConnectionStatus("connected");
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
-      setConnectionStatus('disconnected');
+      setError(
+        err instanceof Error ? err.message : "Failed to load dashboard data",
+      );
+      setConnectionStatus("disconnected");
     } finally {
       setLoading(false);
     }
@@ -117,8 +139,10 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
   // Runs every tick (1 s) since `now` changes every second.
   const STALE_INCOMING_MS = 120_000; // 2 minutes
   useEffect(() => {
-    setIncomingCalls(prev => {
-      const fresh = prev.filter(c => now - c.waitingSince < STALE_INCOMING_MS);
+    setIncomingCalls((prev) => {
+      const fresh = prev.filter(
+        (c) => now - c.waitingSince < STALE_INCOMING_MS,
+      );
       return fresh.length === prev.length ? prev : fresh;
     });
   }, [now]);
@@ -126,20 +150,27 @@ export function useDashboardData({ session }: UseDashboardDataProps): DashboardD
   useEffect(() => {
     if (!session) return;
     const interval = setInterval(loadData, POLL_INTERVAL);
-    
+
     // Real-time subscriptions
     const unsubCalls = subscribeToIncomingCalls(
       session.allowedQueueIds,
-      (call) => setIncomingCalls(prev => {
-        const existing = prev.find(c => c.id === call.id);
-        // Yeastar re-ring events often arrive without callfrom — preserve the
-        // caller number and name from the first broadcast so they are never lost.
-        const merged: IncomingCall = (existing && !call.callerNumber && existing.callerNumber)
-          ? { ...call, callerNumber: existing.callerNumber, callerName: call.callerName ?? existing.callerName }
-          : call;
-        return [merged, ...prev.filter(c => c.id !== call.id)];
-      }),
-      (callId) => setIncomingCalls(prev => prev.filter(c => c.id !== callId))
+      (call) =>
+        setIncomingCalls((prev) => {
+          const existing = prev.find((c) => c.id === call.id);
+          // Yeastar re-ring events often arrive without callfrom — preserve the
+          // caller number and name from the first broadcast so they are never lost.
+          const merged: IncomingCall =
+            existing && !call.callerNumber && existing.callerNumber
+              ? {
+                  ...call,
+                  callerNumber: existing.callerNumber,
+                  callerName: call.callerName ?? existing.callerName,
+                }
+              : call;
+          return [merged, ...prev.filter((c) => c.id !== call.id)];
+        }),
+      (callId) =>
+        setIncomingCalls((prev) => prev.filter((c) => c.id !== callId)),
     );
 
     const unsubAgents = subscribeToAgents(effectiveTenant, loadData);

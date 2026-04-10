@@ -5,6 +5,7 @@ import type {
   AgentGroup, DIDMapping, IncomingCall,
   CallResult, TranscriptStatus, SipLineStatus, RingStrategy,
   CallerContext, CustomerRecord, VehicleRecord, ServiceRecord,
+  BookingRecord, BookingStatus,
 } from './types';
 import {
   ONBOARDING_STAGES,
@@ -13,6 +14,9 @@ import {
   getGoLiveBlockers,
   getGoLiveWarnings,
 } from '@/utils/onboardingValidation';
+import { getBookings } from './bookingsApi';
+import { logSystemActivity } from './auditLogApi';
+import type { UserSession } from './types';
 
 export { ONBOARDING_STAGES };
 
@@ -96,7 +100,7 @@ export async function fetchQueues(tenantId?: string | null): Promise<Queue[]> {
 /* ─── Agents ─── */
 
 export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
-  let query = supabase.from('agents').select('*, tenants!inner(name)');
+  let query = supabase.from('agents').select('*, tenants(name)');
   if (tenantId) query = query.eq('tenant_id', tenantId);
   const { data, error } = await query.order('name');
   if (error) {
@@ -113,12 +117,15 @@ export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
 function mapAgent(a: Record<string, unknown> & { tenants?: { name?: string } }): Agent {
   return {
     id: a.id as string,
-    tenantId: a.tenant_id as string,
+    tenantId: (a.tenant_id as string) || '',
     queueIds: (a.queue_ids as string[]) || [],
     name: a.name as string,
-    extension: a.extension as string,
-    role: a.role as Agent['role'],
-    status: a.status as Agent['status'],
+    extension: (a.extension as string) || '',
+    email: (a.email as string) || undefined,
+    phone: (a.phone_number as string) || (a.phone as string) || undefined,
+    notes: (a.notes as string) || undefined,
+    role: ((a.role as Agent['role']) || 'agent'),
+    status: ((a.status as Agent['status']) || 'offline'),
     currentCaller: (a.current_caller as string | null) ?? null,
     callStartTime: a.call_start_time ? Number(a.call_start_time) : null,
     allowedQueueIds: (a.allowed_queue_ids as string[]) || [],
@@ -194,13 +201,17 @@ export async function fetchAgentGroups(tenantId?: string | null): Promise<AgentG
 /* ─── DID Mappings ─── */
 
 export async function fetchDIDMappings(): Promise<DIDMapping[]> {
-  const { data, error } = await supabase.from('did_mappings').select('*');
+  const { data, error } = await dynamicSupabase.from('did_mappings').select('*');
   if (error) throw new Error(error.message);
-  return (data || []).map((d) => ({
-    did: d.did,
-    tenantId: d.tenant_id,
-    queueId: d.queue_id,
-    label: d.label,
+  return (data || []).map((d: Record<string, unknown>) => ({
+    did: String(d.did ?? ''),
+    tenantId: String(d.tenant_id ?? ''),
+    queueId: String(d.queue_id ?? ''),
+    label: String(d.label ?? ''),
+    branchId: String(d.branch_id ?? ''),
+    branchName: String(d.branch_name ?? ''),
+    mappingWorkshopName: String(d.workshop_name ?? ''),
+    ownerId: String(d.owner_id ?? ''),
   }));
 }
 
@@ -209,6 +220,9 @@ export async function fetchDIDMappings(): Promise<DIDMapping[]> {
 type UntypedSupabase = {
   from: (table: string) => {
     select: (...args: unknown[]) => any;
+    insert: (...args: unknown[]) => any;
+    update: (...args: unknown[]) => any;
+    delete: (...args: unknown[]) => any;
   };
 };
 
@@ -495,7 +509,150 @@ function mapServiceRecord(row: Record<string, unknown>): ServiceRecord {
   };
 }
 
-export async function createClient(data: NewClientForm, createdBy: string): Promise<TenantOnboarding> {
+/* ─── Bookings ─── */
+
+export interface CreateBookingInput {
+  tenantId: string;
+  customerId?: string | null;
+  vehicleId?: string | null;
+  vehicleRego?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleYear?: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  serviceType: string;
+  bookingDate: string;
+  dropOffTime: string;
+  pickupTime?: string;
+  notes?: string;
+}
+
+export async function createBooking(input: CreateBookingInput): Promise<void> {
+  const { error } = await (supabase as unknown as UntypedSupabase)
+    .from('bookings')
+    .insert({
+      tenant_id: input.tenantId,
+      customer_id: input.customerId || null,
+      vehicle_id: input.vehicleId || null,
+      vehicle_rego: input.vehicleRego || null,
+      vehicle_make: input.vehicleMake || null,
+      vehicle_model: input.vehicleModel || null,
+      vehicle_year: input.vehicleYear ? Number(input.vehicleYear) : null,
+      customer_name: input.customerName,
+      customer_phone: input.customerPhone,
+      customer_email: input.customerEmail || null,
+      service_type: input.serviceType,
+      booking_date: input.bookingDate,
+      drop_off_time: input.dropOffTime,
+      pickup_time: input.pickupTime || null,
+      notes: input.notes || null,
+      status: 'pending',
+    });
+  if (error) throw new Error(error.message);
+}
+
+function mapBookingRecord(row: Record<string, unknown>): BookingRecord {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    customerId: row.customer_id ? String(row.customer_id) : null,
+    vehicleId: row.vehicle_id ? String(row.vehicle_id) : null,
+    vehicleRego: row.vehicle_rego ? String(row.vehicle_rego) : null,
+    vehicleMake: row.vehicle_make ? String(row.vehicle_make) : null,
+    vehicleModel: row.vehicle_model ? String(row.vehicle_model) : null,
+    vehicleYear: typeof row.vehicle_year === 'number' ? row.vehicle_year : row.vehicle_year ? Number(row.vehicle_year) : null,
+    customerName: String(row.customer_name ?? ''),
+    customerPhone: String(row.customer_phone ?? ''),
+    customerEmail: row.customer_email ? String(row.customer_email) : null,
+    serviceType: String(row.service_type ?? ''),
+    bookingDate: String(row.booking_date ?? ''),
+    dropOffTime: String(row.drop_off_time ?? ''),
+    pickupTime: row.pickup_time ? String(row.pickup_time) : null,
+    notes: row.notes ? String(row.notes) : null,
+    status: (row.status as BookingStatus) ?? 'pending',
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+  };
+}
+
+export async function fetchBookings(tenantId: string | null): Promise<BookingRecord[]> {
+  let query = (supabase as unknown as UntypedSupabase).from('bookings').select('*').order('booking_date', { ascending: false });
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(mapBookingRecord);
+}
+
+export async function fetchBookingById(id: string): Promise<BookingRecord | null> {
+  const { data, error } = await (supabase as unknown as UntypedSupabase)
+    .from('bookings').select('*').eq('id', id).single();
+  if (error) return null;
+  return mapBookingRecord(data as Record<string, unknown>);
+}
+
+export async function updateBookingStatus(id: string, status: BookingStatus): Promise<void> {
+  const { error } = await (supabase as unknown as UntypedSupabase)
+    .from('bookings').update({ status }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function fetchLatestBookingByPhone(
+  tenantId: string,
+  phone: string,
+  branchId?: string,
+): Promise<BookingRecord | null> {
+  try {
+    // Fetch latest bookings for this owner (and branch if provided) from Firebase
+    const bookings = await getBookings(tenantId, 50, branchId);
+    const normalizedPhone = phone.replace(/\D/g, '');
+    
+    // Support Sri Lanka specific formatting cases for the local 10-digit number
+    const localPhone = normalizedPhone.startsWith('94') && normalizedPhone.length === 11 
+      ? `0${normalizedPhone.slice(2)}` 
+      : normalizedPhone;
+
+    const matching = bookings.filter(b => {
+      const bPhone = (b.clientPhone || '').replace(/\D/g, '');
+      return bPhone === normalizedPhone || bPhone === localPhone;
+    });
+
+    if (matching.length === 0) return null;
+    
+    // Sort descending by date
+    matching.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const b = matching[0];
+    
+    // Map to BookingRecord for UI compatibility
+    return {
+      id: b.id,
+      tenantId,
+      customerId: b.customerId || null,
+      vehicleId: null,
+      vehicleRego: b.vehicleNumber || null,
+      vehicleMake: null,
+      vehicleModel: null,
+      vehicleYear: null,
+      customerName: b.client || 'Unknown',
+      customerPhone: b.clientPhone || '',
+      customerEmail: b.clientEmail || null,
+      serviceType: b.services?.map(s => s.serviceName).join(', ') || 'General Service',
+      bookingDate: b.date,
+      dropOffTime: b.time,
+      pickupTime: b.pickupTime || null,
+      notes: b.notes || null,
+      status: 'confirmed', // Fallback status
+      createdAt: b.date,
+      updatedAt: b.date,
+    } as unknown as BookingRecord;
+  } catch (error) {
+    console.warn("fetchLatestBookingByPhone Firebase error:", error);
+    return null;
+  }
+}
+
+export async function createClient(data: NewClientForm, session: UserSession): Promise<TenantOnboarding> {
   // Create tenant first
   const tenantId = `t-${Date.now()}`;
   const { error: tErr } = await supabase.from('tenants').insert({
@@ -515,7 +672,7 @@ export async function createClient(data: NewClientForm, createdBy: string): Prom
     contact_name: data.contactName.trim(),
     contact_phone: data.contactPhone.trim(),
     contact_email: data.contactEmail.trim(),
-    created_by: createdBy,
+    created_by: session.userId,
     notes: data.notes.trim(),
     client_details: {
       businessName: data.businessName.trim(),
@@ -527,14 +684,21 @@ export async function createClient(data: NewClientForm, createdBy: string): Prom
   });
   if (oErr) throw new Error(oErr.message);
 
+  await logSystemActivity(
+    session,
+    'CREATE_CLIENT',
+    'TENANT_ONBOARDING',
+    tenantId,
+    { businessName: data.businessName.trim() }
+  );
+
   const clients = await fetchClients(tenantId);
   return clients[0];
 }
 
 export async function advanceClientStage(
   clientId: string,
-  _userId: string = 'unknown',
-  _userName: string = 'Unknown',
+  session?: UserSession
 ): Promise<{ client: TenantOnboarding | null; transition: StageTransitionResult | null }> {
   const clients = await fetchClients(clientId);
   const client = clients[0];
@@ -561,6 +725,16 @@ export async function advanceClientStage(
       .update({ onboarding_stage: nextStage })
       .eq('id', clientId);
 
+    if (session) {
+      await logSystemActivity(
+        session,
+        'ADVANCE_CLIENT_STAGE',
+        'TENANT_ONBOARDING',
+        clientId,
+        { fromStage: client.onboardingStage, toStage: nextStage }
+      );
+    }
+
     const updated = await fetchClients(clientId);
     return { client: updated[0], transition };
   }
@@ -570,14 +744,23 @@ export async function advanceClientStage(
 
 export async function regressClientStage(
   clientId: string,
-  _userId: string = 'unknown',
-  _userName: string = 'Unknown',
-  _reason: string = '',
+  session?: UserSession,
+  reason: string = '',
 ): Promise<TenantOnboarding | null> {
   await supabase
     .from('tenant_onboarding')
     .update({ onboarding_stage: 'needs-revision' })
     .eq('id', clientId);
+
+  if (session) {
+    await logSystemActivity(
+      session,
+      'REGRESS_CLIENT_STAGE',
+      'TENANT_ONBOARDING',
+      clientId,
+      { toStage: 'needs-revision', reason }
+    );
+  }
 
   const clients = await fetchClients(clientId);
   return clients[0] || null;

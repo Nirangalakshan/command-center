@@ -16,6 +16,13 @@ const corsHeaders = {
   "Access-Control-Max-Age": "86400",
 };
 
+type AgentColumn = {
+  column_name: string;
+  is_nullable: "YES" | "NO";
+  column_default: string | null;
+  udt_name: string;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", {
@@ -67,13 +74,12 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const {
       name, email, phone, password,
-      tenantId, queueIds = [], groupIds = [],
-      extension = "", role = "agent", notes = "",
+      extension = "", notes = "",
     } = body;
 
-    if (!name || !email || !tenantId || !password) {
+    if (!name || !email || !password) {
       return new Response(
-        JSON.stringify({ error: "name, email, password, and tenantId are required" }),
+        JSON.stringify({ error: "name, email, and password are required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -83,7 +89,7 @@ Deno.serve(async (req) => {
       email,
       password,
       email_confirm: true,
-      user_metadata: { display_name: name, tenant_id: tenantId },
+      user_metadata: { display_name: name },
     });
     if (userErr) {
       return new Response(JSON.stringify({ error: userErr.message }), {
@@ -95,37 +101,61 @@ Deno.serve(async (req) => {
     const userId = newUser.user.id;
 
     // 2. Assign agent role
-    await supabaseAdmin.from("user_roles").insert({
+    const { error: roleErr } = await supabaseAdmin.from("user_roles").insert({
       user_id: userId,
       role: "agent",
     });
+    if (roleErr) {
+      return new Response(JSON.stringify({ error: `Failed to assign role: ${roleErr.message}` }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    // 3. Create agent record
+    // 3. Create agent record using fallback payloads for schema differences
     const agentId = `agent-${Date.now()}`;
-    await supabaseAdmin.from("agents").insert({
+    const normalizedPhone = String(phone ?? "").trim();
+    const agentBase: Record<string, unknown> = {
       id: agentId,
       user_id: userId,
-      tenant_id: tenantId,
       name,
-      extension,
-      role,
-      status: "offline",
-      queue_ids: queueIds,
-      allowed_queue_ids: queueIds,
-      assigned_tenant_ids: [tenantId],
-      group_ids: groupIds,
-    });
-
-    // 4. Create agent onboarding record
-    await supabaseAdmin.from("agent_onboarding").insert({
-      agent_id: agentId,
-      user_id: userId,
-      stage: "account-created",
-      invited_by: caller.id,
-      personal_email: email,
-      phone: phone || "",
+      extension: extension || "",
       notes: notes || "",
-    });
+      email,
+      status: "offline",
+      role: "agent",
+    };
+    const insertCandidates: Record<string, unknown>[] = [
+      { ...agentBase, phone_number: normalizedPhone, queue_ids: [] },
+      { ...agentBase, phone: normalizedPhone, queue_ids: [] },
+      { ...agentBase, phone_number: normalizedPhone },
+      { ...agentBase, phone: normalizedPhone },
+      { id: agentId, user_id: userId, name, queue_ids: [], status: "offline" },
+      { id: agentId, user_id: userId, name, status: "offline" },
+    ];
+
+    let agentErr: { message: string } | null = null;
+    for (const payload of insertCandidates) {
+      const result = await supabaseAdmin.from("agents").insert(payload);
+      if (!result.error) {
+        agentErr = null;
+        break;
+      }
+      const msg = result.error.message || "";
+      const unknownColumn = msg.includes("Could not find the") && msg.includes("column");
+      if (unknownColumn) {
+        agentErr = result.error;
+        continue;
+      }
+      agentErr = result.error;
+    }
+
+    if (agentErr) {
+      return new Response(JSON.stringify({ error: `Failed to create agent record: ${agentErr.message}` }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     return new Response(
       JSON.stringify({ success: true, agentId, userId }),

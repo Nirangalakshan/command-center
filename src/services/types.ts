@@ -45,6 +45,9 @@ export interface Agent {
   queueIds: string[];
   name: string;
   extension: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
   role: 'agent' | 'senior-agent' | 'team-lead';
   status: AgentStatus;
   currentCaller: string | null;
@@ -127,6 +130,30 @@ export interface CallerContext {
   customer: CustomerRecord;
   vehicles: VehicleRecord[];
   services: ServiceRecord[];
+}
+
+export type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+
+export interface BookingRecord {
+  id: string;
+  tenantId: string;
+  customerId: string | null;
+  vehicleId: string | null;
+  vehicleRego: string | null;
+  vehicleMake: string | null;
+  vehicleModel: string | null;
+  vehicleYear: number | null;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string | null;
+  serviceType: string;
+  bookingDate: string;
+  dropOffTime: string;
+  pickupTime: string | null;
+  notes: string | null;
+  status: BookingStatus;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UserSession {
@@ -364,6 +391,7 @@ export interface Permissions {
   canViewSipInfrastructure: boolean;
   canViewTenantNames: boolean;
   canViewCallsTab: boolean;
+  canViewBookingsTab: boolean;
   canViewAgentsTab: boolean;
   canViewOverviewTab: boolean;
   canViewSipTab: boolean;
@@ -377,6 +405,7 @@ export interface Permissions {
   canOnboardAgents: boolean;
   canViewAgentOnboarding: boolean;
   canViewAgentOnboardingTab: boolean;
+  canViewAuditLogs: boolean;
   allowedTenantId: string | null;
   allowedQueueIds: string[];
 }
@@ -401,6 +430,10 @@ export interface DIDMapping {
   tenantId: string;
   queueId: string;
   label: string;
+  branchId: string;
+  branchName: string;
+  mappingWorkshopName: string;
+  ownerId: string;
 }
 
 export type IncomingCallStatus = 'ringing' | 'queued';
@@ -418,6 +451,10 @@ export interface IncomingCall {
   groupId: string;
   groupName: string;
   didLabel: string;
+  branchId: string;
+  branchName: string;
+  mappingWorkshopName: string;
+  ownerId: string;
   waitingSince: number;
   status: IncomingCallStatus;
 }
