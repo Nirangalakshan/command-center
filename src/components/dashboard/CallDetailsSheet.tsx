@@ -338,9 +338,9 @@ export function CallDetailsSheet({
                       <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
                         Owner ID
                       </div>
-                      <div className="mt-2 text-sm font-medium text-slate-900 font-mono text-xs">
+                      {/* <div className="mt-2 text-sm font-medium text-slate-900 font-mono text-xs">
                         {detail.ownerId}
-                      </div>
+                      </div> */}
                     </div>
                   )}
                   {callerContext?.customer.email && (

@@ -1,11 +1,14 @@
 import type { Queue, Tenant } from '@/services/types';
 import { Card, CardContent } from '@/components/ui/card';
-import { PhoneIncoming, Clock, Users, PhoneCall, HeadphonesIcon } from 'lucide-react';
+import { PhoneIncoming, Clock, Users, PhoneCall, HeadphonesIcon, ChevronRight } from 'lucide-react';
 import { formatPhone } from '@/utils/formatters';
+import type { CallDetailSnapshot } from '@/components/dashboard/CallDetailsSheet';
 
 export interface IncomingCallerContext {
   number: string;
   name: string | null;
+  /** When set, this row opens the details sheet for that specific call */
+  detail?: CallDetailSnapshot;
 }
 
 interface QueueSummaryCardProps {
@@ -17,6 +20,7 @@ interface QueueSummaryCardProps {
   incomingCallers?: IncomingCallerContext[];
   callHint?: string;
   onClick?: () => void;
+  onIncomingCallerClick?: (detail: CallDetailSnapshot) => void;
 }
 
 export function QueueSummaryCard({ 
@@ -27,7 +31,8 @@ export function QueueSummaryCard({
   isIncoming = false, 
   incomingCallers, 
   callHint, 
-  onClick 
+  onClick,
+  onIncomingCallerClick,
 }: QueueSummaryCardProps) {
   const stats = [
     {
@@ -108,26 +113,63 @@ export function QueueSummaryCard({
         {/* Incoming Callers List */}
         {isIncoming && incomingCallers && incomingCallers.length > 0 && (
           <div className="flex flex-col gap-2">
-            {incomingCallers.map((caller, i) => (
-              <div key={i} className="relative overflow-hidden rounded-xl bg-gradient-to-r from-amber-50 to-amber-100/50 p-2.5 ring-1 ring-amber-200/50 shadow-sm transition-all hover:bg-amber-100/50">
-                <div className="absolute -right-4 -top-4 opacity-10">
-                  <PhoneIncoming size={56} />
-                </div>
-                <div className="relative flex items-center gap-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600 ring-1 ring-amber-200 shadow-sm">
-                    <PhoneIncoming className="h-[14px] w-[14px] animate-pulse" />
+            {incomingCallers.map((caller, i) => {
+              const openDetail = caller.detail && onIncomingCallerClick;
+              return (
+                <div
+                  key={caller.detail?.id ?? `${caller.number}-${i}`}
+                  role={openDetail ? 'button' : undefined}
+                  tabIndex={openDetail ? 0 : undefined}
+                  onClick={
+                    openDetail
+                      ? (e) => {
+                          e.stopPropagation();
+                          onIncomingCallerClick(caller.detail!);
+                        }
+                      : undefined
+                  }
+                  onKeyDown={
+                    openDetail
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onIncomingCallerClick(caller.detail!);
+                          }
+                        }
+                      : undefined
+                  }
+                  className={`relative overflow-hidden rounded-xl bg-gradient-to-r from-amber-50 to-amber-100/50 p-2.5 ring-1 ring-amber-200/50 shadow-sm transition-all ${
+                    openDetail
+                      ? 'cursor-pointer hover:bg-amber-100/80 hover:ring-amber-300/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500'
+                      : 'hover:bg-amber-100/50'
+                  }`}
+                >
+                  <div className="absolute -right-4 -top-4 opacity-10">
+                    <PhoneIncoming size={56} />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-bold text-amber-950 leading-tight">
-                      {caller.name || 'Unknown Caller'}
+                  <div className="relative flex items-center gap-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600 ring-1 ring-amber-200 shadow-sm">
+                      <PhoneIncoming className="h-[14px] w-[14px] animate-pulse" />
                     </div>
-                    <div className="truncate font-mono text-[11px] font-semibold text-amber-700/80">
-                      {formatPhone(caller.number)}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-bold text-amber-950 leading-tight">
+                        {caller.name || 'Unknown Caller'}
+                      </div>
+                      <div className="truncate font-mono text-[11px] font-semibold text-amber-700/80">
+                        {formatPhone(caller.number)}
+                      </div>
                     </div>
+                    {openDetail && (
+                      <ChevronRight
+                        className="h-4 w-4 shrink-0 text-amber-700/60"
+                        aria-hidden
+                      />
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -157,8 +199,10 @@ export function QueueSummaryCard({
           })}
         </div>
 
-        {/* Subtle Hint */}
-        {callHint && !isIncoming && (
+        {/* Subtle Hint (live/ringing rows, or multiple incoming — pick a caller) */}
+        {callHint &&
+          (!isIncoming ||
+            (incomingCallers && incomingCallers.length > 1)) && (
           <div className="flex items-center gap-2 rounded-lg bg-slate-50/50 px-3 py-2 text-[12px] font-medium text-slate-500 ring-1 ring-slate-100 transition-colors group-hover:bg-slate-50">
             {callHint}
             <div className="ml-auto opacity-0 -translate-x-2 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0">

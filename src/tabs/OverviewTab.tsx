@@ -93,7 +93,19 @@ export function OverviewTab({
   }, [selectedCall, incomingCalls, agents]);
 
   const queueCallDetails = useMemo(() => {
-    const map = new Map<string, { detail: CallDetailSnapshot; hint: string; isIncoming: boolean; incomingCallers: Array<{number: string; name: string | null}> }>();
+    const map = new Map<
+      string,
+      {
+        detail: CallDetailSnapshot;
+        hint: string;
+        isIncoming: boolean;
+        incomingCallers: Array<{
+          number: string;
+          name: string | null;
+          detail?: CallDetailSnapshot;
+        }>;
+      }
+    >();
 
     for (const queue of queues) {
       // --- Build the best snapshot from all available sources ---
@@ -106,20 +118,19 @@ export function OverviewTab({
       const allIncomingForQueue = (incomingCalls || []).filter(
         (call) => call.queueId === queue.id && call.callerNumber,
       );
-      const incomingCallers = allIncomingForQueue.map(c => ({ number: c.callerNumber, name: c.callerName || null }));
+      const incomingCallers = allIncomingForQueue.map((c) => ({
+        number: c.callerNumber,
+        name: c.callerName || null,
+        detail: buildIncomingCallSnapshot(c, now),
+      }));
 
       if (allIncomingForQueue.length > 0) {
         map.set(queue.id, {
-          detail: buildLiveOrIncomingDetail(
-            "incoming",
-            allIncomingForQueue[0],
-            null,
-            queues,
-            tenants,
-            incomingCalls || [],
-            now,
-          ),
-          hint: "Click to open the incoming caller details.",
+          detail: buildIncomingCallSnapshot(allIncomingForQueue[0], now),
+          hint:
+            allIncomingForQueue.length > 1
+              ? "Click a caller below to see their details."
+              : "Click to open the incoming caller details.",
           isIncoming: true,
           incomingCallers,
         });
@@ -132,19 +143,22 @@ export function OverviewTab({
       );
       if (ringingAgentForQueue) {
         const cPhone = ringingAgentForQueue.currentCaller;
+        const detail = buildLiveOrIncomingDetail(
+          "incoming",
+          null,
+          ringingAgentForQueue,
+          queues,
+          tenants,
+          incomingCalls || [],
+          now,
+        );
         map.set(queue.id, {
-          detail: buildLiveOrIncomingDetail(
-            "incoming",
-            null,
-            ringingAgentForQueue,
-            queues,
-            tenants,
-            incomingCalls || [],
-            now,
-          ),
+          detail,
           hint: "Click to open the incoming caller details.",
           isIncoming: true,
-          incomingCallers: cPhone ? [{ number: cPhone, name: null }] : [],
+          incomingCallers: cPhone
+            ? [{ number: cPhone, name: null, detail }]
+            : [],
         });
         continue;
       }
@@ -275,19 +289,31 @@ export function OverviewTab({
               .map((q) => {
                 const tenant = tenants.find((t) => t.id === q.tenantId);
                 const queueDetail = queueCallDetails.get(q.id);
+                const incomingRows = queueDetail?.incomingCallers ?? [];
+                const selectableIncomingCount = incomingRows.filter(
+                  (c) => c.detail,
+                ).length;
+                const multipleIncomingPickers =
+                  Boolean(queueDetail?.isIncoming) && selectableIncomingCount > 1;
+
                 return (
                   <QueueSummaryCard
                     key={q.id}
                     queue={q}
                     tenant={tenant}
                     showTenant={permissions.canViewTenantNames}
-                    interactive={Boolean(queueDetail)}
+                    interactive={Boolean(queueDetail) && !multipleIncomingPickers}
                     isIncoming={queueDetail?.isIncoming}
                     incomingCallers={queueDetail?.incomingCallers}
                     callHint={queueDetail?.hint}
                     onClick={
-                      queueDetail
+                      queueDetail && !multipleIncomingPickers
                         ? () => setSelectedCall(queueDetail.detail)
+                        : undefined
+                    }
+                    onIncomingCallerClick={
+                      selectableIncomingCount > 0
+                        ? (d) => setSelectedCall(d)
                         : undefined
                     }
                   />
