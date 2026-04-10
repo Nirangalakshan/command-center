@@ -394,44 +394,9 @@ export function CallDetailsSheet({
                         }
                         className="justify-start"
                         // disabled={command.label === 'Book Now' && !canOpenBooking}
-                        onClick={async () => {
-                          if (command.label === "Book Now") {
-                            navigate("/booking", {
-                              state: {
-                                tenantId: detail.tenantId,
-                                customerId: callerContext?.customer.id ?? null,
-                                customerName: resolvedCustomerName,
-                                customerPhone: detail.customerPhone,
-                                customerEmail: resolvedCustomerEmail,
-                                availableVehicles,
-                                workshopName: detail.workshopName,
-                                workshopColor: detail.workshopColor,
-                                branchId: detail.branchId,
-                                ownerId: detail.ownerId,
-                              },
-                            });
-                            return;
-                          }
-                          if (command.label === "Booking Details") {
-                            const booking = await fetchLatestBookingByPhone(
-                              detail.ownerId || detail.tenantId,
-                              detail.customerPhone,
-                              detail.branchId,
-                            );
-                            // const booking = true;
-                            if (booking) {
-                              navigate(`/bookings/dashboard`, {
-                                state: {
-                                  ownerId: detail.ownerId || detail.tenantId,
-                                  branchId: detail.branchId,
-                                },
-                              });
-                            } else {
-                              toast({
-                                title: "No bookings found",
-                                description: `No bookings found for ${resolvedCustomerName}.`,
-                              });
-                            }
+                        onClick={() => {
+                          if (command.label === 'Book Now') {
+                            setBookingDialogOpen(true);
                             return;
                           }
                           toast({
