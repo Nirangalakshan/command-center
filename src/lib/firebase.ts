@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -19,28 +19,57 @@ export const db   = getFirestore(app);
 export const auth = getAuth(app);
 
 // ─── Auth-ready gate ────────────────────────────────────────────────────────
-// Resolves once FirebaseAuthProvider has fully initialised auth
-// (including any auto-login with agent credentials).
 
 let _authReady = false;
-let _resolve: (() => void) | null = null;
+let _pendingResolvers: (() => void)[] = [];
+let _waitPromise: Promise<void> | null = null;
 
-const _authReadyPromise = new Promise<void>((resolve) => {
-  _resolve = () => { _authReady = true; resolve(); };
-  setTimeout(() => { _authReady = true; resolve(); }, 10_000);
-});
+function _settle() {
+  if (_authReady) return;
+  _authReady = true;
+  for (const r of _pendingResolvers) r();
+  _pendingResolvers = [];
+}
 
-/** Called by FirebaseAuthProvider once auth state is fully settled. */
+/** Called by FirebaseAuthProvider once auth state is fully settled (including auto-login). */
 export function signalAuthReady(): void {
-  _resolve?.();
-  _resolve = null;
+  console.log('[waitForAuth] signalAuthReady called, currentUser:', auth.currentUser?.email ?? 'null');
+  _settle();
 }
 
 /**
- * Awaits until Firebase auth is fully initialised (including auto-login).
- * Resolves immediately if auth is already ready or a user is signed in.
+ * Blocks until Firebase auth is fully initialised.
+ * Resolves via whichever fires first:
+ *  1. signalAuthReady() from FirebaseAuthProvider
+ *  2. onAuthStateChanged reporting a signed-in user
+ *  3. 10-second safety timeout
  */
 export function waitForAuth(): Promise<void> {
   if (_authReady || auth.currentUser) return Promise.resolve();
-  return _authReadyPromise;
+
+  if (!_waitPromise) {
+    _waitPromise = new Promise<void>((resolve) => {
+      let settled = false;
+      const done = (src: string) => {
+        if (settled) return;
+        settled = true;
+        console.log(`[waitForAuth] resolved via ${src}, currentUser:`, auth.currentUser?.email ?? 'null');
+        _settle();
+        resolve();
+      };
+
+      _pendingResolvers.push(() => done('signalAuthReady'));
+
+      const unsub = onAuthStateChanged(auth, (user) => {
+        if (user) {
+          unsub();
+          done('onAuthStateChanged');
+        }
+      });
+
+      setTimeout(() => { unsub(); done('timeout'); }, 10_000);
+    });
+  }
+
+  return _waitPromise;
 }

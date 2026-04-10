@@ -9,18 +9,24 @@ const BASE_URL =
 const STATIC_TOKEN = (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? "";
 
 async function apiHeaders(): Promise<HeadersInit> {
+  console.log('[notificationsApi] apiHeaders called, currentUser before wait:', auth.currentUser?.email ?? 'null');
   await waitForAuth();
   const user = auth.currentUser;
   let token = STATIC_TOKEN;
+  let source = 'static';
 
   if (user) {
-    token = await getIdToken(user);
+    token = await getIdToken(user, /* forceRefresh */ true);
+    source = 'firebase';
   } else {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token) {
       token = session.access_token;
+      source = 'supabase';
     }
   }
+
+  console.log(`[notificationsApi] apiHeaders resolved, source=${source}, hasToken=${!!token && token.length > 0}`);
 
   return {
     "Content-Type": "application/json",
