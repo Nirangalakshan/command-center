@@ -1,5 +1,4 @@
 import { db, auth } from "@/lib/firebase";
-import { signInWithEmailAndPassword } from "firebase/auth";
 import {
   collection,
   query,
@@ -17,21 +16,6 @@ import type {
   ServiceRecord,
 } from "./types";
 
-// ─── Ensure Firebase Auth ────────────────────────────────────────────────────
-
-async function ensureFirebaseAuth(): Promise<void> {
-  if (auth.currentUser) return;
-  const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
-  const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
-  if (email && password) {
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      console.error("[customersApi] Auto-login failed:", err);
-    }
-  }
-}
-
 // ─── Main: Fetch Caller Context from Firebase ────────────────────────────────
 
 /**
@@ -45,8 +29,6 @@ export async function fetchFirebaseCallerContext(
 ): Promise<CallerContext | null> {
   const variants = buildPhoneLookupVariants(callerNumber);
   if (!ownerUid || variants.length === 0) return null;
-
-  await ensureFirebaseAuth();
 
   // 1. Find customer details from bookings by phone number
   const customer = await findCustomerByPhone(ownerUid, variants);

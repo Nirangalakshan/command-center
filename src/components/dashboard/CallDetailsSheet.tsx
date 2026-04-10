@@ -395,8 +395,30 @@ export function CallDetailsSheet({
                         className="justify-start"
                         // disabled={command.label === 'Book Now' && !canOpenBooking}
                         onClick={() => {
-                          if (command.label === 'Book Now') {
-                            setBookingDialogOpen(true);
+                          if (command.label === "Book Now") {
+                            navigate("/booking", {
+                              state: {
+                                tenantId: detail?.tenantId ?? "",
+                                customerId: callerContext?.customer.id ?? null,
+                                customerName: resolvedCustomerName ?? "",
+                                customerPhone: detail?.customerPhone ?? "",
+                                customerEmail: resolvedCustomerEmail ?? "",
+                                availableVehicles: availableVehicles,
+                                workshopName: detail?.workshopName ?? "",
+                                workshopColor: detail?.workshopColor ?? "",
+                                branchId: detail?.branchId ?? "",
+                                ownerId: detail?.ownerId ?? "",
+                              },
+                            });
+                            return;
+                          }
+                          if (command.label === "Booking Details") {
+                            navigate("/bookings/dashboard", {
+                              state: {
+                                ownerId: detail?.ownerId ?? "",
+                                branchId: detail?.branchId ?? "",
+                              },
+                            });
                             return;
                           }
                           toast({

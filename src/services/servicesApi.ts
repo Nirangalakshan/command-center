@@ -1,5 +1,5 @@
 import { db, auth } from '@/lib/firebase';
-import { getIdToken, signInWithEmailAndPassword } from 'firebase/auth';
+import { getIdToken } from 'firebase/auth';
 import {
   addDoc,
   arrayRemove,
@@ -179,27 +179,24 @@ export function subscribeServices(
 
 // ─── REST API helpers ─────────────────────────────────────────────────────────
 
+import { supabase } from '@/integrations/supabase/client';
 const BASE_URL = import.meta.env.VITE_BMS_API_URL as string ?? 'https://black.bmspros.com.au/api/call-center';
 const STATIC_TOKEN = import.meta.env.VITE_BMS_BEARER_TOKEN as string ?? '';
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
-  let user = auth.currentUser;
+  const user = auth.currentUser;
+  let token = STATIC_TOKEN;
 
-  // Auto-login fallback if the dashboard user is not logged in directly to Firebase
-  if (!user) {
-    const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
-    const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
-    if (email && password) {
-      try {
-        const cred = await signInWithEmailAndPassword(auth, email, password);
-        user = cred.user;
-      } catch (err) {
-        console.error('[servicesApi] Auto-login failed:', err);
-      }
+  if (user) {
+    token = await getIdToken(user);
+  } else {
+    // Fallback to Supabase session if Firebase user is not present
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      token = session.access_token;
     }
   }
 
-  const token = user ? await getIdToken(user) : STATIC_TOKEN;
   return {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`,

@@ -1,5 +1,5 @@
 import '@/styles/dashboard.css';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import BookingSidebar from './BookingSidebar';
@@ -7,10 +7,12 @@ import {
   ArrowLeft, CalendarDays, CarFront, CheckCircle2, Clock,
   FileText, Phone, Mail, User, Wrench, Flag, Ban, LayoutDashboard,
   Eye, ChevronDown, ChevronUp, Activity, CalendarCheck, AlertCircle,
+  Timer,
 } from 'lucide-react';
 import { getBookingById, getBookings, resolveOwnerUid, type Booking, type BookingDetail, type BookingService, type BookingTask } from '@/services/bookingsApi';
 import type { BookingStatus } from '@/services/types';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -359,6 +361,61 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
   );
 }
 
+// ── Agent access timer ────────────────────────────────────────────────────────
+
+const AGENT_ACCESS_DURATION = 5 * 60; // 5 minutes in seconds
+
+function useAccessCountdown(onExpire: () => void) {
+  const { session } = useAuth();
+  const isAgent = session?.role === 'agent';
+  const [secondsLeft, setSecondsLeft] = useState(AGENT_ACCESS_DURATION);
+  const expireCalled = useRef(false);
+
+  useEffect(() => {
+    expireCalled.current = false;
+    setSecondsLeft(AGENT_ACCESS_DURATION);
+
+    const interval = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          if (!expireCalled.current && isAgent) {
+            expireCalled.current = true;
+            onExpire();
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isAgent, onExpire]);
+
+  return { isAgent, secondsLeft };
+}
+
+function CountdownBadge({ secondsLeft }: { secondsLeft: number }) {
+  const mins = Math.floor(secondsLeft / 60);
+  const secs = secondsLeft % 60;
+  const isUrgent = secondsLeft <= 60;
+
+  return (
+    <div
+      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors ${
+        isUrgent
+          ? 'border-red-300 bg-red-50 text-red-700 animate-pulse'
+          : 'border-amber-300 bg-amber-50 text-amber-700'
+      }`}
+    >
+      <Timer className="h-3.5 w-3.5" />
+      <span className="tabular-nums">
+        {String(mins).padStart(2, '0')}:{String(secs).padStart(2, '0')}
+      </span>
+    </div>
+  );
+}
+
 // ── Detail view ───────────────────────────────────────────────────────────────
 
 function BookingDetailView() {
@@ -372,6 +429,17 @@ function BookingDetailView() {
   const [expandedTaskCard, setExpandedTaskCard] = useState(false);
 
   const location = useLocation();
+
+  const handleTimerExpire = useCallback(() => {
+    toast({
+      title: 'Access expired',
+      description: 'Your 5-minute viewing window has ended.',
+      variant: 'destructive',
+    });
+    navigate(-1);
+  }, [toast, navigate]);
+
+  const { isAgent, secondsLeft } = useAccessCountdown(handleTimerExpire);
 
   useEffect(() => {
     if (!id) return;
@@ -423,9 +491,12 @@ function BookingDetailView() {
               {loading ? <SkeletonBlock className="mt-1 h-3 w-20" /> : b ? <div className="text-xs text-muted-foreground">{b.bookingCode}</div> : null}
             </div>
           </div>
-          {loading ? <SkeletonBlock className="h-6 w-20 rounded-full" /> : statusCfg && (
-            <Badge className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusCfg.className}`}>{statusCfg.label}</Badge>
-          )}
+          <div className="flex items-center gap-3">
+            <CountdownBadge secondsLeft={secondsLeft} />
+            {loading ? <SkeletonBlock className="h-6 w-20 rounded-full" /> : statusCfg && (
+              <Badge className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusCfg.className}`}>{statusCfg.label}</Badge>
+            )}
+          </div>
         </div>
       </header>
 
@@ -805,15 +876,70 @@ function BookingDetailView() {
 export default function BookingDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { session } = useAuth();
+  const { toast } = useToast();
   const pageMeta = PAGE_META[location.pathname];
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (session?.role === 'agent') {
+      const EXPIRY_KEY = 'agent_booking_expiry';
+      const now = Date.now();
+      let expiry = sessionStorage.getItem(EXPIRY_KEY);
+
+      if (!expiry) {
+        expiry = (now + 300000).toString(); // 5 minutes
+        sessionStorage.setItem(EXPIRY_KEY, expiry);
+      }
+
+      const calculateTimeLeft = () => {
+        const currentNow = Date.now();
+        const diff = Math.floor((parseInt(expiry!) - currentNow) / 1000);
+        return Math.max(0, diff);
+      };
+
+      setTimeLeft(calculateTimeLeft());
+
+      const timer = setInterval(() => {
+        const remaining = calculateTimeLeft();
+        setTimeLeft(remaining);
+
+        if (remaining <= 0) {
+          clearInterval(timer);
+          sessionStorage.removeItem(EXPIRY_KEY);
+          toast({
+            title: "Time Limit Reached",
+            description: "Returning to dashboard due to time limit.",
+          });
+          navigate('/');
+        }
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }
+  }, [session, navigate, toast]);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden relative">
       <BookingSidebar />
       {!id && pageMeta
         ? <BookingListView meta={pageMeta} pathname={location.pathname} />
         : <BookingDetailView />
       }
+
+      {/* Countdown Timer Overlay for Agents */}
+      {timeLeft !== null && (
+        <div className="absolute top-4 right-4 z-50 flex items-center gap-2 rounded-full bg-rose-100 px-4 py-2 text-rose-700 shadow-md border border-rose-200 pointer-events-none transition-all">
+          <Clock className="h-4 w-4 animate-pulse" />
+          <span className="font-bold font-mono text-sm text-rose-700">
+            {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:{String(timeLeft % 60).padStart(2, '0')}
+          </span>
+          <span className="text-[10px] font-bold uppercase tracking-wider opacity-70">
+            remaining
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -55,6 +55,8 @@ export type AvailabilityResponse = {
   availableSlots: string[];
 };
 
+import { supabase } from '@/integrations/supabase/client';
+
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const BASE_URL =
@@ -68,7 +70,17 @@ const STATIC_TOKEN =
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
   const user = auth.currentUser;
-  const token = user ? await getIdToken(user) : STATIC_TOKEN;
+  let token = STATIC_TOKEN;
+
+  if (user) {
+    token = await getIdToken(user);
+  } else {
+    // Fallback to Supabase session if Firebase user is not present
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      token = session.access_token;
+    }
+  }
 
   return {
     'Content-Type': 'application/json',
@@ -341,15 +353,7 @@ export async function fetchNotifications(ownerUid: string): Promise<BookingNotif
   const { signInWithEmailAndPassword } = await import('firebase/auth');
 
   if (!fbAuth.currentUser) {
-    const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
-    const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
-    if (email && password) {
-      try {
-        await signInWithEmailAndPassword(fbAuth, email, password);
-      } catch (err) {
-        console.error('[fetchNotifications] Firebase auto-login failed:', err);
-      }
-    }
+    // No auto-login here anymore to preserve agent identity
   }
 
   const q = query(
@@ -425,15 +429,7 @@ export async function fetchAllBranchNotifications(ownerUids: string[]): Promise<
   const { signInWithEmailAndPassword } = await import('firebase/auth');
 
   if (!fbAuth.currentUser) {
-    const email = import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string;
-    const password = import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string;
-    if (email && password) {
-      try {
-        await signInWithEmailAndPassword(fbAuth, email, password);
-      } catch (err) {
-        console.error('[fetchAllBranchNotifications] Firebase auto-login failed:', err);
-      }
-    }
+    // No auto-login here anymore to preserve agent identity
   }
 
   // Firestore 'in' operator supports max 30 values; chunk if needed
