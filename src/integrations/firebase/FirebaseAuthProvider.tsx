@@ -5,6 +5,7 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth';
 import { auth } from './config';
+import { signalAuthReady } from '@/lib/firebase';
 import { FirebaseAuthContext } from './FirebaseAuthContext';
 
 export function FirebaseAuthProvider({ children }: { children: ReactNode }) {
@@ -34,6 +35,7 @@ export function FirebaseAuthProvider({ children }: { children: ReactNode }) {
         setFirebaseUser({ uid: user.uid, email: user.email });
         setIdToken(token);
         setLoading(false);
+        signalAuthReady();
       } else {
         setFirebaseUser(null);
         setIdToken(null);
@@ -55,6 +57,7 @@ export function FirebaseAuthProvider({ children }: { children: ReactNode }) {
           }
         }
         setLoading(false);
+        signalAuthReady();
       }
     });
 

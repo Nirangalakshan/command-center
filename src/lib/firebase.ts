@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -18,21 +18,29 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const db   = getFirestore(app);
 export const auth = getAuth(app);
 
+// ─── Auth-ready gate ────────────────────────────────────────────────────────
+// Resolves once FirebaseAuthProvider has fully initialised auth
+// (including any auto-login with agent credentials).
+
+let _authReady = false;
+let _resolve: (() => void) | null = null;
+
+const _authReadyPromise = new Promise<void>((resolve) => {
+  _resolve = () => { _authReady = true; resolve(); };
+  setTimeout(() => { _authReady = true; resolve(); }, 10_000);
+});
+
+/** Called by FirebaseAuthProvider once auth state is fully settled. */
+export function signalAuthReady(): void {
+  _resolve?.();
+  _resolve = null;
+}
+
 /**
- * Resolves once Firebase has determined the initial auth state.
- * Prevents API calls from racing ahead of auth restoration from IndexedDB.
+ * Awaits until Firebase auth is fully initialised (including auto-login).
+ * Resolves immediately if auth is already ready or a user is signed in.
  */
-let _authReadyPromise: Promise<User | null> | null = null;
-
-export function waitForAuth(): Promise<User | null> {
-  if (auth.currentUser) return Promise.resolve(auth.currentUser);
-  if (_authReadyPromise) return _authReadyPromise;
-
-  _authReadyPromise = new Promise((resolve) => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      unsub();
-      resolve(user);
-    });
-  });
+export function waitForAuth(): Promise<void> {
+  if (_authReady || auth.currentUser) return Promise.resolve();
   return _authReadyPromise;
 }
