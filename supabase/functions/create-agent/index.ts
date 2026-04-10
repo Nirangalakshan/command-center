@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
     // 2. Assign agent role
     const { error: roleErr } = await supabaseAdmin.from("user_roles").insert({
       user_id: userId,
-      role: "call_center_agent",
+      role: "agent",
     });
     if (roleErr) {
       return new Response(
