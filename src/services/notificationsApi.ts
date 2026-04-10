@@ -8,31 +8,46 @@ const BASE_URL =
 
 const STATIC_TOKEN = (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? "";
 
-async function apiHeaders(): Promise<HeadersInit> {
+async function apiHeaders(forceRefresh = false): Promise<HeadersInit> {
   const user = auth.currentUser;
-  let token = STATIC_TOKEN;
-  let source = "static";
+  let token = "";
+  let source = "none";
 
+  // 1. Try Firebase first (used by most CC-Agents)
   if (user) {
     try {
-      token = await getIdToken(user);
+      token = await getIdToken(user, forceRefresh);
       source = "firebase";
     } catch (e) {
       console.warn("[apiHeaders] Failed to get Firebase ID token:", e);
     }
   }
 
-  // Fallback to Supabase if Firebase fails or is absent
-  if (!token || token === STATIC_TOKEN) {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      token = session.access_token;
-      source = "supabase";
+  // 2. Try Supabase session (used by Admins or as fallback)
+  if (!token) {
+    if (forceRefresh) {
+      const { data: { session } } = await supabase.auth.refreshSession();
+      if (session?.access_token) {
+        token = session.access_token;
+        source = "supabase-refreshed";
+      }
+    } else {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        token = session.access_token;
+        source = "supabase";
+      }
     }
   }
 
+  // 3. Last resort: STATIC_TOKEN (only if provided and no user token found)
+  if (!token && STATIC_TOKEN) {
+    token = STATIC_TOKEN;
+    source = "static";
+  }
+
   if (!token) {
-    console.error("[apiHeaders] No token found (Firebase/Supabase/Static all empty)");
+    console.error("[apiHeaders] No token found after checking Firebase, Supabase, and Static fallback");
   } else {
     console.log(`[apiHeaders] Using ${source} token`);
   }
@@ -87,13 +102,13 @@ export async function fetchCustomerNotifications(retryCount = 0): Promise<
 > {
   try {
     const res = await fetch(`${BASE_URL}/customer-notifications?all=1`, {
-      headers: await apiHeaders(),
+      headers: await apiHeaders(retryCount > 0), // Force refresh on retry
     });
 
     if (res.status === 401 && retryCount < 2) {
       console.warn(`[fetchCustomerNotifications] 401 Unauthorized. Retrying (${retryCount + 1})...`);
-      // Wait 1s before retrying to allow auth state to settle
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait 1.5s before retrying to allow auth state to settle/refresh
+      await new Promise(resolve => setTimeout(resolve, 1500));
       return fetchCustomerNotifications(retryCount + 1);
     }
 
