@@ -359,20 +359,16 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
     }
   }, [isAgent, session?.userId]);
 
-  // Use a ref to prevent the initial load from re-triggering if the session object changes slightly
-  // which was causing a loop when combined with the 500ms timer.
-  const initialLoadStarted = useRef(false);
-
   useEffect(() => {
     if (!session?.userId) return;
-    if (initialLoadStarted.current) return;
     
-    initialLoadStarted.current = true;
+    // Initial load
     loadNotifications().finally(() => setLoading(false));
 
     const interval = setInterval(loadNotifications, 30_000);
     return () => clearInterval(interval);
-  }, [loadNotifications, session?.userId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.userId]);
 
   function handleSelect(n: DisplayItem) {
     setSelected(n);

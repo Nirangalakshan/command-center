@@ -8,13 +8,22 @@ const BASE_URL =
 
 const STATIC_TOKEN = (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? "";
 
-async function apiHeaders(): Promise<HeadersInit> {
-  // 1. Try to get Firebase user (most reliable for Call Center API)
+async function apiHeaders(forceStatic = false): Promise<HeadersInit> {
+  // If we've already failed with user tokens, go straight to static
+  if (forceStatic && STATIC_TOKEN) {
+    console.log("[apiHeaders] Forced fallback to static token");
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${STATIC_TOKEN}`,
+    };
+  }
+
+  // 1. Try to get Firebase user
   let user = auth.currentUser;
   
-  // If user is null, wait a tiny bit to see if Firebase is still initializing
+  // If user is null, wait a bit longer to see if Firebase is still initializing
   if (!user) {
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     user = auth.currentUser;
   }
 
@@ -30,7 +39,7 @@ async function apiHeaders(): Promise<HeadersInit> {
     }
   }
 
-  // 2. Try Supabase session (standard app auth)
+  // 2. Try Supabase session
   if (!token) {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token) {
@@ -39,13 +48,13 @@ async function apiHeaders(): Promise<HeadersInit> {
     }
   }
 
-  // 3. Last resort: STATIC_TOKEN
+  // 3. Fallback to STATIC_TOKEN
   if (!token && STATIC_TOKEN) {
     token = STATIC_TOKEN;
     source = "static";
   }
 
-  console.log(`[apiHeaders] Result: ${source} token found`);
+  console.log(`[apiHeaders] Result: ${source} token used`);
 
   return {
     "Content-Type": "application/json",
@@ -97,10 +106,11 @@ export async function fetchCustomerNotifications(retryCount = 0): Promise<
 > {
   try {
     const res = await fetch(`${BASE_URL}/customer-notifications?all=1`, {
-      headers: await apiHeaders(),
+      // On second retry (retryCount == 2), try forcing the static token
+      headers: await apiHeaders(retryCount >= 2),
     });
 
-    if (res.status === 401 && retryCount < 2) {
+    if (res.status === 401 && retryCount < 3) {
       console.warn(`[fetchCustomerNotifications] 401 Unauthorized. Retrying (${retryCount + 1})...`);
       // Wait 1.5s then retry
       await new Promise(resolve => setTimeout(resolve, 1500));
