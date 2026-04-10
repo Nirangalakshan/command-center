@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   Queue,
   Agent,
@@ -359,21 +359,19 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
     }
   }, [isAgent, session?.userId]);
 
+  // Use a ref to prevent the initial load from re-triggering if the session object changes slightly
+  // which was causing a loop when combined with the 500ms timer.
+  const initialLoadStarted = useRef(false);
+
   useEffect(() => {
     if (!session?.userId) return;
+    if (initialLoadStarted.current) return;
     
-    // Small initial delay to ensure Firebase/Supabase auth state is fully synced
-    // across all library internals before the first API call.
-    const initialTimer = setTimeout(() => {
-      loadNotifications().finally(() => setLoading(false));
-    }, 500);
+    initialLoadStarted.current = true;
+    loadNotifications().finally(() => setLoading(false));
 
     const interval = setInterval(loadNotifications, 30_000);
-    
-    return () => {
-      clearTimeout(initialTimer);
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, [loadNotifications, session?.userId]);
 
   function handleSelect(n: DisplayItem) {

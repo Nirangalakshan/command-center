@@ -8,49 +8,44 @@ const BASE_URL =
 
 const STATIC_TOKEN = (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? "";
 
-async function apiHeaders(forceRefresh = false): Promise<HeadersInit> {
-  const user = auth.currentUser;
+async function apiHeaders(): Promise<HeadersInit> {
+  // 1. Try to get Firebase user (most reliable for Call Center API)
+  let user = auth.currentUser;
+  
+  // If user is null, wait a tiny bit to see if Firebase is still initializing
+  if (!user) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    user = auth.currentUser;
+  }
+
   let token = "";
   let source = "none";
 
-  // 1. Try Firebase first (used by most CC-Agents)
   if (user) {
     try {
-      token = await getIdToken(user, forceRefresh);
+      token = await getIdToken(user);
       source = "firebase";
     } catch (e) {
       console.warn("[apiHeaders] Failed to get Firebase ID token:", e);
     }
   }
 
-  // 2. Try Supabase session (used by Admins or as fallback)
+  // 2. Try Supabase session (standard app auth)
   if (!token) {
-    if (forceRefresh) {
-      const { data: { session } } = await supabase.auth.refreshSession();
-      if (session?.access_token) {
-        token = session.access_token;
-        source = "supabase-refreshed";
-      }
-    } else {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        token = session.access_token;
-        source = "supabase";
-      }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      token = session.access_token;
+      source = "supabase";
     }
   }
 
-  // 3. Last resort: STATIC_TOKEN (only if provided and no user token found)
+  // 3. Last resort: STATIC_TOKEN
   if (!token && STATIC_TOKEN) {
     token = STATIC_TOKEN;
     source = "static";
   }
 
-  if (!token) {
-    console.error("[apiHeaders] No token found after checking Firebase, Supabase, and Static fallback");
-  } else {
-    console.log(`[apiHeaders] Using ${source} token`);
-  }
+  console.log(`[apiHeaders] Result: ${source} token found`);
 
   return {
     "Content-Type": "application/json",
@@ -102,12 +97,12 @@ export async function fetchCustomerNotifications(retryCount = 0): Promise<
 > {
   try {
     const res = await fetch(`${BASE_URL}/customer-notifications?all=1`, {
-      headers: await apiHeaders(retryCount > 0), // Force refresh on retry
+      headers: await apiHeaders(),
     });
 
     if (res.status === 401 && retryCount < 2) {
       console.warn(`[fetchCustomerNotifications] 401 Unauthorized. Retrying (${retryCount + 1})...`);
-      // Wait 1.5s before retrying to allow auth state to settle/refresh
+      // Wait 1.5s then retry
       await new Promise(resolve => setTimeout(resolve, 1500));
       return fetchCustomerNotifications(retryCount + 1);
     }
