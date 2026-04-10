@@ -1,4 +1,4 @@
-import { auth } from '@/lib/firebase';
+import { auth, waitForAuth } from '@/lib/firebase';
 import { getIdToken } from 'firebase/auth';
 
 /** Resolves the workshop ownerUid from .env */
@@ -69,13 +69,13 @@ const STATIC_TOKEN =
 // ─── Headers Helper ──────────────────────────────────────────────────────────
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
+  await waitForAuth();
   const user = auth.currentUser;
   let token = STATIC_TOKEN;
 
   if (user) {
     token = await getIdToken(user);
   } else {
-    // Fallback to Supabase session if Firebase user is not present
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token) {
       token = session.access_token;
