@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import type { Agent, Queue, Tenant, Permissions } from '@/services/types';
 import { formatDuration, formatPhone } from '@/utils/formatters';
 import { StatusBadge, STATUS_MAP } from '@/components/dashboard/StatusBadge';
@@ -6,6 +6,34 @@ import { LiveDot } from '@/components/dashboard/LiveDot';
 import { EmptyState } from '@/components/dashboard/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { updateDashboardAgent, deleteDashboardAgent } from '@/services/dashboardApi';
+import { Pencil, Trash2 } from 'lucide-react';
+
+const AGENT_ROLES: Agent['role'][] = ['agent', 'senior-agent', 'team-lead'];
+const ROLE_LABELS: Record<Agent['role'], string> = {
+  agent: 'Agent',
+  'senior-agent': 'Senior agent',
+  'team-lead': 'Team lead',
+};
 
 interface AgentsTabProps {
   agents: Agent[];
@@ -13,11 +41,119 @@ interface AgentsTabProps {
   tenants: Tenant[];
   permissions: Permissions;
   now: number;
+  onRefresh: () => void;
 }
 
-export function AgentsTab({ agents, queues, tenants, permissions, now }: AgentsTabProps) {
+export function AgentsTab({ agents, queues, tenants, permissions, now, onRefresh }: AgentsTabProps) {
   const [filterQueue, setFilterQueue] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [formName, setFormName] = useState('');
+  const [formExtension, setFormExtension] = useState('');
+  const [formEmail, setFormEmail] = useState('');
+  const [formPhone, setFormPhone] = useState('');
+  const [formTenantId, setFormTenantId] = useState<string>('');
+  const [formRole, setFormRole] = useState<Agent['role']>('agent');
+  const [formQueueIds, setFormQueueIds] = useState<string[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const openEdit = useCallback((a: Agent) => {
+    setEditingAgent(a);
+    setFormName(a.name);
+    setFormExtension(a.extension || '');
+    setFormEmail(a.email || '');
+    setFormPhone(a.phone || '');
+    setFormTenantId(a.tenantId || '');
+    setFormRole(a.role);
+    setFormQueueIds([...a.queueIds]);
+    setSaveError(null);
+    setEditOpen(true);
+  }, []);
+
+  const queuesForFormTenant = useMemo(() => {
+    if (!formTenantId) return queues;
+    return queues.filter((q) => q.tenantId === formTenantId);
+  }, [queues, formTenantId]);
+
+  useEffect(() => {
+    if (!editOpen || !formTenantId) return;
+    setFormQueueIds((prev) => prev.filter((id) => queuesForFormTenant.some((q) => q.id === id)));
+  }, [formTenantId, editOpen, queuesForFormTenant]);
+
+  const toggleQueue = useCallback((queueId: string) => {
+    setFormQueueIds((prev) =>
+      prev.includes(queueId) ? prev.filter((id) => id !== queueId) : [...prev, queueId],
+    );
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (!editingAgent) return;
+    const name = formName.trim();
+    if (!name) {
+      setSaveError('Name is required.');
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await updateDashboardAgent(editingAgent.id, {
+        name,
+        extension: formExtension.trim(),
+        email: formEmail.trim(),
+        phone: formPhone.trim(),
+        tenantId: formTenantId || null,
+        queueIds: formQueueIds,
+        role: formRole,
+      });
+      setEditOpen(false);
+      setEditingAgent(null);
+      onRefresh();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Update failed');
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    editingAgent,
+    formName,
+    formExtension,
+    formEmail,
+    formPhone,
+    formTenantId,
+    formQueueIds,
+    formRole,
+    onRefresh,
+  ]);
+
+  const openDelete = useCallback((a: Agent) => {
+    setDeletingAgent(a);
+    setDeleteError(null);
+    setDeleteOpen(true);
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deletingAgent) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteDashboardAgent(deletingAgent.id);
+      setDeleteOpen(false);
+      setDeletingAgent(null);
+      onRefresh();
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }, [deletingAgent, onRefresh]);
 
   // Respect agent queue restrictions
   const visibleAgents = useMemo(() => {
@@ -54,6 +190,8 @@ export function AgentsTab({ agents, queues, tenants, permissions, now }: AgentsT
   const tenantNameById = useMemo(() => {
     return new Map(tenants.map((t) => [t.id, t.name]));
   }, [tenants]);
+
+  const canManage = permissions.canManageAgents;
 
   return (
     <div className="cc-fade-in space-y-6">
@@ -144,7 +282,7 @@ export function AgentsTab({ agents, queues, tenants, permissions, now }: AgentsT
                 {isLive && <div className="h-1 w-full bg-rose-500" />}
                 <CardContent className="space-y-4 p-5">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="text-base font-semibold text-slate-950">{a.name}</div>
                       <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                         {queueNames.length > 0 ? queueNames.join(', ') : 'No queue'}
@@ -152,29 +290,175 @@ export function AgentsTab({ agents, queues, tenants, permissions, now }: AgentsT
                         {permissions.canViewTenantNames && <> {' · '}{tenantDisplay}</>}
                       </div>
                     </div>
-                    <StatusBadge status={a.status} />
+                    <div className="flex shrink-0 items-start gap-2">
+                      {canManage && (
+                        <>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            aria-label={`Edit ${a.name}`}
+                            onClick={() => openEdit(a)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                            aria-label={`Delete ${a.name}`}
+                            onClick={() => openDelete(a)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
+                      <StatusBadge status={a.status} />
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 gap-2 text-sm text-slate-700">
-                    <div><span className="font-medium text-slate-900">Email:</span> {a.email || '-'}</div>
-                    <div><span className="font-medium text-slate-900">Phone:</span> {a.phone || '-'}</div>
-                    <div><span className="font-medium text-slate-900">Role:</span> {a.role}</div>
-                    <div><span className="font-medium text-slate-900">Agent ID:</span> {a.id}</div>
-                    {a.notes && <div><span className="font-medium text-slate-900">Notes:</span> {a.notes}</div>}
+                    <div>
+                      <span className="font-medium text-slate-900">Email:</span> {a.email || '-'}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-900">Phone:</span> {a.phone || '-'}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-900">Role:</span> {a.role}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-900">Agent ID:</span> {a.id}
+                    </div>
+                    {a.notes && (
+                      <div>
+                        <span className="font-medium text-slate-900">Notes:</span> {a.notes}
+                      </div>
+                    )}
                   </div>
-                {isLive && a.callStartTime && (
+                  {isLive && a.callStartTime && (
                     <div className="flex items-center justify-between gap-3 rounded-xl bg-rose-50 px-3 py-2">
                       <span className="font-mono text-xs text-slate-700">{formatPhone(a.currentCaller)}</span>
                       <span className="inline-flex items-center font-mono text-xs font-semibold text-rose-600">
-                      <LiveDot /> {formatDuration(now - a.callStartTime)}
+                        <LiveDot /> {formatDuration(now - a.callStartTime)}
                       </span>
                     </div>
-                )}
+                  )}
                 </CardContent>
               </Card>
             );
           })}
         </div>
       )}
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit agent</DialogTitle>
+          </DialogHeader>
+          {editingAgent && (
+            <div className="grid gap-4 py-2">
+              <div className="grid gap-2">
+                <Label htmlFor="agent-name">Name</Label>
+                <Input id="agent-name" value={formName} onChange={(e) => setFormName(e.target.value)} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="agent-ext">Extension</Label>
+                <Input id="agent-ext" value={formExtension} onChange={(e) => setFormExtension(e.target.value)} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="agent-email">Email</Label>
+                <Input id="agent-email" type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="agent-phone">Phone</Label>
+                <Input id="agent-phone" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="agent-tenant">Tenant</Label>
+                <select
+                  id="agent-tenant"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  value={formTenantId}
+                  onChange={(e) => setFormTenantId(e.target.value)}
+                >
+                  <option value="">Unassigned</option>
+                  {tenants.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="agent-role">Role</Label>
+                <select
+                  id="agent-role"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  value={formRole}
+                  onChange={(e) => setFormRole(e.target.value as Agent['role'])}
+                >
+                  {AGENT_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <Label>Queues</Label>
+                <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border border-input p-3">
+                  {queuesForFormTenant.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No queues for this tenant.</p>
+                  ) : (
+                    queuesForFormTenant.map((q) => (
+                      <label key={q.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={formQueueIds.includes(q.id)}
+                          onCheckedChange={() => toggleQueue(q.id)}
+                        />
+                        <span>
+                          {q.icon} {q.name}
+                        </span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+              {saveError && <p className="text-sm text-rose-600">{saveError}</p>}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleSaveEdit} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete agent?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingAgent
+                ? `This removes ${deletingAgent.name} from the directory. Related onboarding rows are removed automatically. This cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError && <p className="text-sm text-rose-600">{deleteError}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <Button variant="destructive" disabled={deleting} onClick={handleConfirmDelete}>
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -135,6 +135,36 @@ function mapAgent(a: Record<string, unknown> & { tenants?: { name?: string } }):
   };
 }
 
+/** Fields super-admins may change from the Agents tab (maps to `public.agents` columns). */
+export type DashboardAgentUpdate = {
+  name?: string;
+  extension?: string;
+  email?: string;
+  phone?: string;
+  tenantId?: string | null;
+  queueIds?: string[];
+  role?: Agent['role'];
+};
+
+export async function updateDashboardAgent(agentId: string, patch: DashboardAgentUpdate): Promise<void> {
+  const row: Record<string, unknown> = {};
+  if (patch.name !== undefined) row.name = patch.name;
+  if (patch.extension !== undefined) row.extension = patch.extension;
+  if (patch.email !== undefined) row.email = patch.email;
+  if (patch.phone !== undefined) row.phone_number = patch.phone;
+  if (patch.tenantId !== undefined) row.tenant_id = patch.tenantId;
+  if (patch.queueIds !== undefined) row.queue_ids = patch.queueIds;
+  if (patch.role !== undefined) row.role = patch.role;
+
+  const { error } = await supabase.from('agents').update(row).eq('id', agentId);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteDashboardAgent(agentId: string): Promise<void> {
+  const { error } = await supabase.from('agents').delete().eq('id', agentId);
+  if (error) throw new Error(error.message);
+}
+
 /* ─── Calls ─── */
 
 export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {

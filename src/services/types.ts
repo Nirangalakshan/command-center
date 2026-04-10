@@ -419,6 +419,8 @@ export interface Permissions {
   canViewAgentOnboarding: boolean;
   canViewAgentOnboardingTab: boolean;
   canViewAuditLogs: boolean;
+  /** Super-admin only: edit or remove agents from the Agents tab. */
+  canManageAgents: boolean;
   allowedTenantId: string | null;
   allowedQueueIds: string[];
 }
