@@ -1,4 +1,4 @@
-import type { UserSession, Permissions } from '@/services/types';
+import type { UserSession, Permissions } from "@/services/types";
 
 /**
  * Derive a flat permissions object from the authenticated session.
@@ -7,10 +7,10 @@ import type { UserSession, Permissions } from '@/services/types';
 export function derivePermissions(session: UserSession): Permissions {
   const { role, tenantId, allowedQueueIds } = session;
 
-  const isSuperAdmin = role === 'super-admin';
-  const isClientAdmin = role === 'client-admin';
-  const isSupervisor = role === 'supervisor';
-  const isAgent = role === 'agent';
+  const isSuperAdmin = role === "super-admin";
+  const isClientAdmin = role === "client-admin";
+  const isSupervisor = role === "supervisor";
+  const isAgent = role === "agent";
 
   return {
     canViewAllTenants: isSuperAdmin || isAgent,
@@ -18,7 +18,8 @@ export function derivePermissions(session: UserSession): Permissions {
     canViewSipInfrastructure: isSuperAdmin,
     canViewTenantNames: isSuperAdmin || isSupervisor || isAgent,
     canViewCallsTab: isSuperAdmin || isClientAdmin || isSupervisor || isAgent,
-    canViewBookingsTab: isSuperAdmin || isClientAdmin || isSupervisor || isAgent,
+    canViewBookingsTab:
+      isSuperAdmin || isClientAdmin || isSupervisor || isAgent,
     canViewAgentsTab: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewOverviewTab: true,
     canViewSipTab: isSuperAdmin,

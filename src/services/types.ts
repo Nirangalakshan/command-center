@@ -3,23 +3,29 @@
    Every entity carries tenantId for strict isolation.
    ═══════════════════════════════════════════════════════════════ */
 
-export type UserRole = 'super-admin' | 'client-admin' | 'supervisor' | 'agent';
+export type UserRole = "super-admin" | "client-admin" | "supervisor" | "agent";
 
-export type AgentStatus = 'ringing' | 'on-call' | 'available' | 'wrap-up' | 'break' | 'offline';
+export type AgentStatus =
+  | "ringing"
+  | "on-call"
+  | "available"
+  | "wrap-up"
+  | "break"
+  | "offline";
 
-export type CallResult = 'answered' | 'abandoned' | 'missed' | 'voicemail';
+export type CallResult = "answered" | "abandoned" | "missed" | "voicemail";
 
-export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected';
+export type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
-export type TranscriptStatus = 'pending' | 'processing' | 'ready' | 'none';
+export type TranscriptStatus = "pending" | "processing" | "ready" | "none";
 
-export type SipLineStatus = 'active' | 'idle' | 'error';
+export type SipLineStatus = "active" | "idle" | "error";
 
 export interface Tenant {
   id: string;
   name: string;
   industry: string;
-  status: 'active' | 'inactive';
+  status: "active" | "inactive";
   brandColor: string;
   didNumbers: string[];
 }
@@ -48,7 +54,7 @@ export interface Agent {
   email?: string;
   phone?: string;
   notes?: string;
-  role: 'agent' | 'senior-agent' | 'team-lead';
+  role: "agent" | "senior-agent" | "team-lead";
   status: AgentStatus;
   currentCaller: string | null;
   callStartTime: number | null;
@@ -73,7 +79,7 @@ export interface Call {
   result: CallResult;
   recordingUrl: string | null;
   transcriptStatus: TranscriptStatus;
-  summaryStatus: 'pending' | 'ready' | 'none';
+  summaryStatus: "pending" | "ready" | "none";
   agentName: string;
   queueName: string;
   tenantName: string;
@@ -132,7 +138,7 @@ export interface CallerContext {
   services: ServiceRecord[];
 }
 
-export type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+export type BookingStatus = "pending" | "confirmed" | "completed" | "cancelled";
 
 export interface BookingRecord {
   id: string;
@@ -181,25 +187,32 @@ export interface DashboardSummary {
    ═══════════════════════════════════════════════════════════════ */
 
 export type OnboardingStage =
-  | 'new'
-  | 'contacted'
-  | 'discovery-complete'
-  | 'tenant-created'
-  | 'queue-setup-complete'
-  | 'script-setup-complete'
-  | 'testing'
-  | 'awaiting-approval'
-  | 'live'
-  | 'needs-revision';
+  | "new"
+  | "contacted"
+  | "discovery-complete"
+  | "tenant-created"
+  | "queue-setup-complete"
+  | "script-setup-complete"
+  | "testing"
+  | "awaiting-approval"
+  | "live"
+  | "needs-revision";
 
 /* ═══════════════════════════════════════════════════════════════
    Onboarding Section Data Models
    ═══════════════════════════════════════════════════════════════ */
 
 export interface BusinessHours {
-  day: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
-  open: string;   // HH:mm
-  close: string;  // HH:mm
+  day:
+    | "monday"
+    | "tuesday"
+    | "wednesday"
+    | "thursday"
+    | "friday"
+    | "saturday"
+    | "sunday";
+  open: string; // HH:mm
+  close: string; // HH:mm
   closed: boolean;
 }
 
@@ -230,7 +243,7 @@ export interface ClientDetails {
   website: string;
 }
 
-export type AfterHoursAction = 'voicemail' | 'transfer' | 'message' | 'none';
+export type AfterHoursAction = "voicemail" | "transfer" | "message" | "none";
 
 export interface BusinessRules {
   urgentKeywords: string[];
@@ -321,7 +334,7 @@ export interface TestCall {
   timestamp: string;
   testerName: string;
   scenario: string;
-  result: 'pass' | 'fail' | 'partial';
+  result: "pass" | "fail" | "partial";
   notes: string;
   queueTested: string;
 }
@@ -414,7 +427,7 @@ export interface Permissions {
    Agent Groups & DID Routing
    ═══════════════════════════════════════════════════════════════ */
 
-export type RingStrategy = 'ring-all' | 'round-robin' | 'longest-idle';
+export type RingStrategy = "ring-all" | "round-robin" | "longest-idle";
 
 export interface AgentGroup {
   id: string;
@@ -436,7 +449,7 @@ export interface DIDMapping {
   ownerId: string;
 }
 
-export type IncomingCallStatus = 'ringing' | 'queued';
+export type IncomingCallStatus = "ringing" | "queued";
 
 export interface IncomingCall {
   id: string;
@@ -469,7 +482,12 @@ export interface TabDef {
    Agent Onboarding
    ═══════════════════════════════════════════════════════════════ */
 
-export type AgentOnboardingStage = 'invited' | 'account-created' | 'training' | 'shadowing' | 'live';
+export type AgentOnboardingStage =
+  | "invited"
+  | "account-created"
+  | "training"
+  | "shadowing"
+  | "live";
 
 export interface TrainingChecklist {
   pbxLogin: boolean;
@@ -517,7 +535,7 @@ export interface NewAgentForm {
    Validation Types
    ═══════════════════════════════════════════════════════════════ */
 
-export type ValidationSeverity = 'blocker' | 'warning';
+export type ValidationSeverity = "blocker" | "warning";
 
 export interface ValidationResult {
   valid: boolean;

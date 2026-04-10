@@ -49,7 +49,9 @@ Deno.serve(async (req) => {
     const callerClient = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
-    const { data: { user: caller } } = await callerClient.auth.getUser();
+    const {
+      data: { user: caller },
+    } = await callerClient.auth.getUser();
     if (!caller) {
       return new Response(JSON.stringify({ error: "Invalid token" }), {
         status: 401,
@@ -65,32 +67,36 @@ Deno.serve(async (req) => {
       .single();
 
     if (!roleData || !["super-admin", "client-admin"].includes(roleData.role)) {
-      return new Response(JSON.stringify({ error: "Insufficient permissions" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "Insufficient permissions" }),
+        {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     const body = await req.json();
-    const {
-      name, email, phone, password,
-      extension = "", notes = "",
-    } = body;
+    const { name, email, phone, password, extension = "", notes = "" } = body;
 
     if (!name || !email || !password) {
       return new Response(
         JSON.stringify({ error: "name, email, and password are required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     // 1. Create auth user
-    const { data: newUser, error: userErr } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { display_name: name },
-    });
+    const { data: newUser, error: userErr } =
+      await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { display_name: name },
+      });
     if (userErr) {
       return new Response(JSON.stringify({ error: userErr.message }), {
         status: 400,
@@ -103,13 +109,16 @@ Deno.serve(async (req) => {
     // 2. Assign agent role
     const { error: roleErr } = await supabaseAdmin.from("user_roles").insert({
       user_id: userId,
-      role: "agent",
+      role: "call_center_agent",
     });
     if (roleErr) {
-      return new Response(JSON.stringify({ error: `Failed to assign role: ${roleErr.message}` }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: `Failed to assign role: ${roleErr.message}` }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     // 3. Create agent record using fallback payloads for schema differences
@@ -142,7 +151,8 @@ Deno.serve(async (req) => {
         break;
       }
       const msg = result.error.message || "";
-      const unknownColumn = msg.includes("Could not find the") && msg.includes("column");
+      const unknownColumn =
+        msg.includes("Could not find the") && msg.includes("column");
       if (unknownColumn) {
         agentErr = result.error;
         continue;
@@ -151,20 +161,28 @@ Deno.serve(async (req) => {
     }
 
     if (agentErr) {
-      return new Response(JSON.stringify({ error: `Failed to create agent record: ${agentErr.message}` }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          error: `Failed to create agent record: ${agentErr.message}`,
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
-    return new Response(
-      JSON.stringify({ success: true, agentId, userId }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ success: true, agentId, userId }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (err) {
     return new Response(
       JSON.stringify({ error: err.message || "Internal error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 });

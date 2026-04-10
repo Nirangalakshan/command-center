@@ -360,10 +360,21 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
   }, [isAgent, session?.userId]);
 
   useEffect(() => {
-    loadNotifications().finally(() => setLoading(false));
+    if (!session?.userId) return;
+    
+    // Small initial delay to ensure Firebase/Supabase auth state is fully synced
+    // across all library internals before the first API call.
+    const initialTimer = setTimeout(() => {
+      loadNotifications().finally(() => setLoading(false));
+    }, 500);
+
     const interval = setInterval(loadNotifications, 30_000);
-    return () => clearInterval(interval);
-  }, [loadNotifications]);
+    
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
+  }, [loadNotifications, session?.userId]);
 
   function handleSelect(n: DisplayItem) {
     setSelected(n);

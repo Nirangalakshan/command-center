@@ -11,15 +11,30 @@ const STATIC_TOKEN = (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? "";
 async function apiHeaders(): Promise<HeadersInit> {
   const user = auth.currentUser;
   let token = STATIC_TOKEN;
+  let source = "static";
 
   if (user) {
-    token = await getIdToken(user);
-  } else {
-    // Fallback to Supabase session if Firebase user is not present
+    try {
+      token = await getIdToken(user);
+      source = "firebase";
+    } catch (e) {
+      console.warn("[apiHeaders] Failed to get Firebase ID token:", e);
+    }
+  }
+
+  // Fallback to Supabase if Firebase fails or is absent
+  if (!token || token === STATIC_TOKEN) {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token) {
       token = session.access_token;
+      source = "supabase";
     }
+  }
+
+  if (!token) {
+    console.error("[apiHeaders] No token found (Firebase/Supabase/Static all empty)");
+  } else {
+    console.log(`[apiHeaders] Using ${source} token`);
   }
 
   return {
@@ -67,61 +82,77 @@ export type CustomerNotification = {
 
 // ─── Fetch ───────────────────────────────────────────────────────────────────
 
-export async function fetchCustomerNotifications(): Promise<
+export async function fetchCustomerNotifications(retryCount = 0): Promise<
   CustomerNotification[]
 > {
-  const res = await fetch(`${BASE_URL}/customer-notifications?all=1`, {
-    headers: await apiHeaders(),
-  });
+  try {
+    const res = await fetch(`${BASE_URL}/customer-notifications?all=1`, {
+      headers: await apiHeaders(),
+    });
 
-  if (!res.ok) {
-    throw new Error(`fetchCustomerNotifications failed: ${res.status}`);
+    if (res.status === 401 && retryCount < 2) {
+      console.warn(`[fetchCustomerNotifications] 401 Unauthorized. Retrying (${retryCount + 1})...`);
+      // Wait 1s before retrying to allow auth state to settle
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return fetchCustomerNotifications(retryCount + 1);
+    }
+
+    if (!res.ok) {
+      throw new Error(`fetchCustomerNotifications failed: ${res.status}`);
+    }
+
+    const json = await res.json();
+    const raw: unknown[] = Array.isArray(json)
+      ? json
+      : (json.notifications ?? []);
+    console.log("[fetchCustomerNotifications] fetched", raw.length, "items");
+
+    return raw.map((item) => {
+      const d = item as Record<string, unknown>;
+      return {
+        id: String(d.id ?? ""),
+        source: String(d.source ?? ""),
+        type: String(d.type ?? ""),
+        title: String(d.title ?? ""),
+        message: String(d.message ?? ""),
+        read: Boolean(d.read),
+        createdAt: String(d.createdAt ?? ""),
+        bookingId: d.bookingId ? String(d.bookingId) : null,
+        bookingCode: d.bookingCode ? String(d.bookingCode) : null,
+        issueId: d.issueId ? String(d.issueId) : null,
+        issueTitle: d.issueTitle ? String(d.issueTitle) : null,
+        price: d.price != null ? Number(d.price) : null,
+        estimateId: d.estimateId ? String(d.estimateId) : null,
+        customerId: String(d.customerId ?? ""),
+        customerName: d.customerName ? String(d.customerName) : null,
+        customerEmail: d.customerEmail ? String(d.customerEmail) : null,
+        customerPhone: d.customerPhone ? String(d.customerPhone) : null,
+        workshopName: String(d.workshopName ?? ""),
+        ownerUid: d.ownerUid ? String(d.ownerUid) : null,
+        notificationReviewed: Boolean(d.notificationReviewed),
+        calledCustomer: Boolean(d.calledCustomer),
+        calledCustomerByName: d.calledCustomerByName
+          ? String(d.calledCustomerByName)
+          : null,
+        calledCustomerByDisplayName: d.calledCustomerByDisplayName
+          ? String(d.calledCustomerByDisplayName)
+          : null,
+        notificationReviewedByName: d.notificationReviewedByName
+          ? String(d.notificationReviewedByName)
+          : null,
+        notificationReviewedByDisplayName: d.notificationReviewedByDisplayName
+          ? String(d.notificationReviewedByDisplayName)
+          : null,
+      } as CustomerNotification;
+    });
+  } catch (error) {
+    if (retryCount < 2) {
+      console.warn(`[fetchCustomerNotifications] Error occurred. Retrying (${retryCount + 1})...`, error);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return fetchCustomerNotifications(retryCount + 1);
+    }
+    throw error;
   }
-
-  const json = await res.json();
-  const raw: unknown[] = Array.isArray(json)
-    ? json
-    : (json.notifications ?? []);
-  console.log("[fetchCustomerNotifications] raw first item:", raw[0]);
-
-  return raw.map((item) => {
-    const d = item as Record<string, unknown>;
-    return {
-      id: String(d.id ?? ""),
-      source: String(d.source ?? ""),
-      type: String(d.type ?? ""),
-      title: String(d.title ?? ""),
-      message: String(d.message ?? ""),
-      read: Boolean(d.read),
-      createdAt: String(d.createdAt ?? ""),
-      bookingId: d.bookingId ? String(d.bookingId) : null,
-      bookingCode: d.bookingCode ? String(d.bookingCode) : null,
-      issueId: d.issueId ? String(d.issueId) : null,
-      issueTitle: d.issueTitle ? String(d.issueTitle) : null,
-      price: d.price != null ? Number(d.price) : null,
-      estimateId: d.estimateId ? String(d.estimateId) : null,
-      customerId: String(d.customerId ?? ""),
-      customerName: d.customerName ? String(d.customerName) : null,
-      customerEmail: d.customerEmail ? String(d.customerEmail) : null,
-      customerPhone: d.customerPhone ? String(d.customerPhone) : null,
-      workshopName: String(d.workshopName ?? ""),
-      ownerUid: d.ownerUid ? String(d.ownerUid) : null,
-      notificationReviewed: Boolean(d.notificationReviewed),
-      calledCustomer: Boolean(d.calledCustomer),
-      calledCustomerByName: d.calledCustomerByName
-        ? String(d.calledCustomerByName)
-        : null,
-      calledCustomerByDisplayName: d.calledCustomerByDisplayName
-        ? String(d.calledCustomerByDisplayName)
-        : null,
-      notificationReviewedByName: d.notificationReviewedByName
-        ? String(d.notificationReviewedByName)
-        : null,
-      notificationReviewedByDisplayName: d.notificationReviewedByDisplayName
-        ? String(d.notificationReviewedByDisplayName)
-        : null,
-    } as CustomerNotification;
-  });
 }
 
 // ─── Mark reviewed ────────────────────────────────────────────────────────────
