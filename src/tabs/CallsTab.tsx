@@ -43,6 +43,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
         c.callerNumber.includes(s) ||
         c.agentName.toLowerCase().includes(s) ||
         c.queueName.toLowerCase().includes(s) ||
+        c.tenantName.toLowerCase().includes(s) ||
         (c.callerName && c.callerName.toLowerCase().includes(s))
       );
     }
@@ -59,7 +60,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
           <Input
             className="max-w-md bg-white"
             type="text"
-            placeholder="Search by caller, agent, queue..."
+            placeholder="Search by caller, agent, queue, client..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -141,12 +142,13 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                 <TableRow>
                   <TableHead>Time</TableHead>
                   <TableHead>Caller</TableHead>
-                  <TableHead>Client</TableHead>
+                  {permissions.canViewTenantNames && (
+                    <TableHead>Client</TableHead>
+                  )}
                   <TableHead>Queue</TableHead>
                   <TableHead>Agent</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead>Result</TableHead>
-                  <TableHead>Transcript</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -165,19 +167,21 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                           </div>
                         )}
                       </TableCell>
-                      <TableCell>
-                        <span
-                          className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
-                          style={{
-                            color: brandColor,
-                            borderColor: `${brandColor}40`,
-                            background: `${brandColor}12`,
-                          }}
-                        >
-                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: brandColor }} />
-                          {c.tenantName}
-                        </span>
-                      </TableCell>
+                      {permissions.canViewTenantNames && (
+                        <TableCell>
+                          <span
+                            className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
+                            style={{
+                              color: brandColor,
+                              borderColor: `${brandColor}40`,
+                              background: `${brandColor}12`,
+                            }}
+                          >
+                            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: brandColor }} />
+                            {c.tenantName}
+                          </span>
+                        </TableCell>
+                      )}
                       <TableCell>
                         <Badge
                           variant="outline"
@@ -195,9 +199,6 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                         {c.durationSeconds > 0 ? formatSeconds(c.durationSeconds) : '—'}
                       </TableCell>
                       <TableCell><ResultBadge result={c.result} /></TableCell>
-                      <TableCell>
-                        <TranscriptIndicator status={c.transcriptStatus} />
-                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -207,20 +208,5 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function TranscriptIndicator({ status }: { status: string }) {
-  const map: Record<string, { label: string; color: string; bg: string }> = {
-    ready: { label: '✓ Ready', color: 'var(--cc-color-green)', bg: 'rgba(52,211,153,0.1)' },
-    processing: { label: '⟳ Processing', color: 'var(--cc-color-amber)', bg: 'rgba(251,191,36,0.1)' },
-    pending: { label: '◌ Pending', color: '#64748b', bg: 'rgba(100,116,139,0.12)' },
-    none: { label: '—', color: '#94a3b8', bg: 'transparent' },
-  };
-  const s = map[status] || map['none'];
-  return (
-    <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium" style={{ color: s.color, background: s.bg }}>
-      {s.label}
-    </span>
   );
 }

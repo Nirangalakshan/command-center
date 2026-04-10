@@ -69,10 +69,10 @@ export function useCreateBooking({ ownerUid }: UseCreateBookingOptions) {
             bms_status: result.status ?? 'Pending',
             bms_response: result,
           });
-          console.log('[Supabase] Booking saved locally with agent:', firebaseUser?.email);
-        } catch (sbErr) {
+          // console.log('[Supabase] Booking saved locally with agent:', firebaseUser?.email);
+        } catch {
           // Don't fail the whole flow if Supabase save fails — BMS booking already created
-          console.warn('[Supabase] Failed to save local booking copy:', sbErr);
+          // console.warn('[Supabase] Failed to save local booking copy:', sbErr);
         }
 
         return result;

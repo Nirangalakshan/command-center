@@ -33,16 +33,16 @@ export async function fetchFirebaseCallerContext(
   // 1. Find customer details from bookings by phone number
   const customer = await findCustomerByPhone(ownerUid, variants);
   if (!customer) {
-    console.info(
-      `[customersApi] No booking found for owner=${ownerUid}, phone variants=`,
-      variants,
-    );
+    // console.info(
+    //   `[customersApi] No booking found for owner=${ownerUid}, phone variants=`,
+    //   variants,
+    // );
     return null;
   }
 
-  console.info(
-    `[customersApi] Found customer from bookings: ${customer.name} (${customer.id})`,
-  );
+  // console.info(
+  //   `[customersApi] Found customer from bookings: ${customer.name} (${customer.id})`,
+  // );
 
   // 2. Fetch vehicles for this customer
   const vehicles = await fetchCustomerVehicles(ownerUid, customer.id);
@@ -93,8 +93,8 @@ async function findCustomerByPhone(
 
       const latestBooking = sortedDocs[0];
       return mapBookingToCustomer(latestBooking.id, latestBooking.data(), field);
-    } catch (error) {
-      console.error(`[customersApi] Error querying bookings by ${field}:`, error);
+    } catch {
+      // console.error(`[customersApi] Error querying bookings by ${field}:`, error);
       // Field may not exist or have no index — silently try next
     }
   }
@@ -140,21 +140,21 @@ async function fetchCustomerVehicles(
     const snap = await getDocs(vehiclesRef);
 
     if (snap.empty) {
-      console.info(
-        `[customersApi] No vehicles found in subcollection for customer=${customerId}`,
-      );
+      // console.info(
+      //   `[customersApi] No vehicles found in subcollection for customer=${customerId}`,
+      // );
       return [];
     }
 
-    console.info(
-      `[customersApi] Found ${snap.size} vehicle(s) for customer=${customerId}`,
-    );
+    // console.info(
+    //   `[customersApi] Found ${snap.size} vehicle(s) for customer=${customerId}`,
+    // );
 
     return snap.docs.map((d) =>
       mapFirebaseVehicle(d.id, d.data(), ownerUid, customerId),
     );
-  } catch (err) {
-    console.warn("[customersApi] Failed to fetch vehicles:", err);
+  } catch {
+    // console.warn("[customersApi] Failed to fetch vehicles:", err);
     return [];
   }
 }
@@ -249,8 +249,8 @@ async function queryBookingsAsServices(
     return validDocs.slice(0, 20).map((d) =>
       mapBookingToServiceRecord(d.id, d.data(), vehicles),
     );
-  } catch (err) {
-    console.warn(`[customersApi] queryBookingsAsServices failed:`, err);
+  } catch {
+    // console.warn(`[customersApi] queryBookingsAsServices failed:`, err);
     return [];
   }
 }

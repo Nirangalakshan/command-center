@@ -266,7 +266,7 @@ export default function BookingPage() {
 
     fetchPromise
       .then((data) => {
-        console.log("[BookingPage] services:", data);
+        // console.log("[BookingPage] services:", data);
         setServices(data);
       })
       .catch((err: Error) => setServicesError(err.message))
@@ -391,12 +391,12 @@ export default function BookingPage() {
       notes: notes || undefined,
     };
 
-    console.log("[BookingPage] submitting payload:", payload);
+    // console.log("[BookingPage] submitting payload:", payload);
 
     setSubmitting(true);
     try {
       const result = await createBooking(payload);
-      console.log("[BookingPage] booking created:", result);
+      // console.log("[BookingPage] booking created:", result);
 
       // ── Save a local copy to Supabase with agent details ──
       try {
@@ -423,13 +423,13 @@ export default function BookingPage() {
           bms_status: "Pending",
           bms_response: result,
         });
-        console.log(
-          "[Supabase] Booking saved locally with agent:",
-          firebaseUser?.email,
-        );
+        // console.log(
+        //   "[Supabase] Booking saved locally with agent:",
+        //   firebaseUser?.email,
+        // );
       } catch (sbErr) {
         // Don't fail the whole flow if Supabase save fails — BMS booking already created
-        console.warn("[Supabase] Failed to save local booking copy:", sbErr);
+        // console.warn("[Supabase] Failed to save local booking copy:", sbErr);
       }
 
       await logSystemActivity(session, 'CREATE_BOOKING', 'BOOKING', result.bookingId, {

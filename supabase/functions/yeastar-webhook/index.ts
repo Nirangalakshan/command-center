@@ -38,10 +38,10 @@ Deno.serve(async (req) => {
 
   const normalized = normalizeYeastarPayload(body);
   const { action, payload } = normalized;
-  console.log(
-    `[yeastar-webhook] Received action: ${action ?? 'unknown'} type: ${normalized.type ?? 'n/a'}`,
-    JSON.stringify(body),
-  );
+  // console.log(
+  //   `[yeastar-webhook] Received action: ${action ?? 'unknown'} type: ${normalized.type ?? 'n/a'}`,
+  //   JSON.stringify(body),
+  // );
 
   try {
     switch (action) {
@@ -61,10 +61,11 @@ Deno.serve(async (req) => {
         await handleIncomingCall(payload);
         break;
       default:
-        console.log(
-          `[yeastar-webhook] Unhandled action: ${action ?? 'undefined'} type: ${normalized.type ?? 'n/a'}`,
-          JSON.stringify(payload),
-        );
+        // console.log(
+        //   `[yeastar-webhook] Unhandled action: ${action ?? 'undefined'} type: ${normalized.type ?? 'n/a'}`,
+        //   JSON.stringify(payload),
+        // );
+        break;
     }
 
     // Always return 200 — Yeastar will retry on non-2xx
@@ -73,7 +74,7 @@ Deno.serve(async (req) => {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (err) {
-    console.error('[yeastar-webhook] Handler error:', err);
+    // console.error('[yeastar-webhook] Handler error:', err);
     return new Response(JSON.stringify({ ok: false, error: String(err) }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -158,7 +159,7 @@ async function handleNewCdr(body: Record<string, unknown>) {
     payload: { id: `incoming-${callid}`, callerNumber: callfrom },
   });
 
-  console.log(`[yeastar-webhook] NewCdr written + CallHangup broadcast: yeastar-${callid}`);
+  // console.log(`[yeastar-webhook] NewCdr written + CallHangup broadcast: yeastar-${callid}`);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -193,8 +194,11 @@ async function handleExtensionStatus(body: Record<string, unknown>) {
     .update(update)
     .eq('extension', extension);
 
-  if (error) console.error(`[yeastar-webhook] ExtensionStatus update failed: ${error.message}`);
-  else console.log(`[yeastar-webhook] Extension ${extension} → ${mapped.status}${mapped.explicit ? '' : ' (unmapped, caller preserved)'}`);
+  if (error) {
+    // console.error(`[yeastar-webhook] ExtensionStatus update failed: ${error.message}`);
+  } else {
+    // console.log(`[yeastar-webhook] Extension ${extension} → ${mapped.status}${mapped.explicit ? '' : ' (unmapped, caller preserved)'}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -210,8 +214,11 @@ async function handlePresence(body: Record<string, unknown>) {
     status: agentStatus,
   }).eq('extension', extension);
 
-  if (error) console.error(`[yeastar-webhook] Presence update failed: ${error.message}`);
-  else console.log(`[yeastar-webhook] Extension ${extension} presence → ${agentStatus}`);
+  if (error) {
+    // console.error(`[yeastar-webhook] Presence update failed: ${error.message}`);
+  } else {
+    // console.log(`[yeastar-webhook] Extension ${extension} presence → ${agentStatus}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -229,8 +236,11 @@ async function handleTrunkStatus(body: Record<string, unknown>) {
     status: lineStatus,
   }).eq('trunk_name', trunk);
 
-  if (error) console.error(`[yeastar-webhook] TrunkStatus update failed: ${error.message}`);
-  else console.log(`[yeastar-webhook] Trunk ${trunk} → ${lineStatus}`);
+  if (error) {
+    // console.error(`[yeastar-webhook] TrunkStatus update failed: ${error.message}`);
+  } else {
+    // console.log(`[yeastar-webhook] Trunk ${trunk} → ${lineStatus}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -293,7 +303,7 @@ async function handleIncomingCall(body: Record<string, unknown>) {
   // CallHangup once the call is truly over.
   if (memberStatus === 'BYE') {
     await updateAgentLiveCallState(extension, memberStatus, callfrom);
-    console.log(`[yeastar-webhook] IncomingCall BYE (leg ended, call still active): ${callfrom} → ${did}`);
+    // console.log(`[yeastar-webhook] IncomingCall BYE (leg ended, call still active): ${callfrom} → ${did}`);
     return;
   }
 
@@ -305,7 +315,7 @@ async function handleIncomingCall(body: Record<string, unknown>) {
     payload,
   });
 
-  console.log(`[yeastar-webhook] IncomingCall broadcast: ${callfrom} → ${did} (${memberStatus || 'RING'})`);
+  // console.log(`[yeastar-webhook] IncomingCall broadcast: ${callfrom} → ${did} (${memberStatus || 'RING'})`);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -335,13 +345,13 @@ async function lookupCustomerName(tenantId: string, callerNumber: string): Promi
       .maybeSingle();
 
     if (error) {
-      console.warn(`[yeastar-webhook] Customer lookup failed: ${error.message}`);
+      // console.warn(`[yeastar-webhook] Customer lookup failed: ${error.message}`);
       return null;
     }
 
     return data?.name ? String(data.name) : null;
-  } catch (error) {
-    console.warn('[yeastar-webhook] Customer lookup unavailable:', error);
+  } catch {
+    // console.warn('[yeastar-webhook] Customer lookup unavailable:', error);
     return null;
   }
 }
@@ -395,7 +405,7 @@ async function updateAgentLiveCallState(
     .eq('extension', extension);
 
   if (error) {
-    console.error(`[yeastar-webhook] Failed to sync live caller for ext ${extension}: ${error.message}`);
+    // console.error(`[yeastar-webhook] Failed to sync live caller for ext ${extension}: ${error.message}`);
   }
 }
 
@@ -578,7 +588,7 @@ function normalizeYeastarPayload(rawBody: Record<string, unknown>): {
         payload = flattenYeastarPayload(type, payload);
       }
     } catch {
-      console.warn('[yeastar-webhook] Failed to parse msg payload as JSON');
+      // console.warn('[yeastar-webhook] Failed to parse msg payload as JSON');
     }
   }
 
@@ -707,7 +717,7 @@ function mapExtensionStatus(status: string): { status: 'ringing' | 'on-call' | '
     case 'DoNotDisturb':
       return { status: 'break', explicit: true };
     default:
-      console.warn(`[yeastar-webhook] Unmapped extension status: "${status}", defaulting to available (caller data preserved)`);
+      // console.warn(`[yeastar-webhook] Unmapped extension status: "${status}", defaulting to available (caller data preserved)`);
       return { status: 'available', explicit: false };
   }
 }

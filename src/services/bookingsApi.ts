@@ -136,12 +136,12 @@ export async function getBookings(
   let bookings: Booking[] = json.bookings ?? [];
   
   if (branchId) {
-    console.warn(`[getBookings] Filtering ${bookings.length} bookings by branchId: "${branchId}"`);
+    // console.warn(`[getBookings] Filtering ${bookings.length} bookings by branchId: "${branchId}"`);
     bookings = bookings.filter((b: any) => {
       const bBranchId = b.branchId || b.branch_id || b.branchId;
       return bBranchId === branchId;
     });
-    console.warn(`[getBookings] Results after filter: ${bookings.length}`);
+    // console.warn(`[getBookings] Results after filter: ${bookings.length}`);
   }
   
   return bookings;
@@ -402,14 +402,6 @@ export async function fetchNotifications(ownerUid: string): Promise<BookingNotif
 
   const finalItems = items.slice(0, 200);
 
-  // DEBUG: Let's log the branches found
-  const branchCounts = finalItems.reduce((acc, curr) => {
-    const branch = curr.branchName || 'Unknown Branch';
-    acc[branch] = (acc[branch] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  console.log('[fetchNotifications] Branch breakdown:', branchCounts);
-
   return finalItems;
 }
 
@@ -481,13 +473,6 @@ export async function fetchAllBranchNotifications(ownerUids: string[]): Promise<
   allItems.sort((a, b) => getTs(b.createdAt) - getTs(a.createdAt));
 
   const finalItems = allItems.slice(0, 200);
-
-  const branchCounts = finalItems.reduce((acc, curr) => {
-    const branch = curr.branchName || 'Unknown Branch';
-    acc[branch] = (acc[branch] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  console.log('[fetchAllBranchNotifications] Branch breakdown:', branchCounts);
 
   return finalItems;
 }

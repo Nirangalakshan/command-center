@@ -25,7 +25,7 @@ export function FirebaseAuthProvider({ children }: { children: ReactNode }) {
         // sign out the stale session and re-login with the correct credentials.
         if (agentEmail && user.email !== agentEmail && !autoLoginAttempted) {
           autoLoginAttempted = true;
-          console.log(`[Firebase Auth] Cached user (${user.email}) doesn't match configured agent (${agentEmail}). Re-logging in...`);
+          // console.log(`[Firebase Auth] Cached user (${user.email}) doesn't match configured agent (${agentEmail}). Re-logging in...`);
           await firebaseSignOut(auth);
           // onAuthStateChanged will fire again with user=null, which triggers auto-login below
           return;
@@ -46,13 +46,13 @@ export function FirebaseAuthProvider({ children }: { children: ReactNode }) {
           
           if (agentEmail && agentPass) {
             try {
-              console.log(`[Firebase Auth] Auto-logging in as ${agentEmail}...`);
+              // console.log(`[Firebase Auth] Auto-logging in as ${agentEmail}...`);
               const res = await signInWithEmailAndPassword(auth, agentEmail, agentPass);
               const token = await res.user.getIdToken();
               setFirebaseUser({ uid: res.user.uid, email: res.user.email });
               setIdToken(token);
-            } catch (err) {
-              console.error('[Firebase Auth] Auto-login failed:', err);
+            } catch {
+              // console.error('[Firebase Auth] Auto-login failed:', err);
             }
           }
         }

@@ -55,13 +55,10 @@ export function useAuth(): AuthState {
           .maybeSingle();
         allowedQueueIds = agentData?.allowed_queue_ids || [];
         // "Online" in this app is represented as "available".
-        const { error: presenceErr } = await supabase
+        await supabase
           .from('agents')
           .update({ status: 'available' })
           .eq('user_id', authUser.id);
-        if (presenceErr) {
-          console.warn('Failed to set agent online status:', presenceErr.message);
-        }
       }
 
       const userSession: UserSession = {
@@ -115,7 +112,7 @@ export function useAuth(): AuthState {
               displayName: data.name || firebaseUser.email || '',
             };
             // Set status to available
-            await updateDoc(doc(db, 'call_center_agents', firebaseUser.uid), { status: 'available' }).catch(console.warn);
+            await updateDoc(doc(db, 'call_center_agents', firebaseUser.uid), { status: 'available' }).catch(() => {});
             setSession(userSession);
           } else {
              // If not in our custom collection, log them out
@@ -123,8 +120,8 @@ export function useAuth(): AuthState {
              setUser(null);
              setSession(null);
           }
-        } catch (e) {
-            console.error('Failed to load firebase user info:', e);
+        } catch {
+            // console.error('Failed to load firebase user info:', e);
             setSession(null);
         }
         setLoading(false);
@@ -170,8 +167,8 @@ export function useAuth(): AuthState {
             displayName: profileRes.data?.display_name || authData.user.email || '',
           };
           await logSystemActivity(userSession, 'LOGIN', 'SESSION', authData.user.id, { email });
-        } catch (e) {
-          console.error('Failed to log login activity:', e);
+        } catch {
+          // console.error('Failed to log login activity:', e);
         }
       }, 0);
       return { error: null };

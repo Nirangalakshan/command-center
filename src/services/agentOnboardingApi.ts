@@ -100,7 +100,7 @@ export async function createAgentViaEdge(params: {
       status: 'offline'
     });
   } catch (err: any) {
-    console.error('Firebase agent creation failed', err);
+    // console.error('Firebase agent creation failed', err);
     throw new Error(`Agent created in Supabase but failed in Firebase: ${err.message}`);
   } finally {
     await signOut(secondaryAuth);

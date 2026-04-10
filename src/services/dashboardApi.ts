@@ -646,8 +646,8 @@ export async function fetchLatestBookingByPhone(
       createdAt: b.date,
       updatedAt: b.date,
     } as unknown as BookingRecord;
-  } catch (error) {
-    console.warn("fetchLatestBookingByPhone Firebase error:", error);
+  } catch {
+    // console.warn("fetchLatestBookingByPhone Firebase error:", error);
     return null;
   }
 }

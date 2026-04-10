@@ -216,8 +216,8 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
           finalBookings = mapped.filter(b => b.status === 'cancelled' || b.status === 'canceled');
         }
         setBookings(finalBookings);
-      } catch (e) {
-        console.error(e);
+      } catch {
+        // console.error(e);
       } finally {
         setLoading(false);
       }
@@ -458,8 +458,8 @@ function BookingDetailView() {
       try {
         const data = await getBookingById(ownerUid, id!);
         setDetail(data);
-      } catch (e) {
-        console.error(e);
+      } catch {
+        // console.error(e);
       } finally {
         setLoading(false);
       }

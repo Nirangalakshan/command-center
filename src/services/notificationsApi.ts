@@ -128,37 +128,27 @@ export async function fetchCustomerNotifications(): Promise<
 export async function markNotificationReviewed(
   notificationId: string,
 ): Promise<void> {
-  console.log("[markNotificationReviewed] calling →", notificationId);
-  const res = await fetch(
+  // console.log("[markNotificationReviewed] calling →", notificationId);
+  await fetch(
     `${BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
     {
       method: "POST",
       headers: await apiHeaders(),
     },
-  );
-  console.log(
-    "[markNotificationReviewed] response ←",
-    res.status,
-    res.ok ? "OK" : "FAILED",
   );
 }
 
 export async function markNotificationReviewedClosed(
   notificationId: string,
 ): Promise<void> {
-  console.log("[markNotificationReviewedClosed] calling →", notificationId);
-  const res = await fetch(
+  // console.log("[markNotificationReviewedClosed] calling →", notificationId);
+  await fetch(
     `${BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
     {
       method: "POST",
       headers: await apiHeaders(),
       body: JSON.stringify({ notificationReviewed: false }),
     },
-  );
-  console.log(
-    "[markNotificationReviewedClosed] response ←",
-    res.status,
-    res.ok ? "OK" : "FAILED",
   );
 }
 

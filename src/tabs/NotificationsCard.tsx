@@ -159,8 +159,8 @@ function NotificationModal({
 
       onCalledCustomer(notification!.id);
       onClose();
-    } catch (e) {
-      console.error(e);
+    } catch {
+      // console.error(e);
     } finally {
       setCallingCustomer(false);
     }
@@ -354,8 +354,8 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
       }
 
       setLocalReviewed(new Set());
-    } catch (e) {
-      console.error("[NotificationsCard] Load failed:", e);
+    } catch {
+      // console.error("[NotificationsCard] Load failed:", e);
     }
   }, [isAgent, session?.userId]);
 
@@ -373,7 +373,7 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
   function handleSelect(n: DisplayItem) {
     setSelected(n);
     setLocalReviewed((prev) => new Set(prev).add(n.id));
-    loadNotifications().catch(console.error);
+    loadNotifications().catch(() => {});
   }
 
   const visibleItems = items.filter((n) => !localReviewed.has(n.id));
@@ -475,8 +475,8 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
                     <div
                       key={n.id}
                       onClick={async () => {
-                        markNotificationReviewed(n.id).catch(console.error);
-                        logSystemActivity(session, "notification_viewed", "notification", n.id, { title: n.title }).catch(console.error);
+                        markNotificationReviewed(n.id).catch(() => {});
+                        logSystemActivity(session, "notification_viewed", "notification", n.id, { title: n.title }).catch(() => {});
                         handleSelect(n);
                       }}
                       className={`flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-slate-50 ${!n.read ? "bg-sky-50/50" : ""} ${i < visibleItems.length - 1 ? "border-b border-border/60" : ""}`}
@@ -517,9 +517,9 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
         open={Boolean(selected)}
         session={session}
         onClose={() => {
-          if (selected) markNotificationReviewedClosed(selected.id).catch(console.error);
+          if (selected) markNotificationReviewedClosed(selected.id).catch(() => {});
           setSelected(null);
-          loadNotifications().catch(console.error);
+          loadNotifications().catch(() => {});
         }}
         onCalledCustomer={(id) => {
           setItems((prev) => prev.filter((n) => n.id !== id));

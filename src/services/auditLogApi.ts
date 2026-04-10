@@ -25,7 +25,7 @@ export async function logSystemActivity(
   details?: Record<string, any>
 ) {
   if (!session) {
-    console.warn('[AuditLog] No session provided, skipping audit log for action:', action);
+    // console.warn('[AuditLog] No session provided, skipping audit log for action:', action);
     return;
   }
   
@@ -41,12 +41,12 @@ export async function logSystemActivity(
     });
 
     if (error) {
-      console.warn('[AuditLog] Failed to insert audit log. Ensure system_audit_logs table exists:', error);
+      // console.warn('[AuditLog] Failed to insert audit log. Ensure system_audit_logs table exists:', error);
     } else {
-      console.info(`[AuditLog] Logged ${action} by ${session.displayName} (${session.role})`);
+      // console.info(`[AuditLog] Logged ${action} by ${session.displayName} (${session.role})`);
     }
-  } catch (err) {
-    console.error('[AuditLog] Exception logging audit activity:', err);
+  } catch {
+    // console.error('[AuditLog] Exception logging audit activity:', err);
   }
 }
 
@@ -65,7 +65,7 @@ export async function fetchAgentAnsweredNotificationIds(
     .not('resource_id', 'is', null);
 
   if (error) {
-    console.error('[AuditLog] Error fetching agent answered notifications:', error);
+    // console.error('[AuditLog] Error fetching agent answered notifications:', error);
     return new Set();
   }
 
@@ -88,7 +88,7 @@ export async function fetchCallCustomerAgentMap(): Promise<Map<string, string>> 
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[AuditLog] Error fetching call-customer agent map:', error);
+    // console.error('[AuditLog] Error fetching call-customer agent map:', error);
     return new Map();
   }
 
@@ -115,7 +115,7 @@ export async function fetchAnsweredCustomerAgentMap(): Promise<Map<string, strin
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[AuditLog] Error fetching answered agent map:', error);
+    // console.error('[AuditLog] Error fetching answered agent map:', error);
     return new Map();
   }
 
@@ -139,7 +139,7 @@ export async function fetchSystemAuditLogs(limit: number = 100): Promise<AuditLo
     .limit(limit);
     
   if (error) {
-    console.error('[AuditLog] Error fetching audit logs:', error);
+    // console.error('[AuditLog] Error fetching audit logs:', error);
     return [];
   }
   

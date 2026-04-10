@@ -9,8 +9,12 @@ import type {
   AgentGroup,
   IncomingCall,
 } from "@/services/types";
-import { formatDuration, formatPhone } from "@/utils/formatters";
-import { formatSeconds } from "@/utils/formatters";
+import {
+  formatDuration,
+  formatPhone,
+  formatSeconds,
+  formatTime,
+} from "@/utils/formatters";
 import {
   buildIncomingCallSnapshot,
   buildLiveCallSnapshot,
@@ -24,6 +28,7 @@ import { LoadingSkeleton } from "@/components/dashboard/LoadingSkeleton";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { AgentShiftPanel } from "@/components/dashboard/AgentShiftPanel";
 import { NotificationsCard } from "@/tabs/NotificationsCard";
+import { ResultBadge } from "@/components/dashboard/ResultBadge";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -309,14 +314,15 @@ export function OverviewTab({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Agent</TableHead>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Caller</TableHead>
                   {permissions.canViewTenantNames && (
                     <TableHead>Client</TableHead>
                   )}
                   <TableHead>Queue</TableHead>
-                  <TableHead>Ext</TableHead>
-                  <TableHead>Caller</TableHead>
+                  <TableHead>Agent</TableHead>
                   <TableHead>Duration</TableHead>
+                  <TableHead>Result</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -324,6 +330,14 @@ export function OverviewTab({
                   const queueColor =
                     queues.find((q) => a.queueIds.includes(q.id))?.color ||
                     "var(--cc-color-cyan)";
+                  const incoming = findIncomingCallForAgent(
+                    a,
+                    incomingCalls || [],
+                  );
+                  const callerNum =
+                    a.currentCaller || incoming?.callerNumber || "";
+                  const tenant = tenants.find((t) => t.id === a.tenantId);
+                  const brandColor = tenant?.brandColor || "var(--cc-color-cyan)";
 
                   return (
                     <TableRow
@@ -335,21 +349,41 @@ export function OverviewTab({
                             agent: a,
                             queues,
                             tenants,
-                            incomingCall: findIncomingCallForAgent(
-                              a,
-                              incomingCalls || [],
-                            ),
+                            incomingCall: incoming,
                             now,
                           }),
                         )
                       }
                     >
-                      <TableCell className="font-medium text-slate-900">
-                        {a.name}
+                      <TableCell className="font-mono text-xs">
+                        {a.callStartTime
+                          ? formatTime(new Date(a.callStartTime))
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {formatPhone(callerNum)}
+                        {incoming?.callerName && (
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {incoming.callerName}
+                          </div>
+                        )}
                       </TableCell>
                       {permissions.canViewTenantNames && (
-                        <TableCell className="text-muted-foreground">
-                          {a.tenantName}
+                        <TableCell>
+                          <span
+                            className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
+                            style={{
+                              color: brandColor,
+                              borderColor: `${brandColor}40`,
+                              background: `${brandColor}12`,
+                            }}
+                          >
+                            <span
+                              className="inline-block h-2.5 w-2.5 rounded-full"
+                              style={{ backgroundColor: brandColor }}
+                            />
+                            {a.tenantName ?? "—"}
+                          </span>
                         </TableCell>
                       )}
                       <TableCell>
@@ -364,16 +398,8 @@ export function OverviewTab({
                           {a.queueName}
                         </Badge>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {a.extension}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {formatPhone(
-                          a.currentCaller ||
-                            findIncomingCallForAgent(a, incomingCalls || [])
-                              ?.callerNumber ||
-                            "",
-                        )}
+                      <TableCell className="font-medium text-slate-900">
+                        {a.name}
                       </TableCell>
                       <TableCell className="font-mono text-xs font-semibold text-rose-600">
                         <span className="inline-flex items-center">
@@ -382,6 +408,9 @@ export function OverviewTab({
                             ? formatDuration(now - a.callStartTime)
                             : "—"}
                         </span>
+                      </TableCell>
+                      <TableCell>
+                        <ResultBadge result="answered" />
                       </TableCell>
                     </TableRow>
                   );

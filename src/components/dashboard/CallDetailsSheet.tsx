@@ -189,7 +189,7 @@ export function CallDetailsSheet({
       })
       .catch((error) => {
         if (!cancelled) {
-          console.error('[CallDetailsSheet] Caller context fetch failed:', error);
+          // console.error('[CallDetailsSheet] Caller context fetch failed:', error);
           setContextError(
             error instanceof Error
               ? error.message
@@ -223,8 +223,8 @@ export function CallDetailsSheet({
       .then((services) => {
         if (!cancelled) setBranchServices(services);
       })
-      .catch((error) => {
-        console.error("Failed to load branch services", error);
+      .catch(() => {
+        // console.error("Failed to load branch services", error);
       })
       .finally(() => {
         if (!cancelled) setBranchServicesLoading(false);

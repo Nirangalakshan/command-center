@@ -167,10 +167,10 @@ export function subscribeServices(
     },
     (error) => {
       if (error.code === 'permission-denied') {
-        console.warn('[servicesApi] permission denied — user may not be authenticated');
+        // console.warn('[servicesApi] permission denied — user may not be authenticated');
         onChange([]);
       } else {
-        console.error('[servicesApi] snapshot error:', error);
+        // console.error('[servicesApi] snapshot error:', error);
         onChange([]);
       }
     },
