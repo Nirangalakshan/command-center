@@ -11,7 +11,9 @@ import {
   Users,
   UserPlus,
   History,
+  CalendarCheck,
 } from 'lucide-react';
+
 import type { Permissions, UserRole } from '@/services/types';
 
 interface DashboardSidebarProps {
@@ -25,7 +27,9 @@ interface DashboardSidebarProps {
 
 const TAB_ITEMS = [
   { key: 'overview',          label: 'Overview',          icon: LayoutDashboard, perm: 'canViewOverviewTab' },
+  { key: 'bookings',          label: 'Bookings',          icon: CalendarCheck,   perm: 'canViewBookingsTab' },
   { key: 'agents',            label: 'Agents',             icon: Users,           perm: 'canViewAgentsTab' },
+
   { key: 'agent-onboarding',  label: 'Agent Onboarding',   icon: UserPlus,        perm: 'canViewAgentOnboardingTab' },
   { key: 'calls',             label: 'Calls',              icon: Phone,           perm: 'canViewCallsTab' },
   { key: 'sip',               label: 'SIP Lines',          icon: Radio,           perm: 'canViewSipTab' },

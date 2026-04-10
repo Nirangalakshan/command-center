@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { BookingFormDialog } from "@/components/dashboard/BookingFormDialog";
+
 import {
   ArrowRightLeft,
   CalendarPlus2,
@@ -149,6 +151,9 @@ export function CallDetailsSheet({
     WorkshopService[] | null
   >(null);
   const [branchServicesLoading, setBranchServicesLoading] = useState(false);
+
+  const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
+
   const commandButtons = useMemo(
     () => [
       { label: "Book Now", icon: CalendarPlus2 },
@@ -399,6 +404,15 @@ export function CallDetailsSheet({
                             setBookingDialogOpen(true);
                             return;
                           }
+                          if (command.label === 'Booking Details') {
+                            navigate('/bookings/dashboard', {
+                              state: {
+                                ownerId: detail.ownerId || detail.tenantId,
+                                branchId: detail.branchId
+                              }
+                            });
+                            return;
+                          }
                           toast({
                             title: command.label,
                             description: `${command.label} selected for ${resolvedCustomerName}.`,
@@ -558,7 +572,17 @@ export function CallDetailsSheet({
           </div>
         </ScrollArea>
       </SheetContent>
+
+      <BookingFormDialog
+        open={bookingDialogOpen}
+        onOpenChange={setBookingDialogOpen}
+        customerName={resolvedCustomerName}
+        customerPhone={detail.customerPhone}
+        customerEmail={resolvedCustomerEmail}
+        availableVehicles={availableVehicles}
+      />
     </Sheet>
+
   );
 }
 
