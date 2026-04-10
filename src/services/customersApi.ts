@@ -36,8 +36,8 @@ async function ensureFirebaseAuth(): Promise<void> {
 
 /**
  * Look up a customer in Firebase Firestore by owner UID and phone number.
- * Returns the customer profile, their vehicles, and past service history
- * (derived from completed bookings).
+ * Finds the customer by searching the bookings table for matching phone numbers,
+ * then fetches their vehicles and past service history.
  */
 export async function fetchFirebaseCallerContext(
   ownerUid: string,
@@ -48,18 +48,18 @@ export async function fetchFirebaseCallerContext(
 
   await ensureFirebaseAuth();
 
-  // 1. Find customer by phone number
+  // 1. Find customer details from bookings by phone number
   const customer = await findCustomerByPhone(ownerUid, variants);
   if (!customer) {
     console.info(
-      `[customersApi] No Firebase customer found for owner=${ownerUid}, phone variants=`,
+      `[customersApi] No booking found for owner=${ownerUid}, phone variants=`,
       variants,
     );
     return null;
   }
 
   console.info(
-    `[customersApi] Found Firebase customer: ${customer.name} (${customer.id})`,
+    `[customersApi] Found customer from bookings: ${customer.name} (${customer.id})`,
   );
 
   // 2. Fetch vehicles for this customer
@@ -76,39 +76,43 @@ export async function fetchFirebaseCallerContext(
   return { customer, vehicles, services };
 }
 
-// ─── Customer Lookup ─────────────────────────────────────────────────────────
+// ─── Customer Lookup (from bookings table) ───────────────────────────────────
 
 /**
- * Searches the `customers` Firestore collection for a matching phone number.
+ * Searches the `bookings` Firestore collection for a matching phone number
+ * and extracts customer details from the booking document.
  * Tries multiple phone field names to handle schema variations.
  */
 async function findCustomerByPhone(
   ownerUid: string,
   phoneVariants: string[],
 ): Promise<CustomerRecord | null> {
-  const customersRef = collection(db, "customers");
+  const bookingsRef = collection(db, "bookings");
   // Firestore 'in' supports max 30 values
   const variants = phoneVariants.slice(0, 30);
 
-  // Try common phone field names in priority order
-  for (const field of ["phone", "mobile", "phoneNumber", "contactNumber"]) {
+  // Try common booking phone field names in priority order
+  for (const field of ["clientPhone", "customerPhone", "phone", "contactNumber"]) {
     try {
       const q = query(
-        customersRef,
+        bookingsRef,
         where(field, "in", variants),
       );
       const snap = await getDocs(q);
-      
-      // Client-side filter to resolve missing composite index
-      const matchedDoc = snap.docs.find(
-        (d) => String(d.data().ownerUid) === ownerUid || String(d.data().tenantId) === ownerUid
-      );
-      
-      if (matchedDoc) {
-        return mapFirebaseCustomer(matchedDoc.id, matchedDoc.data());
-      }
+
+      if (snap.empty) continue;
+
+      // Sort descending by date to pick the most recent booking
+      const sortedDocs = [...snap.docs].sort((a, b) => {
+        const dateA = String(a.data().date ?? a.data().bookingDate ?? "");
+        const dateB = String(b.data().date ?? b.data().bookingDate ?? "");
+        return dateB.localeCompare(dateA);
+      });
+
+      const latestBooking = sortedDocs[0];
+      return mapBookingToCustomer(latestBooking.id, latestBooking.data(), field);
     } catch (error) {
-      console.error(`[customersApi] Error querying customers by ${field}:`, error);
+      console.error(`[customersApi] Error querying bookings by ${field}:`, error);
       // Field may not exist or have no index — silently try next
     }
   }
@@ -116,20 +120,27 @@ async function findCustomerByPhone(
   return null;
 }
 
-function mapFirebaseCustomer(
-  docId: string,
+/**
+ * Extracts a CustomerRecord from a booking document.
+ */
+function mapBookingToCustomer(
+  bookingDocId: string,
   data: DocumentData,
+  matchedPhoneField: string,
 ): CustomerRecord {
   const phone = String(
-    data.phone ?? data.mobile ?? data.phoneNumber ?? data.contactNumber ?? "",
+    data[matchedPhoneField] ?? data.clientPhone ?? data.customerPhone ?? data.phone ?? "",
+  );
+  const name = String(
+    data.client ?? data.clientName ?? data.customerName ?? data.name ?? "",
   );
   return {
-    id: docId,
-    tenantId: String(data.ownerUid ?? ""),
-    name: String(data.name ?? data.customerName ?? ""),
+    id: data.customerId ? String(data.customerId) : bookingDocId,
+    tenantId: String(data.ownerUid ?? data.tenantId ?? ""),
+    name,
     primaryPhone: phone,
     phoneNormalized: phone.replace(/\D/g, ""),
-    email: data.email ? String(data.email) : null,
+    email: data.clientEmail ?? data.customerEmail ?? data.email ? String(data.clientEmail ?? data.customerEmail ?? data.email) : null,
     address: data.address ? String(data.address) : null,
     notes: data.notes ? String(data.notes) : null,
   };

@@ -25,7 +25,6 @@ import type {
   VehicleRecord,
 } from "@/services/types";
 import {
-  fetchCallerContext,
   fetchLatestBookingByPhone,
 } from "@/services/dashboardApi";
 import { fetchFirebaseCallerContext } from "@/services/customersApi";
@@ -178,13 +177,11 @@ export function CallDetailsSheet({
     setContextError(null);
     setCallerContext(null);
 
-    // Use Firebase when ownerId is available (BMS workshop),
-    // fall back to Supabase for legacy tenants
-    const contextPromise = detail.ownerId
-      ? fetchFirebaseCallerContext(detail.ownerId, detail.customerPhone)
-      : detail.tenantId
-        ? fetchCallerContext(detail.tenantId, detail.customerPhone)
-        : Promise.resolve(null);
+    // Always fetch caller context from Firebase bookings
+    const ownerKey = detail.ownerId || detail.tenantId;
+    const contextPromise = ownerKey
+      ? fetchFirebaseCallerContext(ownerKey, detail.customerPhone)
+      : Promise.resolve(null);
 
     contextPromise
       .then((context) => {
