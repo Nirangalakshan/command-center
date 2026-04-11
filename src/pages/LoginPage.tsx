@@ -1,5 +1,6 @@
 import '@/styles/dashboard.css';
 import { useState, useEffect, type FormEvent } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 
 interface LoginPageProps {
   onSignIn: (email: string, password: string) => Promise<{ error: string | null }>;
@@ -224,9 +225,14 @@ export default function LoginPage({ onSignIn }: LoginPageProps) {
                   <button
                     type="button"
                     onClick={() => setShowPassword((s) => !s)}
-                    className="absolute inset-y-0 right-0 px-4 text-neutral-400 hover:text-neutral-600 transition-colors"
+                    className="absolute inset-y-0 right-0 flex items-center justify-center px-4 text-neutral-400 hover:text-neutral-600 transition-colors"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
-                    {showPassword ? '🙈' : '👁'}
+                    {showPassword ? (
+                      <EyeOff className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                    ) : (
+                      <Eye className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+                    )}
                   </button>
                 </div>
                 {passwordError && (
