@@ -137,6 +137,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
           {filtered.length === 0 ? (
             <EmptyState message="No calls match filters" />
           ) : (
+            <div className="max-h-[min(70vh,560px)] w-full min-w-0 overflow-auto rounded-md border border-border/60">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -204,6 +205,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

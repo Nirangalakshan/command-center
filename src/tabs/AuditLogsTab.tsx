@@ -80,7 +80,7 @@ export function AuditLogsTab() {
 
       {/* Table */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+        <div className="max-h-[min(70vh,560px)] w-full min-w-0 overflow-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-medium">
               <tr>
