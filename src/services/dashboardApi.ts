@@ -35,6 +35,8 @@ export async function fetchTenants(): Promise<Tenant[]> {
     status: t.status as 'active' | 'inactive',
     brandColor: t.brand_color,
     didNumbers: t.did_numbers || [],
+    bmsOwnerUid: t.bms_owner_uid ?? null,
+    bmsDefaultBranchId: t.bms_default_branch_id ?? null,
   }));
 }
 

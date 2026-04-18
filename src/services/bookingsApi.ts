@@ -1,9 +1,43 @@
-import { auth, waitForAuth } from '@/lib/firebase';
-import { getIdToken } from 'firebase/auth';
+import { supabase } from '@/integrations/supabase/client';
 
-/** Resolves the workshop ownerUid from .env */
-export async function resolveOwnerUid(): Promise<string> {
-  return (import.meta.env.VITE_BMS_OWNER_UID as string) ?? '';
+/** Load BMS workshop owner UID for a Supabase tenant (when set in `tenants.bms_owner_uid`). */
+export async function resolveBmsOwnerUidForTenant(tenantId: string | null | undefined): Promise<string | null> {
+  if (!tenantId) return null;
+  const { data, error } = await supabase
+    .from('tenants')
+    .select('bms_owner_uid')
+    .eq('id', tenantId)
+    .maybeSingle();
+  if (error || !data?.bms_owner_uid) return null;
+  const v = String(data.bms_owner_uid).trim();
+  return v || null;
+}
+
+/** Default BMS branch id for a tenant (`tenants.bms_default_branch_id`). */
+export async function resolveBmsDefaultBranchForTenant(tenantId: string | null | undefined): Promise<string | null> {
+  if (!tenantId) return null;
+  const { data, error } = await supabase
+    .from('tenants')
+    .select('bms_default_branch_id')
+    .eq('id', tenantId)
+    .maybeSingle();
+  if (error || !data?.bms_default_branch_id) return null;
+  const v = String(data.bms_default_branch_id).trim();
+  return v || null;
+}
+
+/**
+ * After navigation state / `cc_last_owner_id`, pass `session.tenantId` to load `tenants.bms_owner_uid`.
+ * No env fallback — configure each tenant in Supabase.
+ */
+export async function resolveOwnerUid(sessionTenantId?: string | null): Promise<string> {
+  const fromDb = await resolveBmsOwnerUidForTenant(sessionTenantId);
+  return fromDb ?? '';
+}
+
+export async function resolveDefaultBranchId(sessionTenantId?: string | null): Promise<string | undefined> {
+  const fromDb = await resolveBmsDefaultBranchForTenant(sessionTenantId);
+  return fromDb ?? undefined;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -55,7 +89,7 @@ export type AvailabilityResponse = {
   availableSlots: string[];
 };
 
-import { supabase } from '@/integrations/supabase/client';
+import { getBmsBearerToken } from '@/services/bmsAuth';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -63,25 +97,10 @@ const BASE_URL =
   (import.meta.env.VITE_BMS_API_URL as string) ??
   'https://black.bmspros.com.au/api/call-center';
 
-const STATIC_TOKEN =
-  (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? '';
-
 // ─── Headers Helper ──────────────────────────────────────────────────────────
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
-  await waitForAuth();
-  const user = auth.currentUser;
-  let token = STATIC_TOKEN;
-
-  if (user) {
-    token = await getIdToken(user);
-  } else {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      token = session.access_token;
-    }
-  }
-
+  const token = await getBmsBearerToken({ waitForFirebaseInit: true });
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,

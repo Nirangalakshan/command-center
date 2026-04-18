@@ -45,11 +45,11 @@ interface BookingFormDialogProps {
   customerPhone: string;
   customerEmail: string;
   availableVehicles: VehicleRecord[];
-  tenantId?: string; // We might use this later to determine the branch
+  /** BMS workshop Firebase owner UID for this tenant (see `tenants.bms_owner_uid`). */
+  ownerUid: string;
+  /** BMS branch id for this booking. */
+  branchId: string;
 }
-
-const OWNER_UID = import.meta.env.VITE_BMS_OWNER_UID as string;
-const BRANCH_ID = import.meta.env.VITE_BMS_BRANCH_ID as string || 'branch-1';
 
 export function BookingFormDialog({
   open,
@@ -58,9 +58,11 @@ export function BookingFormDialog({
   customerPhone,
   customerEmail,
   availableVehicles,
+  ownerUid,
+  branchId,
 }: BookingFormDialogProps) {
   const { toast } = useToast();
-  const { create, loading: submitting } = useCreateBooking({ ownerUid: OWNER_UID });
+  const { create, loading: submitting } = useCreateBooking({ ownerUid });
   const [bookingForm, setBookingForm] = useState<BookingFormValues>({
     customerName: '',
     customerPhone: '',
@@ -132,6 +134,14 @@ export function BookingFormDialog({
 
   const handleBookingSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!ownerUid?.trim() || !branchId?.trim()) {
+      toast({
+        title: 'Workshop not configured',
+        description: 'Set bms_owner_uid and bms_default_branch_id on the tenant, or pass ownerUid and branchId into this dialog.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!bookingForm.customerName || !bookingForm.customerPhone || !bookingForm.serviceType || !bookingForm.bookingDate || !bookingForm.dropOffTime) {
       toast({
         title: 'Missing required fields',
@@ -142,7 +152,7 @@ export function BookingFormDialog({
     }
 
     const payload = {
-      branchId: BRANCH_ID,
+      branchId,
       client: bookingForm.customerName,
       clientPhone: bookingForm.customerPhone,
       clientEmail: bookingForm.customerEmail || undefined,

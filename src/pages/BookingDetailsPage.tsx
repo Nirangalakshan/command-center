@@ -9,7 +9,16 @@ import {
   Eye, ChevronDown, ChevronUp, Activity, CalendarCheck, AlertCircle,
   Timer,
 } from 'lucide-react';
-import { getBookingById, getBookings, resolveOwnerUid, type Booking, type BookingDetail, type BookingService, type BookingTask } from '@/services/bookingsApi';
+import {
+  getBookingById,
+  getBookings,
+  resolveDefaultBranchId,
+  resolveOwnerUid,
+  type Booking,
+  type BookingDetail,
+  type BookingService,
+  type BookingTask,
+} from '@/services/bookingsApi';
 import type { BookingStatus } from '@/services/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
@@ -155,6 +164,7 @@ function BookingRow({ booking, onView }: { booking: BookingRecordWithTasks; onVi
 function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { session } = useAuth();
   const [bookings, setBookings] = useState<BookingRecordWithTasks[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -167,8 +177,15 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       if (stateOwnerId) localStorage.setItem('cc_last_owner_id', stateOwnerId);
       if (stateBranchId) localStorage.setItem('cc_last_branch_id', stateBranchId);
 
-      const ownerUid = stateOwnerId || localStorage.getItem('cc_last_owner_id') || await resolveOwnerUid();
-      const branchId = stateBranchId || localStorage.getItem('cc_last_branch_id') || undefined;
+      const ownerUid =
+        stateOwnerId ||
+        localStorage.getItem('cc_last_owner_id') ||
+        (await resolveOwnerUid(session?.tenantId));
+      const branchId =
+        stateBranchId ||
+        localStorage.getItem('cc_last_branch_id') ||
+        (await resolveDefaultBranchId(session?.tenantId)) ||
+        undefined;
 
       if (!ownerUid) {
         setBookings([]);
@@ -223,7 +240,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       }
     }
     load();
-  }, [pathname, location.state]);
+  }, [pathname, location.state, session?.tenantId]);
 
   return (
     <div className="cc-fade-in flex-1 overflow-y-auto bg-[#f5f5f5]">
@@ -422,6 +439,7 @@ function BookingDetailView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { session } = useAuth();
   const [detail, setDetail] = useState<BookingDetail | null>(null);
   const [otherBookings, setOtherBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -448,7 +466,10 @@ function BookingDetailView() {
       const stateOwnerId = location.state?.ownerId;
       if (stateOwnerId) localStorage.setItem('cc_last_owner_id', stateOwnerId);
 
-      const ownerUid = stateOwnerId || localStorage.getItem('cc_last_owner_id') || await resolveOwnerUid();
+      const ownerUid =
+        stateOwnerId ||
+        localStorage.getItem('cc_last_owner_id') ||
+        (await resolveOwnerUid(session?.tenantId));
 
       if (!ownerUid) {
         setLoading(false);
@@ -465,7 +486,7 @@ function BookingDetailView() {
       }
     }
     load();
-  }, [id, location.state]);
+  }, [id, location.state, session?.tenantId]);
 
   const b = detail?.booking ?? null;
   const statusCfg = b ? (STATUS_CONFIG[b.status.toLowerCase()] ?? { label: b.status, className: 'bg-slate-100 text-slate-600' }) : null;

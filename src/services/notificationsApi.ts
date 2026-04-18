@@ -1,27 +1,14 @@
-import { auth, waitForAuth } from "@/lib/firebase";
-import { getIdToken } from "firebase/auth";
-import { supabase } from "@/integrations/supabase/client";
+import { getBmsBearerToken } from "@/services/bmsAuth";
 
 const BASE_URL =
   (import.meta.env.VITE_BMS_API_URL as string) ??
   "https://black.bmspros.com.au/api/call-center";
 
-const STATIC_TOKEN = (import.meta.env.VITE_BMS_BEARER_TOKEN as string) ?? "";
-
 async function apiHeaders(): Promise<HeadersInit> {
-  await waitForAuth();
-  const user = auth.currentUser;
-  let token = STATIC_TOKEN;
-
-  if (user) {
-    token = await getIdToken(user, true);
-  } else {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      token = session.access_token;
-    }
-  }
-
+  const token = await getBmsBearerToken({
+    waitForFirebaseInit: true,
+    forceRefreshFirebase: true,
+  });
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,

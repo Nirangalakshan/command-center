@@ -463,6 +463,8 @@ export type Database = {
       }
       tenants: {
         Row: {
+          bms_default_branch_id: string | null
+          bms_owner_uid: string | null
           brand_color: string
           created_at: string
           did_numbers: string[]
@@ -473,6 +475,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          bms_default_branch_id?: string | null
+          bms_owner_uid?: string | null
           brand_color?: string
           created_at?: string
           did_numbers?: string[]
@@ -483,6 +487,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          bms_default_branch_id?: string | null
+          bms_owner_uid?: string | null
           brand_color?: string
           created_at?: string
           did_numbers?: string[]
