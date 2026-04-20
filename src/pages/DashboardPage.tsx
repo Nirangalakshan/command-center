@@ -15,6 +15,7 @@ import { SipLinesTab } from '@/tabs/SipLinesTab';
 import { ClientsTab } from '@/tabs/ClientsTab';
 import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
 import { AuditLogsTab } from '@/tabs/AuditLogsTab';
+import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
 // import { BookingsTab } from '@/tabs/BookingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { AlertCircle } from 'lucide-react';
@@ -52,6 +53,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'agent-onboarding') return permissions.canViewAgentOnboardingTab;
       if (key === 'sip') return permissions.canViewSipTab;
       if (key === 'clients') return permissions.canViewClientsTab;
+      if (key === 'did-mappings') return permissions.canManageDIDMappings;
       if (key === 'audit-logs') return permissions.canViewAuditLogs;
       return false;
     };
@@ -178,6 +180,9 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   onCreateClient={handleCreateClient}
                   onAdvanceStage={handleAdvanceStage}
                 />
+              )}
+              {d.selectedTab === 'did-mappings' && (
+                <DIDMappingsTab permissions={permissions} />
               )}
               {d.selectedTab === 'audit-logs' && (
                 <AuditLogsTab />

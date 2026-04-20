@@ -35,6 +35,7 @@ export function derivePermissions(session: UserSession): Permissions {
     canViewAgentOnboardingTab: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewAuditLogs: isSuperAdmin,
     canManageAgents: isSuperAdmin,
+    canManageDIDMappings: isSuperAdmin,
     allowedTenantId: tenantId,
     allowedQueueIds: allowedQueueIds,
   };

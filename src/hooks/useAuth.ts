@@ -26,6 +26,7 @@ const EMPTY_PERMISSIONS: Permissions = {
   canOnboardAgents: false, canViewAgentOnboarding: false,   canViewAgentOnboardingTab: false,
   canViewAuditLogs: false,
   canManageAgents: false,
+  canManageDIDMappings: false,
   allowedTenantId: null, allowedQueueIds: [],
 };
 

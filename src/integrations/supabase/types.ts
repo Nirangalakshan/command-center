@@ -245,18 +245,30 @@ export type Database = {
           label: string
           queue_id: string
           tenant_id: string
+          branch_id: string
+          branch_name: string
+          owner_id: string
+          workshop_name: string
         }
         Insert: {
           did: string
           label?: string
           queue_id: string
           tenant_id: string
+          branch_id?: string
+          branch_name?: string
+          owner_id?: string
+          workshop_name?: string
         }
         Update: {
           did?: string
           label?: string
           queue_id?: string
           tenant_id?: string
+          branch_id?: string
+          branch_name?: string
+          owner_id?: string
+          workshop_name?: string
         }
         Relationships: [
           {

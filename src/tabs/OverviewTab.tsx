@@ -69,6 +69,8 @@ export function OverviewTab({
   incomingCalls,
 }: OverviewTabProps) {
   const isAgentOverview = session?.role === "agent";
+  const seenIncomingIdsRef = useRef<Set<string>>(new Set());
+  const audioUnlockedRef = useRef(false);
 
   const myAnsweredCallsCount = useMemo(() => {
     if (!isAgentOverview || !session) return 0;
@@ -121,6 +123,31 @@ export function OverviewTab({
     }
   }, [selectedCall, incomingCalls, agents]);
 
+  useEffect(() => {
+    const unlockAudio = () => {
+      audioUnlockedRef.current = true;
+    };
+    window.addEventListener("pointerdown", unlockAudio, { once: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    const currentIncoming = incomingCalls || [];
+    const nextIds = new Set(currentIncoming.map((call) => call.id));
+    const seenIds = seenIncomingIdsRef.current;
+    const hasNewIncoming = currentIncoming.some((call) => !seenIds.has(call.id));
+
+    if (hasNewIncoming && audioUnlockedRef.current) {
+      playIncomingAlertTone();
+    }
+
+    seenIncomingIdsRef.current = nextIds;
+  }, [incomingCalls]);
+
   const queueCallDetails = useMemo(() => {
     const map = new Map<
       string,
@@ -131,6 +158,7 @@ export function OverviewTab({
         incomingCallers: Array<{
           number: string;
           name: string | null;
+          waitingSince?: number | null;
           detail?: CallDetailSnapshot;
         }>;
       }
@@ -150,6 +178,7 @@ export function OverviewTab({
       const incomingCallers = allIncomingForQueue.map((c) => ({
         number: c.callerNumber,
         name: c.callerName || null,
+        waitingSince: c.waitingSince,
         detail: buildIncomingCallSnapshot(c, now),
       }));
 
@@ -186,7 +215,7 @@ export function OverviewTab({
           hint: "Click to open the incoming caller details.",
           isIncoming: true,
           incomingCallers: cPhone
-            ? [{ number: cPhone, name: null, detail }]
+            ? [{ number: cPhone, name: null, waitingSince: null, detail }]
             : [],
         });
         continue;
@@ -238,6 +267,27 @@ export function OverviewTab({
 
     return map;
   }, [incomingCalls, liveAgents, ringingAgents, now, queues, tenants]);
+
+  const visibleQueues = useMemo(
+    () =>
+      queues
+        .filter(
+          (q) =>
+            permissions.allowedQueueIds.length === 0 ||
+            permissions.allowedQueueIds.includes(q.id),
+        )
+        .sort((a, b) => {
+          const aIncoming = Boolean(queueCallDetails.get(a.id)?.isIncoming);
+          const bIncoming = Boolean(queueCallDetails.get(b.id)?.isIncoming);
+          if (aIncoming !== bIncoming) return bIncoming ? 1 : -1;
+
+          const waitDelta = b.avgWaitSeconds - a.avgWaitSeconds;
+          if (waitDelta !== 0) return waitDelta;
+
+          return b.waitingCalls - a.waitingCalls;
+        }),
+    [queues, permissions.allowedQueueIds, queueCallDetails],
+  );
 
   if (!summary) return <LoadingSkeleton />;
 
@@ -323,59 +373,58 @@ export function OverviewTab({
         </div>
       )}
 
-      {/* Queue Status + Notifications — side by side */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Left: Queue Status */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
-            <LiveDot color="var(--cc-color-cyan)" />
-            Queue Status
-          </div>
-          <div className="grid gap-4">
-            {queues
-              .filter(
-                (q) =>
-                  permissions.allowedQueueIds.length === 0 ||
-                  permissions.allowedQueueIds.includes(q.id),
-              )
-              .map((q) => {
-                const tenant = tenants.find((t) => t.id === q.tenantId);
-                const queueDetail = queueCallDetails.get(q.id);
-                const incomingRows = queueDetail?.incomingCallers ?? [];
-                const selectableIncomingCount = incomingRows.filter(
-                  (c) => c.detail,
-                ).length;
-                const multipleIncomingPickers =
-                  Boolean(queueDetail?.isIncoming) && selectableIncomingCount > 1;
-
-                return (
-                  <QueueSummaryCard
-                    key={q.id}
-                    queue={q}
-                    tenant={tenant}
-                    showTenant={permissions.canViewTenantNames}
-                    interactive={Boolean(queueDetail) && !multipleIncomingPickers}
-                    isIncoming={queueDetail?.isIncoming}
-                    incomingCallers={queueDetail?.incomingCallers}
-                    callHint={queueDetail?.hint}
-                    onClick={
-                      queueDetail && !multipleIncomingPickers
-                        ? () => setSelectedCall(queueDetail.detail)
-                        : undefined
-                    }
-                    onIncomingCallerClick={
-                      selectableIncomingCount > 0
-                        ? (d) => setSelectedCall(d)
-                        : undefined
-                    }
-                  />
-                );
-              })}
-          </div>
+      {/* Queue Status — full width */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
+          <LiveDot color="var(--cc-color-cyan)" />
+          Queue Status
         </div>
+        <div className="grid gap-4">
+          {visibleQueues.map((q) => {
+            const tenant = tenants.find((t) => t.id === q.tenantId);
+            const queueDetail = queueCallDetails.get(q.id);
+            const incomingRows = queueDetail?.incomingCallers ?? [];
+            const selectableIncomingCount = incomingRows.filter(
+              (c) => c.detail,
+            ).length;
+            const multipleIncomingPickers =
+              Boolean(queueDetail?.isIncoming) && selectableIncomingCount > 1;
 
-        {/* Right: Notifications */}
-        <NotificationsCard queues={queues} agents={agents} summary={summary} session={session} />
+            return (
+              <QueueSummaryCard
+                key={q.id}
+                queue={q}
+                tenant={tenant}
+                showTenant={permissions.canViewTenantNames}
+                interactive={Boolean(queueDetail) && !multipleIncomingPickers}
+                isIncoming={queueDetail?.isIncoming}
+                incomingCallers={queueDetail?.incomingCallers}
+                now={now}
+                callHint={queueDetail?.hint}
+                onClick={
+                  queueDetail && !multipleIncomingPickers
+                    ? () => setSelectedCall(queueDetail.detail)
+                    : undefined
+                }
+                onIncomingCallerClick={
+                  selectableIncomingCount > 0
+                    ? (d) => setSelectedCall(d)
+                    : undefined
+                }
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Notifications — full width under queue status */}
+      <div>
+        <NotificationsCard
+          queues={queues}
+          agents={agents}
+          summary={summary}
+          session={session}
+        />
       </div>
 
       <Card className="border-border/80 bg-white shadow-sm">
@@ -554,4 +603,42 @@ function findIncomingCallForAgent(
     incomingCalls.find((call) => call.tenantId === agent.tenantId) ||
     null
   );
+}
+
+function playIncomingAlertTone(): void {
+  if (typeof window === "undefined") return;
+  const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) return;
+
+  try {
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.connect(ctx.destination);
+
+    const pulse = (start: number, frequency: number, duration = 0.11) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.08, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(start);
+      osc.stop(start + duration + 0.02);
+    };
+
+    pulse(now + 0.01, 880);
+    pulse(now + 0.18, 1046);
+
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+    window.setTimeout(() => {
+      void ctx.close();
+    }, 700);
+  } catch {
+    // Audio failures are non-critical (autoplay policy/device limitations).
+  }
 }

@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LogOut,
   Phone,
+  PhoneForwarded,
   Radio,
   Users,
   UserPlus,
@@ -30,6 +31,7 @@ const TAB_ITEMS = [
   { key: 'calls',             label: 'Calls',              icon: Phone,           perm: 'canViewCallsTab' },
   { key: 'sip',               label: 'SIP Lines',          icon: Radio,           perm: 'canViewSipTab' },
   { key: 'clients',           label: 'Clients',            icon: BookOpen,        perm: 'canViewClientsTab' },
+  { key: 'did-mappings',      label: 'DID Mappings',       icon: PhoneForwarded,  perm: 'canManageDIDMappings' },
   { key: 'audit-logs',        label: 'Audit Logs',         icon: History,         perm: 'canViewAuditLogs' },
 ] as const;
 

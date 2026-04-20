@@ -13,7 +13,6 @@ import {
   MapPin,
   Plus,
   CheckCircle2,
-  UserCheck,
 } from "lucide-react";
 import type { VehicleRecord } from "@/services/types";
 import {
@@ -41,7 +40,12 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { getServices, getServicesByBranch, type WorkshopService } from "@/services/servicesApi";
-import { getStaffByBranch, type StaffMember } from "@/services/staffApi";
+import {
+  getBranchDetail,
+  getBranchDetailForTenant,
+  resolveSessionTenantBmsIds,
+  type BmsBranchDetail,
+} from "@/services/branchesApi";
 
 interface BookingPageState {
   tenantId: string;
@@ -84,8 +88,55 @@ function generateTimeSlots(start: string, end: string, step = 30): string[] {
   return slots;
 }
 
-const DROPOFF_SLOTS = generateTimeSlots("07:00", "11:00");
-const PICKUP_SLOTS = generateTimeSlots("14:00", "17:00");
+function toMinutes(time: string | null | undefined): number | null {
+  if (!time) return null;
+  const [h, m] = time.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+function isTimeWithinWindow(time: string, open?: string | null, close?: string | null): boolean {
+  const t = toMinutes(time);
+  const o = toMinutes(open);
+  const c = toMinutes(close);
+  if (t == null || o == null || c == null) return false;
+  return t >= o && t <= c;
+}
+
+function getWeekdayForBranch(date: Date, timezone?: string): string {
+  const localNoon = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    12,
+    0,
+    0,
+    0,
+  );
+  if (!timezone) return format(localNoon, "EEEE");
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    timeZone: timezone,
+  }).format(localNoon);
+}
+
+type SimpleHoursShape = {
+  open?: string | null;
+  close?: string | null;
+  closed?: boolean;
+};
+
+function getInlineSchedule(detail: unknown): SimpleHoursShape | null {
+  if (!detail || typeof detail !== "object") return null;
+  const d = detail as Record<string, unknown>;
+  const hasAny = "open" in d || "close" in d || "closed" in d;
+  if (!hasAny) return null;
+  return {
+    open: typeof d.open === "string" ? d.open : null,
+    close: typeof d.close === "string" ? d.close : null,
+    closed: Boolean(d.closed),
+  };
+}
 
 function ServiceCard({
   service,
@@ -107,7 +158,6 @@ function ServiceCard({
       }`}
     >
       <div className="flex items-center gap-4 p-4">
-        {/* Thumbnail */}
         <div
           className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl text-2xl font-bold"
           style={{
@@ -127,8 +177,6 @@ function ServiceCard({
             </span>
           )}
         </div>
-
-        {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-slate-900">{service.label}</div>
           <div className="mt-1 flex items-center gap-3 text-xs text-slate-500">
@@ -142,15 +190,11 @@ function ServiceCard({
             </span>
           </div>
         </div>
-
-        {/* Price */}
         <div className="text-right shrink-0">
           <div className="text-lg font-bold text-slate-900">
             {service.price}
           </div>
         </div>
-
-        {/* Add/Remove button */}
         <button
           type="button"
           onClick={(e) => {
@@ -166,8 +210,6 @@ function ServiceCard({
           )}
         </button>
       </div>
-
-      {/* Toggle details */}
       <div className="px-4 pb-2">
         <button
           type="button"
@@ -185,7 +227,6 @@ function ServiceCard({
           {expanded ? "Hide details" : "Show details"}
         </button>
       </div>
-
       {expanded && (
         <div className="mx-4 mb-4 rounded-xl bg-amber-50 p-3">
           <div className="mb-2 flex items-center gap-2">
@@ -223,12 +264,9 @@ export default function BookingPage() {
   const state = location.state as BookingPageState | null;
   const [submitting, setSubmitting] = useState(false);
 
-  // Customer
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
-
-  // Vehicle
   const [selectedVehicleId, setSelectedVehicleId] = useState("new");
   const [vehicleRego, setVehicleRego] = useState("");
   const [vehicleMake, setVehicleMake] = useState("");
@@ -240,22 +278,17 @@ export default function BookingPage() {
   const [vehicleBodyType, setVehicleBodyType] = useState("");
   const [vehicleEngineNumber, setVehicleEngineNumber] = useState("");
 
-  // Booking
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [dropOffTime, setDropOffTime] = useState("");
   const [pickupTime, setPickupTime] = useState("");
   const [notes, setNotes] = useState("");
 
-  // Staff assignment
-  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
-  const [staffLoading, setStaffLoading] = useState(true);
-  const [assignedStaffId, setAssignedStaffId] = useState("");
-
-  // Services from Firebase API
   const [services, setServices] = useState<WorkshopService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
   const [servicesError, setServicesError] = useState<string | null>(null);
+  const [branchDetail, setBranchDetail] = useState<BmsBranchDetail | null>(null);
+  const [branchHoursError, setBranchHoursError] = useState<string | null>(null);
 
   useEffect(() => {
     const ownerIdToUse = state?.ownerId;
@@ -272,29 +305,9 @@ export default function BookingPage() {
       : getServices(ownerIdToUse);
 
     fetchPromise
-      .then((data) => {
-        // console.log("[BookingPage] services:", data);
-        setServices(data);
-      })
+      .then((data) => setServices(data))
       .catch((err: Error) => setServicesError(err.message))
       .finally(() => setServicesLoading(false));
-  }, [state?.branchId, state?.ownerId]);
-
-  // Fetch staff members for the branch
-  useEffect(() => {
-    const ownerIdToUse = state?.ownerId;
-    const branchIdToUse = state?.branchId;
-
-    if (!ownerIdToUse || !branchIdToUse) {
-      setStaffLoading(false);
-      return;
-    }
-
-    setStaffLoading(true);
-    getStaffByBranch(ownerIdToUse, branchIdToUse)
-      .then((members) => setStaffMembers(members))
-      .catch(() => setStaffMembers([]))
-      .finally(() => setStaffLoading(false));
   }, [state?.branchId, state?.ownerId]);
 
   const availableVehicles: VehicleRecord[] = state?.availableVehicles ?? [];
@@ -302,6 +315,88 @@ export default function BookingPage() {
   const chosenServices = services.filter((s) =>
     selectedServices.includes(s.id),
   );
+  const activeBranchId = state?.branchId || (chosenServices[0]?.branches?.[0] ?? "");
+  const weekday = selectedDate
+    ? getWeekdayForBranch(selectedDate, branchDetail?.timezone)
+    : null;
+  const daySchedule = weekday
+    ? branchDetail?.daySchedules?.[weekday] ??
+      (branchDetail?.hours?.[weekday]
+        ? {
+            dayOfWeek: weekday,
+            closed: !!branchDetail?.hours?.[weekday]?.closed,
+            open: branchDetail?.hours?.[weekday]?.open ?? null,
+            close: branchDetail?.hours?.[weekday]?.close ?? null,
+          }
+        : undefined) ??
+      (getInlineSchedule(branchDetail)
+        ? {
+            dayOfWeek: weekday,
+            closed: !!getInlineSchedule(branchDetail)?.closed,
+            open: getInlineSchedule(branchDetail)?.open ?? null,
+            close: getInlineSchedule(branchDetail)?.close ?? null,
+          }
+        : undefined)
+    : undefined;
+  const branchClosedOnSelectedDay = !!selectedDate && !!daySchedule?.closed;
+  const dropOffSlots =
+    daySchedule?.open && daySchedule?.close
+      ? generateTimeSlots(daySchedule.open, daySchedule.close)
+      : [];
+  const pickupSlots = dropOffSlots;
+  const dropOffOutsideHours =
+    !!dropOffTime &&
+    !!selectedDate &&
+    !branchClosedOnSelectedDay &&
+    !isTimeWithinWindow(dropOffTime, daySchedule?.open, daySchedule?.close);
+  const pickupOutsideHours =
+    !!pickupTime &&
+    !!selectedDate &&
+    !branchClosedOnSelectedDay &&
+    !isTimeWithinWindow(pickupTime, daySchedule?.open, daySchedule?.close);
+  const pickupBeforeDropOff =
+    !!pickupTime &&
+    !!dropOffTime &&
+    toMinutes(pickupTime) != null &&
+    toMinutes(dropOffTime) != null &&
+    (toMinutes(pickupTime) as number) < (toMinutes(dropOffTime) as number);
+  const availabilityMessage = branchClosedOnSelectedDay
+    ? `${branchDetail?.name || "Branch"} is closed on ${weekday}.`
+    : daySchedule?.open && daySchedule?.close
+      ? `Open hours on ${weekday}: ${daySchedule.open} - ${daySchedule.close}`
+      : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadBranchHours() {
+      try {
+        const owner = state?.ownerId;
+        const tenantBranch = activeBranchId
+          ? activeBranchId
+          : (await resolveSessionTenantBmsIds(session?.tenantId)).branchId || "";
+        const branchIdToUse = tenantBranch;
+        const detail = owner && branchIdToUse
+          ? await getBranchDetail(owner, branchIdToUse)
+          : await getBranchDetailForTenant(session?.tenantId, branchIdToUse || undefined);
+        if (!cancelled) {
+          setBranchDetail(detail ?? null);
+          setBranchHoursError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setBranchDetail(null);
+          setBranchHoursError(
+            err instanceof Error ? err.message : "Failed to load branch open hours.",
+          );
+        }
+      }
+    }
+    loadBranchHours();
+    return () => {
+      cancelled = true;
+    };
+  }, [state?.ownerId, session?.tenantId, activeBranchId]);
+
   const toggleService = (value: string) =>
     setSelectedServices((prev) =>
       prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value],
@@ -322,7 +417,6 @@ export default function BookingPage() {
       setVehicleColor(v.color || "");
       setVehicleVin(v.vin || "");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleVehicleSelect = (vehicleId: string) => {
@@ -367,19 +461,28 @@ export default function BookingPage() {
       return;
     }
 
-    // Build services payload from selected service objects
-    const selectedStaff = staffMembers.find((m) => m.id === assignedStaffId);
+    if (branchClosedOnSelectedDay || dropOffOutsideHours || pickupOutsideHours || pickupBeforeDropOff) {
+      toast({
+        title: "Branch not available",
+        description:
+          branchClosedOnSelectedDay
+            ? `${branchDetail?.name || "Branch"} is closed on ${weekday}.`
+            : pickupBeforeDropOff
+              ? "Pick-up time cannot be before drop-off time."
+              : "Selected time is outside branch open hours.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const serviceItems: BookingServiceItem[] = chosenServices.map((s) => ({
       serviceId: s.id,
       serviceName: s.name,
       price: s.price,
       duration: s.duration,
-      staffId: assignedStaffId || undefined,
-      staffName: selectedStaff?.name || undefined,
     }));
 
-    // Use branchId from state, fallback to first branch from selected service
-    const branchId = state?.branchId || (chosenServices[0]?.branches?.[0] ?? "");
+    const branchId = activeBranchId;
     const ownerUidToUse = state?.ownerId;
 
     if (!ownerUidToUse) {
@@ -418,14 +521,9 @@ export default function BookingPage() {
       notes: notes || undefined,
     };
 
-    // console.log("[BookingPage] submitting payload:", payload);
-
     setSubmitting(true);
     try {
       const result = await createBooking(payload);
-      // console.log("[BookingPage] booking created:", result);
-
-      // ── Save a local copy to Supabase with agent details ──
       try {
         const { supabase } = await import("@/integrations/supabase/client");
         const firebaseUser = auth.currentUser;
@@ -447,18 +545,10 @@ export default function BookingPage() {
           pickup_time: pickupTime || null,
           services: serviceItems,
           notes: notes || null,
-          assigned_staff_id: assignedStaffId || null,
-          assigned_staff_name: selectedStaff?.name || assignedStaffId || null,
           bms_status: "Pending",
           bms_response: result,
         });
-        // console.log(
-        //   "[Supabase] Booking saved locally with agent:",
-        //   firebaseUser?.email,
-        // );
-      } catch (sbErr) {
-        // Don't fail the whole flow if Supabase save fails — BMS booking already created
-        // console.warn("[Supabase] Failed to save local booking copy:", sbErr);
+      } catch {
       }
 
       await logSystemActivity(session, 'CREATE_BOOKING', 'BOOKING', result.bookingId, {
@@ -494,12 +584,15 @@ export default function BookingPage() {
     selectedServices.length > 0 &&
     selectedDate &&
     dropOffTime &&
-    assignedStaffId
+    !branchClosedOnSelectedDay &&
+    !dropOffOutsideHours &&
+    !pickupOutsideHours &&
+    !pickupBeforeDropOff &&
+    dropOffSlots.length > 0
   );
 
   return (
     <div className="cc-fade-in min-h-screen bg-[#f5f5f5] text-slate-950">
-      {/* Header */}
       <header className="sticky top-0 z-20 border-b border-border/80 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <div className="flex items-center gap-3">
@@ -529,12 +622,9 @@ export default function BookingPage() {
           )}
         </div>
       </header>
-
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
         <div className="grid gap-6 lg:grid-cols-3">
-          {/* Left: 2/3 */}
           <div className="space-y-6 lg:col-span-2">
-            {/* Services */}
             <div>
               <h1 className="text-2xl font-bold text-slate-950">
                 Pick your services
@@ -542,17 +632,14 @@ export default function BookingPage() {
               <p className="mt-1 text-sm text-slate-500">
                 Select one or more services for your visit
               </p>
-
               {servicesLoading && (
-                <p className="mt-6 text-sm text-slate-400">Loading services…</p>
+                <p className="mt-6 text-sm text-slate-400">Loading services...</p>
               )}
-
               {servicesError && (
                 <p className="mt-6 text-sm text-red-500">
                   Failed to load services: {servicesError}
                 </p>
               )}
-
               <div className="mt-4 space-y-3">
                 {services.map((s) => (
                   <ServiceCard
@@ -575,8 +662,6 @@ export default function BookingPage() {
                 ))}
               </div>
             </div>
-
-            {/* Date & Time */}
             <Card className="border-0 bg-white shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -599,15 +684,36 @@ export default function BookingPage() {
                         setDropOffTime("");
                         setPickupTime("");
                       }}
-                      disabled={(d) =>
-                        isBefore(startOfDay(d), startOfDay(new Date()))
-                      }
+                      disabled={(d) => {
+                        const inPast = isBefore(startOfDay(d), startOfDay(new Date()));
+                        if (inPast) return true;
+                        const branchDay = getWeekdayForBranch(d, branchDetail?.timezone);
+                        const daily =
+                          branchDetail?.daySchedules?.[branchDay] ??
+                          (branchDetail?.hours?.[branchDay]
+                            ? {
+                                closed: !!branchDetail?.hours?.[branchDay]?.closed,
+                              }
+                            : getInlineSchedule(branchDetail));
+                        return !!daily?.closed;
+                      }}
                       fromDate={new Date()}
                       toDate={addDays(new Date(), 90)}
                       className="rounded-xl border border-slate-200 bg-slate-50 p-3"
                     />
                   </div>
                   <div className="space-y-5">
+                    {(availabilityMessage || branchHoursError) && (
+                      <div
+                        className={`rounded-lg border px-3 py-2 text-xs ${
+                          branchClosedOnSelectedDay || branchHoursError
+                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                            : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        }`}
+                      >
+                        {branchHoursError || availabilityMessage}
+                      </div>
+                    )}
                     <div>
                       <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                         <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
@@ -616,12 +722,25 @@ export default function BookingPage() {
                       <p className="mb-3 text-xs text-slate-400">
                         When do you drop off?
                       </p>
+                      {!selectedDate ? null : dropOffSlots.length === 0 ? (
+                        <p className="mb-3 text-xs text-rose-600">
+                          No open hours available for the selected date.
+                        </p>
+                      ) : null}
                       <div className="grid grid-cols-3 gap-2">
-                        {DROPOFF_SLOTS.map((slot) => (
+                        {dropOffSlots.map((slot) => (
                           <button
                             key={slot}
                             type="button"
-                            disabled={!selectedDate}
+                            disabled={
+                              !selectedDate ||
+                              branchClosedOnSelectedDay ||
+                              !isTimeWithinWindow(
+                                slot,
+                                daySchedule?.open,
+                                daySchedule?.close,
+                              )
+                            }
                             onClick={() => setDropOffTime(slot)}
                             className={`rounded-lg border px-2 py-2 text-sm font-medium transition-all ${dropOffTime === slot ? "border-amber-400 bg-amber-400 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50 disabled:opacity-40"}`}
                           >
@@ -638,12 +757,29 @@ export default function BookingPage() {
                           (optional)
                         </span>
                       </div>
+                      {!selectedDate ? null : pickupSlots.length === 0 ? (
+                        <p className="mb-3 text-xs text-rose-600">
+                          No open hours available for the selected date.
+                        </p>
+                      ) : null}
                       <div className="grid grid-cols-3 gap-2">
-                        {PICKUP_SLOTS.map((slot) => (
+                        {pickupSlots.map((slot) => (
                           <button
                             key={slot}
                             type="button"
-                            disabled={!selectedDate || !dropOffTime}
+                            disabled={
+                              !selectedDate ||
+                              !dropOffTime ||
+                              branchClosedOnSelectedDay ||
+                              toMinutes(slot) == null ||
+                              toMinutes(dropOffTime) == null ||
+                              (toMinutes(slot) as number) < (toMinutes(dropOffTime) as number) ||
+                              !isTimeWithinWindow(
+                                slot,
+                                daySchedule?.open,
+                                daySchedule?.close,
+                              )
+                            }
                             onClick={() =>
                               setPickupTime(pickupTime === slot ? "" : slot)
                             }
@@ -658,8 +794,6 @@ export default function BookingPage() {
                 </div>
               </CardContent>
             </Card>
-
-            {/* Your Information */}
             <Card className="border-0 bg-white shadow-sm">
               <CardContent className="p-5">
                 <div className="mb-4 flex items-center gap-3">
@@ -709,8 +843,6 @@ export default function BookingPage() {
                 </div>
               </CardContent>
             </Card>
-
-            {/* Vehicle Details */}
             <Card className="border-0 bg-white shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -746,149 +878,29 @@ export default function BookingPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <p className="flex items-center gap-1.5 text-xs text-slate-400">
-                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-slate-300 text-[10px] text-slate-400">
-                    i
-                  </span>
-                  All vehicle fields are optional. Add at least one identifier
-                  (e.g. registration, make/model).
-                </p>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="space-y-1.5">
-                    <Label>
-                      Make{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleMake}
-                      onChange={(e) => setVehicleMake(e.target.value)}
-                      placeholder="Toyota"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>
-                      Model{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleModel}
-                      onChange={(e) => setVehicleModel(e.target.value)}
-                      placeholder="Corolla"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>
-                      Year{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleYear}
-                      onChange={(e) => setVehicleYear(e.target.value)}
-                      placeholder="2020"
-                    />
-                  </div>
+                  <Input value={vehicleMake} onChange={(e) => setVehicleMake(e.target.value)} placeholder="Make" />
+                  <Input value={vehicleModel} onChange={(e) => setVehicleModel(e.target.value)} placeholder="Model" />
+                  <Input value={vehicleYear} onChange={(e) => setVehicleYear(e.target.value)} placeholder="Year" />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>
-                      Registration number{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleRego}
-                      onChange={(e) => setVehicleRego(e.target.value)}
-                      placeholder="ABC-1234"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>
-                      Mileage{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleMileage}
-                      onChange={(e) => setVehicleMileage(e.target.value)}
-                      placeholder="1234"
-                    />
-                  </div>
+                  <Input value={vehicleRego} onChange={(e) => setVehicleRego(e.target.value)} placeholder="Registration" />
+                  <Input value={vehicleMileage} onChange={(e) => setVehicleMileage(e.target.value)} placeholder="Mileage" />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>
-                      Body type{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleBodyType}
-                      onChange={(e) => setVehicleBodyType(e.target.value)}
-                      placeholder="Sedan"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>
-                      Colour{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleColor}
-                      onChange={(e) => setVehicleColor(e.target.value)}
-                      placeholder="White"
-                    />
-                  </div>
+                  <Input value={vehicleBodyType} onChange={(e) => setVehicleBodyType(e.target.value)} placeholder="Body type" />
+                  <Input value={vehicleColor} onChange={(e) => setVehicleColor(e.target.value)} placeholder="Colour" />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>
-                      VIN / Chassis{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleVin}
-                      onChange={(e) => setVehicleVin(e.target.value)}
-                      placeholder="1HGBH41JXMN109186"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>
-                      Engine number{" "}
-                      <span className="text-[11px] font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </Label>
-                    <Input
-                      value={vehicleEngineNumber}
-                      onChange={(e) => setVehicleEngineNumber(e.target.value)}
-                      placeholder="Engine number"
-                    />
-                  </div>
+                  <Input value={vehicleVin} onChange={(e) => setVehicleVin(e.target.value)} placeholder="VIN / Chassis" />
+                  <Input value={vehicleEngineNumber} onChange={(e) => setVehicleEngineNumber(e.target.value)} placeholder="Engine number" />
                 </div>
               </CardContent>
             </Card>
-
-            {/* Notes */}
             <Card className="border-0 bg-white shadow-sm">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Notes{" "}
-                  <span className="text-[11px] font-normal text-slate-400">
-                    (optional)
-                  </span>
+                  Notes
                 </CardTitle>
               </CardHeader>
               <Separator />
@@ -901,86 +913,7 @@ export default function BookingPage() {
                 />
               </CardContent>
             </Card>
-
-            {/* Staff Assignment */}
-            <Card className="border-0 bg-white shadow-sm">
-              <CardContent className="p-5">
-                <div className="mb-4 flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500 text-white">
-                    <UserCheck className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Assign Staff Member <span className="text-rose-500">*</span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-slate-400">
-                      Select a staff member to handle this booking
-                    </p>
-                  </div>
-                </div>
-                <Separator className="mb-4" />
-
-                {staffLoading ? (
-                  <p className="text-sm text-slate-400">Loading staff…</p>
-                ) : staffMembers.length === 0 ? (
-                  <div className="space-y-3">
-                    <p className="text-sm text-slate-500">
-                      No staff members found for this branch.
-                    </p>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="manual-staff-name">Staff name (manual entry)</Label>
-                      <Input
-                        id="manual-staff-name"
-                        value={assignedStaffId}
-                        onChange={(e) => setAssignedStaffId(e.target.value)}
-                        placeholder="Enter staff member name"
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {staffMembers.map((member) => {
-                      const isSelected = assignedStaffId === member.id;
-                      return (
-                        <button
-                          key={member.id}
-                          type="button"
-                          onClick={() => setAssignedStaffId(isSelected ? "" : member.id)}
-                          className={`flex items-center gap-3 rounded-xl border-2 p-3 text-left transition-all ${
-                            isSelected
-                              ? "border-violet-400 bg-violet-50 shadow-md"
-                              : "border-slate-200 bg-white hover:border-violet-300 hover:bg-violet-50/40"
-                          }`}
-                        >
-                          <div
-                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                              isSelected
-                                ? "bg-violet-500 text-white"
-                                : "bg-slate-100 text-slate-500"
-                            }`}
-                          >
-                            {member.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className={`text-sm font-semibold ${isSelected ? "text-violet-900" : "text-slate-800"}`}>
-                              {member.name}
-                            </div>
-                          </div>
-                          {isSelected && (
-                            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-500">
-                              <Check className="h-3.5 w-3.5 text-white" />
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
           </div>
-
-          {/* Right: Order Summary */}
           <div>
             <div className="sticky top-24">
               <Card className="border-0 bg-slate-900 text-white shadow-lg">
@@ -993,8 +926,6 @@ export default function BookingPage() {
                       ? `${selectedServices.length} service${selectedServices.length > 1 ? "s" : ""} selected`
                       : "No service selected"}
                   </div>
-                  {/* <Separator className="mb-4 bg-slate-700" /> */}
-
                   {state?.workshopName && (
                     <div className="mb-3 flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2 text-sm text-slate-300">
@@ -1003,7 +934,6 @@ export default function BookingPage() {
                       </div>
                     </div>
                   )}
-
                   {chosenServices.map((s) => (
                     <div
                       key={s.id}
@@ -1026,7 +956,6 @@ export default function BookingPage() {
                       </div>
                     </div>
                   ))}
-
                   {bookingDateStr && (
                     <div className="mb-3 rounded-xl bg-slate-800 px-3 py-2 text-xs text-slate-400">
                       {bookingDateStr}
@@ -1042,7 +971,6 @@ export default function BookingPage() {
                       )}
                     </div>
                   )}
-
                   {(vehicleRego || vehicleMake) && (
                     <div className="mb-3 rounded-xl bg-slate-800 px-3 py-2 text-xs text-slate-400">
                       <div className="flex items-center gap-1.5 mb-1">
@@ -1066,7 +994,6 @@ export default function BookingPage() {
                       )}
                     </div>
                   )}
-
                   {chosenServices.length > 0 && (
                     <div className="mb-4 flex items-center justify-between rounded-xl bg-amber-400/10 px-3 py-2">
                       <span className="text-sm font-semibold text-slate-300">
@@ -1080,38 +1007,13 @@ export default function BookingPage() {
                       </span>
                     </div>
                   )}
-
-                  {assignedStaffId && (
-                    <div className="mb-3 rounded-xl bg-slate-800 px-3 py-2 text-xs text-slate-400">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <UserCheck className="h-3.5 w-3.5 text-violet-400" />
-                        <span className="font-medium text-slate-300">
-                          Assigned Staff
-                        </span>
-                      </div>
-                      <div className="text-white font-medium">
-                        {staffMembers.find((m) => m.id === assignedStaffId)?.name || assignedStaffId}
-                      </div>
-                    </div>
-                  )}
-
-                  {!assignedStaffId && (
-                    <div className="mb-3 rounded-xl border border-dashed border-slate-600 px-3 py-2 text-xs text-slate-500">
-                      <div className="flex items-center gap-1.5">
-                        <UserCheck className="h-3.5 w-3.5" />
-                        <span>No staff assigned — required to confirm</span>
-                      </div>
-                    </div>
-                  )}
-
                   <Separator className="mb-4 bg-slate-700" />
-
                   <Button
                     className="w-full bg-amber-400 font-semibold text-slate-950 hover:bg-amber-500"
                     disabled={!canConfirm || submitting}
                     onClick={handleSubmit}
                   >
-                    {submitting ? "Saving…" : "Confirm Booking"}
+                    {submitting ? "Saving..." : "Confirm Booking"}
                   </Button>
                   <p className="mt-3 text-center text-[11px] text-slate-500">
                     By confirming, the booking will be saved to the system.

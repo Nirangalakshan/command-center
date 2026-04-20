@@ -430,6 +430,8 @@ export interface Permissions {
   canViewAuditLogs: boolean;
   /** Super-admin only: edit or remove agents from the Agents tab. */
   canManageAgents: boolean;
+  /** Super-admin only: view & manage DID ↔ workshop/branch mappings. */
+  canManageDIDMappings: boolean;
   allowedTenantId: string | null;
   allowedQueueIds: string[];
 }

@@ -7,6 +7,7 @@ import type { CallDetailSnapshot } from '@/components/dashboard/CallDetailsSheet
 export interface IncomingCallerContext {
   number: string;
   name: string | null;
+  waitingSince?: number | null;
   /** When set, this row opens the details sheet for that specific call */
   detail?: CallDetailSnapshot;
 }
@@ -15,6 +16,7 @@ interface QueueSummaryCardProps {
   queue: Queue;
   tenant?: Tenant;
   showTenant: boolean;
+  now?: number;
   interactive?: boolean;
   isIncoming?: boolean;
   incomingCallers?: IncomingCallerContext[];
@@ -27,6 +29,7 @@ export function QueueSummaryCard({
   queue, 
   tenant, 
   showTenant, 
+  now = Date.now(),
   interactive = false, 
   isIncoming = false, 
   incomingCallers, 
@@ -34,6 +37,25 @@ export function QueueSummaryCard({
   onClick,
   onIncomingCallerClick,
 }: QueueSummaryCardProps) {
+  const incomingCount = incomingCallers?.length ?? 0;
+  const incomingSeverity =
+    queue.avgWaitSeconds >= 45
+      ? "critical"
+      : queue.avgWaitSeconds >= 20
+        ? "warning"
+        : "normal";
+  const incomingTone =
+    incomingSeverity === "critical"
+      ? "var(--cc-color-red)"
+      : incomingSeverity === "warning"
+        ? "var(--cc-color-amber)"
+        : "var(--cc-color-cyan)";
+  const incomingSurface =
+    incomingSeverity === "critical"
+      ? "linear-gradient(135deg, rgba(239,68,68,0.13), rgba(254,242,242,0.7))"
+      : incomingSeverity === "warning"
+        ? "linear-gradient(135deg, rgba(245,158,11,0.16), rgba(255,247,237,0.7))"
+        : "linear-gradient(135deg, rgba(6,182,212,0.12), rgba(236,254,255,0.65))";
   const stats = [
     {
       label: 'Active',
@@ -65,12 +87,19 @@ export function QueueSummaryCard({
     <Card
       className={`group relative overflow-hidden bg-white transition-all duration-300 ${
         interactive ? 'cursor-pointer hover:-translate-y-1 hover:shadow-xl' : 'shadow-sm'
-      } ${isIncoming ? 'ring-1 ring-[var(--cc-color-amber)] ring-offset-2' : 'border-border/80'}`}
+      } ${isIncoming ? 'ring-2 ring-offset-2 shadow-lg' : 'border-border/80'}`}
+      style={isIncoming ? { borderColor: `${incomingTone}55`, boxShadow: `0 0 0 1px ${incomingTone}33` } : undefined}
       onClick={interactive ? onClick : undefined}
     >
       {/* Background glow effect for incoming calls */}
       {isIncoming && (
-        <div className="absolute inset-0 bg-gradient-to-br from-[var(--cc-color-amber)]/20 to-transparent pointer-events-none" />
+        <>
+          <div className="pointer-events-none absolute inset-0" style={{ background: incomingSurface }} />
+          <div
+            className="pointer-events-none absolute inset-y-0 left-0 w-1.5 animate-pulse"
+            style={{ backgroundColor: incomingTone }}
+          />
+        </>
       )}
 
       {/* Glossy top highlight */}
@@ -93,6 +122,12 @@ export function QueueSummaryCard({
                   {tenant.name}
                 </div>
               )}
+              {isIncoming && (
+                <div className="mt-1.5 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em]" style={{ background: `${incomingTone}1a`, color: incomingTone }}>
+                  <PhoneIncoming className="h-3 w-3" />
+                  Incoming{incomingCount > 1 ? ` (${incomingCount})` : ""}
+                </div>
+              )}
             </div>
           </div>
           
@@ -100,8 +135,8 @@ export function QueueSummaryCard({
           <div className="flex items-center gap-2">
            {isIncoming && (
               <span className="relative flex h-3 w-3">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-500"></span>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: incomingTone }}></span>
+                <span className="relative inline-flex h-3 w-3 rounded-full" style={{ backgroundColor: incomingTone }}></span>
               </span>
             )}
            {!isIncoming && queue.activeCalls > 0 && (
@@ -141,8 +176,8 @@ export function QueueSummaryCard({
                   }
                   className={`relative overflow-hidden rounded-xl bg-gradient-to-r from-amber-50 to-amber-100/50 p-2.5 ring-1 ring-amber-200/50 shadow-sm transition-all ${
                     openDetail
-                      ? 'cursor-pointer hover:bg-amber-100/80 hover:ring-amber-300/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500'
-                      : 'hover:bg-amber-100/50'
+                      ? 'cursor-pointer hover:bg-amber-100/90 hover:ring-amber-300/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500'
+                      : 'hover:bg-amber-100/70'
                   }`}
                 >
                   <div className="absolute -right-4 -top-4 opacity-10">
@@ -156,8 +191,18 @@ export function QueueSummaryCard({
                       <div className="truncate text-[13px] font-bold text-amber-950 leading-tight">
                         {caller.name || 'Unknown Caller'}
                       </div>
-                      <div className="truncate font-mono text-[11px] font-semibold text-amber-700/80">
-                        {formatPhone(caller.number)}
+                      <div className="mt-0.5 flex items-center justify-between gap-2">
+                        <div className="truncate font-mono text-[11px] font-semibold text-amber-700/80">
+                          {formatPhone(caller.number)}
+                        </div>
+                        <div className="shrink-0 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-700 ring-1 ring-amber-200/60">
+                          Waiting{" "}
+                          {formatPhoneDurationLabel(
+                            caller.waitingSince
+                              ? Math.max(0, now - caller.waitingSince)
+                              : queue.avgWaitSeconds,
+                          )}
+                        </div>
                       </div>
                     </div>
                     {openDetail && (
@@ -204,7 +249,7 @@ export function QueueSummaryCard({
           (!isIncoming ||
             (incomingCallers && incomingCallers.length > 1)) && (
           <div className="flex items-center gap-2 rounded-lg bg-slate-50/50 px-3 py-2 text-[12px] font-medium text-slate-500 ring-1 ring-slate-100 transition-colors group-hover:bg-slate-50">
-            {callHint}
+            {isIncoming ? "Select a caller to open full details." : callHint}
             <div className="ml-auto opacity-0 -translate-x-2 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0">
               →
             </div>
@@ -213,4 +258,15 @@ export function QueueSummaryCard({
       </CardContent>
     </Card>
   );
+}
+
+function formatPhoneDurationLabel(totalMsOrSeconds: number): string {
+  const normalizedSeconds =
+    totalMsOrSeconds > 9999
+      ? Math.floor(totalMsOrSeconds / 1000)
+      : Math.floor(totalMsOrSeconds);
+  const seconds = Math.max(0, normalizedSeconds);
+  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
 }
