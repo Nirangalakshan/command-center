@@ -47,6 +47,8 @@ export type BookingServiceItem = {
   serviceName: string;
   price: number;
   duration: number;
+  staffId?: string;
+  staffName?: string;
 };
 
 export type BookingService = {

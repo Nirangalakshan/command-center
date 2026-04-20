@@ -23,6 +23,7 @@ export function AgentShiftPanel({
   session, tenants, queues, agentGroups, incomingCalls, now,
 }: AgentShiftPanelProps) {
   const [selectedCall, setSelectedCall] = useState<CallDetailSnapshot | null>(null);
+
   const assignedTenants = useMemo(() => {
     const tenantIds = new Set<string>();
     for (const q of queues) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   DashboardSummary,
   Queue,
@@ -20,6 +20,8 @@ import {
   buildIncomingCallSnapshot,
   buildLiveCallSnapshot,
   CallDetailsSheet,
+  restoreCallDetailFromSession,
+  clearCallDetailSession,
   type CallDetailSnapshot,
 } from "@/components/dashboard/CallDetailsSheet";
 import { MetricCard } from "@/components/dashboard/MetricCard";
@@ -88,9 +90,22 @@ export function OverviewTab({
   const [selectedCall, setSelectedCall] = useState<CallDetailSnapshot | null>(
     null,
   );
+  const restoredFromSession = useRef(false);
+
+  // Restore call detail saved before navigating away (Book Now / Booking Details)
+  useEffect(() => {
+    const restored = restoreCallDetailFromSession();
+    if (restored) {
+      restoredFromSession.current = true;
+      setSelectedCall(restored);
+      clearCallDetailSession();
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedCall) return;
+    // Skip auto-clear for calls restored from session (they may not appear in live data)
+    if (restoredFromSession.current) return;
 
     const isStillActive =
       selectedCall.mode === "incoming"
@@ -488,7 +503,11 @@ export function OverviewTab({
         detail={selectedCall}
         open={Boolean(selectedCall)}
         onOpenChange={(open) => {
-          if (!open) setSelectedCall(null);
+          if (!open) {
+            setSelectedCall(null);
+            restoredFromSession.current = false;
+            clearCallDetailSession();
+          }
         }}
       />
     </div>

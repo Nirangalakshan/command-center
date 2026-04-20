@@ -68,6 +68,31 @@ export interface CallDetailSnapshot {
   ownerId: string;
 }
 
+// ── SessionStorage persistence for call detail across page navigation ──
+const CALL_DETAIL_STORAGE_KEY = 'cc_active_call_detail';
+
+export function saveCallDetailToSession(detail: CallDetailSnapshot): void {
+  try {
+    sessionStorage.setItem(CALL_DETAIL_STORAGE_KEY, JSON.stringify(detail));
+  } catch { /* ignore quota errors */ }
+}
+
+export function restoreCallDetailFromSession(): CallDetailSnapshot | null {
+  try {
+    const raw = sessionStorage.getItem(CALL_DETAIL_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as CallDetailSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+export function clearCallDetailSession(): void {
+  try {
+    sessionStorage.removeItem(CALL_DETAIL_STORAGE_KEY);
+  } catch { /* ignore */ }
+}
+
 interface CallDetailsSheetProps {
   detail: CallDetailSnapshot | null;
   open: boolean;
@@ -261,6 +286,7 @@ export function CallDetailsSheet({
       <SheetContent
         side="right"
         className="w-full border-l border-slate-200 bg-slate-50 p-0 sm:max-w-2xl"
+        preventClose
       >
         <ScrollArea className="h-full">
           <div className="min-h-full">
@@ -396,6 +422,7 @@ export function CallDetailsSheet({
                         // disabled={command.label === 'Book Now' && !canOpenBooking}
                         onClick={() => {
                           if (command.label === "Book Now") {
+                            if (detail) saveCallDetailToSession(detail);
                             navigate("/booking", {
                               state: {
                                 tenantId: detail?.tenantId ?? "",
@@ -413,6 +440,7 @@ export function CallDetailsSheet({
                             return;
                           }
                           if (command.label === "Booking Details") {
+                            if (detail) saveCallDetailToSession(detail);
                             navigate("/bookings/dashboard", {
                               state: {
                                 ownerId: detail?.ownerId ?? "",

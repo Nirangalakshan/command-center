@@ -13,6 +13,7 @@ import {
   MapPin,
   Plus,
   CheckCircle2,
+  UserCheck,
 } from "lucide-react";
 import type { VehicleRecord } from "@/services/types";
 import {
@@ -40,6 +41,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { getServices, getServicesByBranch, type WorkshopService } from "@/services/servicesApi";
+import { getStaffByBranch, type StaffMember } from "@/services/staffApi";
 
 interface BookingPageState {
   tenantId: string;
@@ -245,6 +247,11 @@ export default function BookingPage() {
   const [pickupTime, setPickupTime] = useState("");
   const [notes, setNotes] = useState("");
 
+  // Staff assignment
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [assignedStaffId, setAssignedStaffId] = useState("");
+
   // Services from Firebase API
   const [services, setServices] = useState<WorkshopService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
@@ -271,6 +278,23 @@ export default function BookingPage() {
       })
       .catch((err: Error) => setServicesError(err.message))
       .finally(() => setServicesLoading(false));
+  }, [state?.branchId, state?.ownerId]);
+
+  // Fetch staff members for the branch
+  useEffect(() => {
+    const ownerIdToUse = state?.ownerId;
+    const branchIdToUse = state?.branchId;
+
+    if (!ownerIdToUse || !branchIdToUse) {
+      setStaffLoading(false);
+      return;
+    }
+
+    setStaffLoading(true);
+    getStaffByBranch(ownerIdToUse, branchIdToUse)
+      .then((members) => setStaffMembers(members))
+      .catch(() => setStaffMembers([]))
+      .finally(() => setStaffLoading(false));
   }, [state?.branchId, state?.ownerId]);
 
   const availableVehicles: VehicleRecord[] = state?.availableVehicles ?? [];
@@ -344,11 +368,14 @@ export default function BookingPage() {
     }
 
     // Build services payload from selected service objects
+    const selectedStaff = staffMembers.find((m) => m.id === assignedStaffId);
     const serviceItems: BookingServiceItem[] = chosenServices.map((s) => ({
       serviceId: s.id,
       serviceName: s.name,
       price: s.price,
       duration: s.duration,
+      staffId: assignedStaffId || undefined,
+      staffName: selectedStaff?.name || undefined,
     }));
 
     // Use branchId from state, fallback to first branch from selected service
@@ -420,6 +447,8 @@ export default function BookingPage() {
           pickup_time: pickupTime || null,
           services: serviceItems,
           notes: notes || null,
+          assigned_staff_id: assignedStaffId || null,
+          assigned_staff_name: selectedStaff?.name || assignedStaffId || null,
           bms_status: "Pending",
           bms_response: result,
         });
@@ -464,7 +493,8 @@ export default function BookingPage() {
     customerPhone &&
     selectedServices.length > 0 &&
     selectedDate &&
-    dropOffTime
+    dropOffTime &&
+    assignedStaffId
   );
 
   return (
@@ -871,6 +901,83 @@ export default function BookingPage() {
                 />
               </CardContent>
             </Card>
+
+            {/* Staff Assignment */}
+            <Card className="border-0 bg-white shadow-sm">
+              <CardContent className="p-5">
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500 text-white">
+                    <UserCheck className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Assign Staff Member <span className="text-rose-500">*</span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      Select a staff member to handle this booking
+                    </p>
+                  </div>
+                </div>
+                <Separator className="mb-4" />
+
+                {staffLoading ? (
+                  <p className="text-sm text-slate-400">Loading staff…</p>
+                ) : staffMembers.length === 0 ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-500">
+                      No staff members found for this branch.
+                    </p>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="manual-staff-name">Staff name (manual entry)</Label>
+                      <Input
+                        id="manual-staff-name"
+                        value={assignedStaffId}
+                        onChange={(e) => setAssignedStaffId(e.target.value)}
+                        placeholder="Enter staff member name"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {staffMembers.map((member) => {
+                      const isSelected = assignedStaffId === member.id;
+                      return (
+                        <button
+                          key={member.id}
+                          type="button"
+                          onClick={() => setAssignedStaffId(isSelected ? "" : member.id)}
+                          className={`flex items-center gap-3 rounded-xl border-2 p-3 text-left transition-all ${
+                            isSelected
+                              ? "border-violet-400 bg-violet-50 shadow-md"
+                              : "border-slate-200 bg-white hover:border-violet-300 hover:bg-violet-50/40"
+                          }`}
+                        >
+                          <div
+                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                              isSelected
+                                ? "bg-violet-500 text-white"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {member.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className={`text-sm font-semibold ${isSelected ? "text-violet-900" : "text-slate-800"}`}>
+                              {member.name}
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-500">
+                              <Check className="h-3.5 w-3.5 text-white" />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
           {/* Right: Order Summary */}
@@ -971,6 +1078,29 @@ export default function BookingPage() {
                           .reduce((sum, s) => sum + s.price, 0)
                           .toLocaleString()}
                       </span>
+                    </div>
+                  )}
+
+                  {assignedStaffId && (
+                    <div className="mb-3 rounded-xl bg-slate-800 px-3 py-2 text-xs text-slate-400">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <UserCheck className="h-3.5 w-3.5 text-violet-400" />
+                        <span className="font-medium text-slate-300">
+                          Assigned Staff
+                        </span>
+                      </div>
+                      <div className="text-white font-medium">
+                        {staffMembers.find((m) => m.id === assignedStaffId)?.name || assignedStaffId}
+                      </div>
+                    </div>
+                  )}
+
+                  {!assignedStaffId && (
+                    <div className="mb-3 rounded-xl border border-dashed border-slate-600 px-3 py-2 text-xs text-slate-500">
+                      <div className="flex items-center gap-1.5">
+                        <UserCheck className="h-3.5 w-3.5" />
+                        <span>No staff assigned — required to confirm</span>
+                      </div>
                     </div>
                   )}
 
