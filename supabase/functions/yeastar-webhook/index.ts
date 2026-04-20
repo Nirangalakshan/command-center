@@ -129,6 +129,7 @@ async function handleNewCdr(body: Record<string, unknown>) {
     agent_id: agent?.id ?? null,
     caller_number: callfrom,
     caller_name: callerName,
+    dialed_number: did || null,
     start_time: startTime.toISOString(),
     answer_time: answerTime?.toISOString() ?? null,
     end_time: endTime.toISOString(),

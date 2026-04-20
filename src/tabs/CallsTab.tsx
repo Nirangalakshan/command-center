@@ -60,7 +60,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
           <Input
             className="max-w-md bg-white"
             type="text"
-            placeholder="Search by caller, agent, queue, client..."
+            placeholder="Search by customer name, phone, agent, queue, tenant..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -142,9 +142,10 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
               <TableHeader>
                 <TableRow>
                   <TableHead>Time</TableHead>
-                  <TableHead>Caller</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Phone</TableHead>
                   {permissions.canViewTenantNames && (
-                    <TableHead>Client</TableHead>
+                    <TableHead>Tenant</TableHead>
                   )}
                   <TableHead>Queue</TableHead>
                   <TableHead>Agent</TableHead>
@@ -160,13 +161,15 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                   return (
                     <TableRow key={c.id}>
                       <TableCell className="font-mono text-xs">{formatTime(c.startTime)}</TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {formatPhone(c.callerNumber)}
-                        {c.callerName && (
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {c.callerName}
-                          </div>
+                      <TableCell className="text-sm">
+                        {c.callerName ? (
+                          <span className="font-medium text-foreground">{c.callerName}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
                         )}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs tabular-nums">
+                        {formatPhone(c.callerNumber)}
                       </TableCell>
                       {permissions.canViewTenantNames && (
                         <TableCell>
@@ -195,7 +198,9 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                           {c.queueName}
                         </Badge>
                       </TableCell>
-                      <TableCell>{c.agentName}</TableCell>
+                      <TableCell className="max-w-[200px]">
+                        <span className="font-medium text-foreground">{c.agentName}</span>
+                      </TableCell>
                       <TableCell className="font-mono text-xs">
                         {c.durationSeconds > 0 ? formatSeconds(c.durationSeconds) : '—'}
                       </TableCell>

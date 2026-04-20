@@ -3,6 +3,7 @@ import type {
   DashboardSummary,
   Queue,
   Agent,
+  Call,
   Tenant,
   Permissions,
   UserSession,
@@ -44,6 +45,7 @@ interface OverviewTabProps {
   summary: DashboardSummary | null;
   queues: Queue[];
   agents: Agent[];
+  calls: Call[];
   tenants: Tenant[];
   permissions: Permissions;
   now: number;
@@ -56,6 +58,7 @@ export function OverviewTab({
   summary,
   queues,
   agents,
+  calls,
   tenants,
   permissions,
   now,
@@ -63,6 +66,17 @@ export function OverviewTab({
   agentGroups,
   incomingCalls,
 }: OverviewTabProps) {
+  const isAgentOverview = session?.role === "agent";
+
+  const myAnsweredCallsCount = useMemo(() => {
+    if (!isAgentOverview || !session) return 0;
+    const me = agents.find((a) => a.userId === session.userId);
+    if (!me) return 0;
+    return calls.filter(
+      (c) => c.agentId === me.id && c.result === "answered",
+    ).length;
+  }, [isAgentOverview, session, agents, calls]);
+
   const liveAgents = useMemo(
     () => agents.filter((a) => a.status === "on-call"),
     [agents],
@@ -225,51 +239,74 @@ export function OverviewTab({
         />
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-        <MetricCard
-          label="Active Calls"
-          value={summary.activeCalls}
-          accent="var(--cc-color-red)"
-          sub="live now"
-        />
-        <MetricCard
-          label="Calls Waiting"
-          value={summary.queuedCalls}
-          accent="var(--cc-color-amber)"
-          sub="in queue"
-        />
-        <MetricCard
-          label="Agents Online"
-          value={summary.onlineAgents}
-          accent="var(--cc-color-cyan)"
-          sub={`${summary.availableAgents} available`}
-        />
-        <MetricCard
-          label="Calls Today"
-          value={summary.totalCallsToday}
-          accent="var(--cc-color-cyan)"
-        />
-        <MetricCard
-          label="Answer Rate"
-          value={`${summary.answerRate}%`}
-          accent="var(--cc-color-green)"
-        />
-        <MetricCard
-          label="Abandon Rate"
-          value={`${summary.abandonRate}%`}
-          accent="var(--cc-color-red)"
-        />
-        <MetricCard
-          label="Avg Handle"
-          value={formatSeconds(summary.avgHandleTime)}
-          accent="var(--cc-color-purple)"
-        />
-        <MetricCard
-          label="SLA %"
-          value={`${summary.slaPercent}%`}
-          accent="var(--cc-color-green)"
-        />
-      </div>
+      {isAgentOverview ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <MetricCard
+            label="Answered Calls"
+            value={myAnsweredCallsCount}
+            accent="var(--cc-color-green)"
+            sub="your calls"
+          />
+          <MetricCard
+            label="Active Calls"
+            value={summary.activeCalls}
+            accent="var(--cc-color-red)"
+            sub="live now"
+          />
+          <MetricCard
+            label="Calls Waiting"
+            value={summary.queuedCalls}
+            accent="var(--cc-color-amber)"
+            sub="in queue"
+          />
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+          <MetricCard
+            label="Active Calls"
+            value={summary.activeCalls}
+            accent="var(--cc-color-red)"
+            sub="live now"
+          />
+          <MetricCard
+            label="Calls Waiting"
+            value={summary.queuedCalls}
+            accent="var(--cc-color-amber)"
+            sub="in queue"
+          />
+          <MetricCard
+            label="Agents Online"
+            value={summary.onlineAgents}
+            accent="var(--cc-color-cyan)"
+            sub={`${summary.availableAgents} available`}
+          />
+          <MetricCard
+            label="Calls Today"
+            value={summary.totalCallsToday}
+            accent="var(--cc-color-cyan)"
+          />
+          <MetricCard
+            label="Answer Rate"
+            value={`${summary.answerRate}%`}
+            accent="var(--cc-color-green)"
+          />
+          <MetricCard
+            label="Abandon Rate"
+            value={`${summary.abandonRate}%`}
+            accent="var(--cc-color-red)"
+          />
+          <MetricCard
+            label="Avg Handle"
+            value={formatSeconds(summary.avgHandleTime)}
+            accent="var(--cc-color-purple)"
+          />
+          <MetricCard
+            label="SLA %"
+            value={`${summary.slaPercent}%`}
+            accent="var(--cc-color-green)"
+          />
+        </div>
+      )}
 
       {/* Queue Status + Notifications — side by side */}
       <div className="grid gap-6 lg:grid-cols-2">

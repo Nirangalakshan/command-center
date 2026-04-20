@@ -51,6 +51,8 @@ export interface Queue {
 
 export interface Agent {
   id: string;
+  /** Supabase auth user id when this row is linked to a login account. */
+  userId?: string | null;
   tenantId: string;
   queueIds: string[];
   name: string;
@@ -74,8 +76,11 @@ export interface Call {
   tenantId: string;
   queueId: string;
   agentId: string | null;
+  /** Customer / inbound caller number (CLI). */
   callerNumber: string;
   callerName: string | null;
+  /** Tenant inbound DID — the number the caller dialled to reach this tenant (Yeastar CDR). */
+  dialedNumber: string | null;
   startTime: string;
   answerTime: string | null;
   endTime: string | null;

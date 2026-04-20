@@ -119,6 +119,7 @@ export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
 function mapAgent(a: Record<string, unknown> & { tenants?: { name?: string } }): Agent {
   return {
     id: a.id as string,
+    userId: (a.user_id as string | null) ?? null,
     tenantId: (a.tenant_id as string) || '',
     queueIds: (a.queue_ids as string[]) || [],
     name: a.name as string,
@@ -174,13 +175,41 @@ export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
   if (tenantId) query = query.eq('tenant_id', tenantId);
   const { data, error } = await query.order('start_time', { ascending: false }).limit(100);
   if (error) throw new Error(error.message);
-  return (data || []).map((c) => ({
+  const rows = data || [];
+  if (rows.length === 0) return [];
+
+  const agentIds = [...new Set(rows.map((c) => c.agent_id).filter((id): id is string => Boolean(id)))];
+  const queueIds = [...new Set(rows.map((c) => c.queue_id))];
+  const tenantIds = [...new Set(rows.map((c) => c.tenant_id))];
+
+  const [agentsRes, queuesRes, tenantsRes] = await Promise.all([
+    agentIds.length > 0
+      ? supabase.from('agents').select('id, name').in('id', agentIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
+    queueIds.length > 0
+      ? supabase.from('queues').select('id, name').in('id', queueIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
+    tenantIds.length > 0
+      ? supabase.from('tenants').select('id, name').in('id', tenantIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
+  ]);
+
+  if (agentsRes.error) throw new Error(agentsRes.error.message);
+  if (queuesRes.error) throw new Error(queuesRes.error.message);
+  if (tenantsRes.error) throw new Error(tenantsRes.error.message);
+
+  const agentMap = new Map((agentsRes.data ?? []).map((a) => [a.id, a.name]));
+  const queueMap = new Map((queuesRes.data ?? []).map((q) => [q.id, q.name]));
+  const tenantMap = new Map((tenantsRes.data ?? []).map((t) => [t.id, t.name]));
+
+  return rows.map((c) => ({
     id: c.id,
     tenantId: c.tenant_id,
     queueId: c.queue_id,
     agentId: c.agent_id,
     callerNumber: c.caller_number,
     callerName: c.caller_name,
+    dialedNumber: c.dialed_number ?? null,
     startTime: c.start_time,
     answerTime: c.answer_time,
     endTime: c.end_time,
@@ -189,9 +218,9 @@ export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
     recordingUrl: c.recording_url,
     transcriptStatus: c.transcript_status as TranscriptStatus,
     summaryStatus: c.summary_status as 'pending' | 'ready' | 'none',
-    agentName: '—', // Will be joined later or resolved client-side
-    queueName: '—',
-    tenantName: '—',
+    agentName: c.agent_id ? (agentMap.get(c.agent_id) ?? 'Unknown agent') : '—',
+    queueName: queueMap.get(c.queue_id) ?? c.queue_id,
+    tenantName: tenantMap.get(c.tenant_id) ?? c.tenant_id,
   }));
 }
 

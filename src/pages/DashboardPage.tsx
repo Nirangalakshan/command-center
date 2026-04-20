@@ -98,17 +98,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       {/* Main content */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top header */}
-        <DashboardHeader
-          tenants={d.tenants}
-          selectedTenant={d.selectedTenant}
-          onSelectTenant={d.setSelectedTenant}
-          connectionStatus={d.connectionStatus}
-          clockStr={clockStr}
-          permissions={permissions}
-          displayName={session.displayName}
-          currentRole={session.role}
-          onSignOut={onSignOut}
-        />
+        <DashboardHeader connectionStatus={d.connectionStatus} clockStr={clockStr} />
 
         {/* Scrollable tab content */}
         <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
@@ -133,6 +123,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   summary={d.summary}
                   queues={d.queues}
                   agents={d.agents}
+                  calls={d.calls}
                   tenants={d.tenants}
                   permissions={permissions}
                   now={d.now}

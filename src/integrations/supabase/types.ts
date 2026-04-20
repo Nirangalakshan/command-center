@@ -181,6 +181,7 @@ export type Database = {
           caller_name: string | null
           caller_number: string
           created_at: string
+          dialed_number: string | null
           duration_seconds: number
           end_time: string | null
           id: string
@@ -198,6 +199,7 @@ export type Database = {
           caller_name?: string | null
           caller_number?: string
           created_at?: string
+          dialed_number?: string | null
           duration_seconds?: number
           end_time?: string | null
           id?: string
@@ -215,6 +217,7 @@ export type Database = {
           caller_name?: string | null
           caller_number?: string
           created_at?: string
+          dialed_number?: string | null
           duration_seconds?: number
           end_time?: string | null
           id?: string
