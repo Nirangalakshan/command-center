@@ -6,6 +6,7 @@ import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useLiveClock } from '@/hooks/useLiveClock';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { SoftphoneWidget } from '@/components/dashboard/SoftphoneWidget';
 import DashboardSidebar from '@/tabs/DashboardSidebar';
 import { LoadingSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { OverviewTab } from '@/tabs/OverviewTab';
@@ -85,8 +86,18 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     setClients(updated);
   }, [session, d.selectedTenant]);
 
+  // Resolve the logged-in agent's email for the Linkus softphone.
+  // Only agents with a matching record in the agents table get the widget.
+  const currentAgent = session.role === 'agent'
+    ? d.agents.find((a) => a.userId === session.userId)
+    : null;
+  const softphoneEmail = currentAgent?.email ?? null;
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
+      {/* Floating softphone widget — only visible for agent accounts */}
+      <SoftphoneWidget agentEmail={softphoneEmail} />
+
       {/* Sidebar */}
       <DashboardSidebar
         selectedTab={d.selectedTab}
