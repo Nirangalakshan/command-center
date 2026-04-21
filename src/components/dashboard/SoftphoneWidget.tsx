@@ -287,7 +287,14 @@ export function SoftphoneWidget({ agentEmail }: SoftphoneWidgetProps) {
 
   const handleCall = useCallback(() => {
     if (!dialInput) return;
-    sdk.makeCall(dialInput).catch((err) =>
+    // Strip everything the PBX can't dial — spaces, dashes, parentheses, dots.
+    // Keep digits and valid SIP dialing characters (+, *, #).
+    const sanitized = dialInput.replace(/[^0-9+*#]/g, '');
+    if (!sanitized) {
+      console.warn('[SoftphoneWidget] Dial input had no valid digits:', dialInput);
+      return;
+    }
+    sdk.makeCall(sanitized).catch((err) =>
       console.error('[SoftphoneWidget] Call failed:', err)
     );
     setDialInput('');

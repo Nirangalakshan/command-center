@@ -157,6 +157,43 @@ export function useDashboardData({
     }
   }, [loadData, session]);
 
+  // Reconcile session-restored incoming calls against the CDR table.
+  // When the user navigates to /bookings/* and back (or refreshes the tab),
+  // the realtime subscription is torn down and any CallHangup broadcast fired
+  // during that window is lost. CDRs are the definitive end-of-call signal:
+  // if a `yeastar-<callid>` row's `endTime` is AFTER the current ring started
+  // (`waitingSince`), the matching `incoming-<callid>` entry is stale and
+  // must be evicted immediately instead of waiting for the 2-minute stale
+  // timer below.
+  //
+  // IMPORTANT: we only evict when the CDR ended *after* this specific ring
+  // began. A bare callid match is not enough — Yeastar can reuse callids
+  // across calls, and an old CDR from a previous ring would otherwise wipe
+  // a currently-ringing card the moment `fetchCalls` returns.
+  useEffect(() => {
+    setIncomingCalls((prev) => {
+      if (prev.length === 0) return prev;
+      const endTimeById = new Map<string, string | null>();
+      for (const c of calls) endTimeById.set(c.id, c.endTime);
+      const fresh = prev.filter((ic) => {
+        const callid = ic.id.replace(/^incoming-/, "");
+        const cdrEnd = endTimeById.get(`yeastar-${callid}`);
+        if (!cdrEnd) return true;
+        const cdrEndMs = new Date(cdrEnd).getTime();
+        if (!Number.isFinite(cdrEndMs)) return true;
+        const endedAfterRing = cdrEndMs >= ic.waitingSince;
+        if (endedAfterRing) {
+          console.log(
+            `[useDashboardData] Evicting ${ic.id} — CDR ended ${cdrEnd} ` +
+              `(ring started ${new Date(ic.waitingSince).toISOString()})`,
+          );
+        }
+        return !endedAfterRing;
+      });
+      return fresh.length === prev.length ? prev : fresh;
+    });
+  }, [calls]);
+
   // Evict stale incoming-call entries that have been sitting around for too
   // long (e.g. because the CallHangup broadcast was missed or never sent).
   // Runs every tick (1 s) since `now` changes every second.

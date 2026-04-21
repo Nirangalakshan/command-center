@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { init } from 'ys-webrtc-sdk-core';
 import type { PhoneOperator, PBXOperator, CallStatus } from 'ys-webrtc-sdk-core';
-import { fetchSdkSign, LINKUS_PBX_URL, IpForbiddenError } from '@/services/linkusSdkService';
+import {
+  fetchSdkSign,
+  LINKUS_PBX_URL,
+  IpForbiddenError,
+  clearCachedSdkSign,
+} from '@/services/linkusSdkService';
 
 export type MicPermission = 'unknown' | 'granted' | 'denied';
 
@@ -82,7 +87,10 @@ function getOrCreateAudio(): HTMLAudioElement {
   return el;
 }
 
-function attachRemoteStream(stream: MediaStream) {
+function attachRemoteStream(stream: unknown) {
+  // The SDK occasionally emits updateRemoteStream with undefined/null
+  // during teardown. Ignore anything that isn't a real MediaStream.
+  if (!(stream instanceof MediaStream)) return;
   const audio = getOrCreateAudio();
   if (audio.srcObject !== stream) {
     audio.srcObject = stream;
@@ -142,7 +150,15 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
       next.delete(callId);
       return next;
     });
-    setIncomingCallIds((prev) => prev.filter((id) => id !== callId));
+    setIncomingCallIds((prev) =>
+      prev.includes(callId) ? prev.filter((id) => id !== callId) : prev
+    );
+  }, []);
+
+  const dismissIncoming = useCallback((callId: string) => {
+    setIncomingCallIds((prev) =>
+      prev.includes(callId) ? prev.filter((id) => id !== callId) : prev
+    );
   }, []);
 
   // ── SDK lifecycle ────────────────────────────────────────
@@ -177,24 +193,48 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
       }
 
       try {
-        const sign = await fetchSdkSign(agentEmail!);
-        if (cancelled) return;
+        // Try to initialise the SDK. If we hit PBX_API_ERROR (-103), the most
+        // common cause is a stale cached sign — clear it and retry once with a
+        // freshly-generated sign before giving up.
+        const tryInit = async () => {
+          const sign = await fetchSdkSign(agentEmail!);
+          if (cancelled) return null;
+          console.log('[useLinkusSDK] Initialising SDK', {
+            username: agentEmail,
+            pbxURL: LINKUS_PBX_URL,
+            signLen: sign?.length ?? 0,
+          });
+          return init({
+            username: agentEmail!,
+            secret: sign,
+            pbxURL: LINKUS_PBX_URL,
+            enableLog: import.meta.env.DEV,
+          });
+        };
 
-        console.log('[useLinkusSDK] Initialising SDK', {
-          username: agentEmail,
-          pbxURL: LINKUS_PBX_URL,
-          signLen: sign?.length ?? 0,
-        });
+        let operator: Awaited<ReturnType<typeof init>> | null = null;
+        try {
+          operator = await tryInit();
+        } catch (err) {
+          const info = err as { code?: number; message?: string };
+          const isPbxApiError =
+            info?.code === -103 ||
+            (typeof info?.message === 'string' &&
+              info.message.includes('PBX_API_ERROR'));
 
-        const operator = await init({
-          username: agentEmail!,
-          secret: sign,
-          pbxURL: LINKUS_PBX_URL,
-          enableLog: import.meta.env.DEV,
-        });
+          if (isPbxApiError && !cancelled) {
+            console.warn(
+              '[useLinkusSDK] PBX_API_ERROR on first init — clearing cached sign and retrying once'
+            );
+            clearCachedSdkSign(agentEmail!);
+            operator = await tryInit();
+          } else {
+            throw err;
+          }
+        }
 
-        if (cancelled) {
-          operator.destroy();
+        if (cancelled || !operator) {
+          operator?.destroy();
           return;
         }
 
@@ -244,45 +284,63 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
           };
         }) => {
           if (cancelled) return;
+          console.log('[useLinkusSDK] newRTCSession', callId, session.status.callStatus, session.status.communicationType);
 
           upsertCall(session.status);
 
           session.on('statusChange', () => {
-            if (!cancelled) upsertCall(session.status);
+            if (cancelled) return;
+            upsertCall(session.status);
+            // Once the call is 'talking' it is no longer an incoming ring —
+            // clear it from the incoming list in case `startSession` / `accepted`
+            // didn't fire reliably for this call.
+            if (session.status.callStatus === 'talking') {
+              dismissIncoming(callId);
+            }
+          });
+
+          session.on('accepted', () => {
+            if (cancelled) return;
+            console.log('[useLinkusSDK] session accepted', callId);
+            dismissIncoming(callId);
+            upsertCall(session.status);
           });
 
           session.on('confirmed', () => {
-            if (!cancelled) {
-              upsertCall(session.status);
-              // Attach audio as soon as the call is confirmed (both sides connected)
-              if (session.remoteStream) attachRemoteStream(session.remoteStream);
-            }
+            if (cancelled) return;
+            console.log('[useLinkusSDK] session confirmed', callId);
+            dismissIncoming(callId);
+            upsertCall(session.status);
+            // Attach audio as soon as the call is confirmed (both sides connected)
+            if (session.remoteStream) attachRemoteStream(session.remoteStream);
           });
 
-          // updateRemoteStream fires whenever the MediaStream track changes
+          // updateRemoteStream fires whenever the MediaStream track changes.
+          // The stream arg can be undefined during teardown — attachRemoteStream
+          // guards against that.
           session.on('updateRemoteStream', (stream: unknown) => {
-            if (!cancelled) attachRemoteStream(stream as MediaStream);
+            if (!cancelled) attachRemoteStream(stream);
           });
 
           session.on('ended', () => {
-            if (!cancelled) {
-              removeCall(callId);
-              // Stop audio if no other calls are active
-              if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
-            }
+            if (cancelled) return;
+            console.log('[useLinkusSDK] session ended', callId);
+            removeCall(callId);
+            if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
           });
 
-          session.on('failed', () => {
-            if (!cancelled) {
-              removeCall(callId);
-              if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
-            }
+          session.on('failed', (info: unknown) => {
+            if (cancelled) return;
+            console.log('[useLinkusSDK] session failed', callId, info);
+            removeCall(callId);
+            if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
           });
         });
 
         // ── Incoming call ─────────────────────────────────
         phone.on('incoming', ({ callId }: { callId: string }) => {
           if (cancelled) return;
+          console.log('[useLinkusSDK] incoming', callId);
           setIncomingCallIds((prev) =>
             prev.includes(callId) ? prev : [...prev, callId]
           );
@@ -291,13 +349,16 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
         // ── Session established (answered / outbound connected) ─
         phone.on('startSession', ({ callId }: { callId: string }) => {
           if (cancelled) return;
-          // Remove from incoming list — it's now an active call
-          setIncomingCallIds((prev) => prev.filter((id) => id !== callId));
+          console.log('[useLinkusSDK] startSession', callId);
+          dismissIncoming(callId);
         });
 
-        // ── Session removed ───────────────────────────────
+        // ── Session removed (missed, rejected, hung up, etc.) ──
         phone.on('deleteSession', ({ callId }: { callId: string }) => {
-          if (!cancelled) removeCall(callId);
+          if (cancelled) return;
+          console.log('[useLinkusSDK] deleteSession', callId);
+          removeCall(callId);
+          if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
         });
 
         // PBX-level runtime errors (licence issues, logged in elsewhere, etc.)
@@ -315,12 +376,38 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
         if (err instanceof IpForbiddenError) {
           setStatus('ip-forbidden');
           setError(null);
-        } else {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error('[useLinkusSDK] Bootstrap failed:', err);
-          setStatus('error');
-          setError(msg);
+          return;
         }
+
+        const info = err as { code?: number; message?: string };
+        const raw = info?.message ?? (err instanceof Error ? err.message : String(err));
+        console.error('[useLinkusSDK] Bootstrap failed:', err);
+
+        // Map known Yeastar SDK error codes/messages to actionable guidance.
+        let friendly = raw;
+        if (info?.code === -103 || raw.includes('PBX_API_ERROR')) {
+          friendly =
+            `Yeastar PBX rejected the softphone login (${agentEmail}). ` +
+            `Verify that an extension on the PBX has this email set and that ` +
+            `Linkus is enabled for that extension.`;
+        } else if (raw.includes('LINKUS_DISABLED')) {
+          friendly = 'Linkus is disabled for this extension on the Yeastar PBX.';
+        } else if (raw.includes('LOGGED_IN_ELSEWHERE')) {
+          friendly =
+            'This extension is already logged in elsewhere (max concurrent Linkus sessions reached). Log out of other Linkus clients and retry.';
+        } else if (raw.includes('EXTENSION_DELETED')) {
+          friendly = 'This extension has been deleted on the Yeastar PBX.';
+        } else if (raw.includes('SDK_PLAN_DISABLED')) {
+          friendly = 'Yeastar Linkus SDK plan is disabled / expired on this PBX.';
+        } else if (raw.includes('PBX_NETWORK_ERROR')) {
+          friendly =
+            'Could not reach the Yeastar PBX. Check VITE_YEASTAR_PBX_URL and network connectivity.';
+        } else if (raw.includes('REGISTRY_FAILED')) {
+          friendly = 'SIP registration failed — check extension credentials and Linkus concurrency limit.';
+        }
+
+        setStatus('error');
+        setError(friendly);
       }
     }
 
@@ -336,7 +423,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
       setActiveCalls(new Map());
       setIncomingCallIds([]);
     };
-  }, [agentEmail, upsertCall, removeCall]);
+  }, [agentEmail, upsertCall, removeCall, dismissIncoming]);
 
   // ── Exposed call controls ────────────────────────────────
 
@@ -348,37 +435,97 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
     []
   );
 
-  const answer = useCallback(async (callId: string) => {
-    await phoneRef.current?.answer(callId);
-  }, []);
+  const answer = useCallback(
+    async (callId: string) => {
+      // Optimistically dismiss the incoming-call UI immediately so the widget
+      // transitions from "Incoming" → "On Call" without waiting for
+      // startSession / accepted events (which can race).
+      dismissIncoming(callId);
+      try {
+        await phoneRef.current?.answer(callId);
+      } catch (err) {
+        console.error('[useLinkusSDK] answer failed', err);
+        // If answer failed, the session will be torn down by the SDK and
+        // deleteSession will clean up activeCalls.
+      }
+    },
+    [dismissIncoming]
+  );
 
-  const reject = useCallback((callId: string) => {
-    phoneRef.current?.reject(callId);
-  }, []);
+  const reject = useCallback(
+    (callId: string) => {
+      // Call the SDK FIRST (while the session is still in a valid state),
+      // THEN optimistically update local state. Doing it the other way around
+      // can leave the session referenced but already-torn-down, which causes
+      // JsSIP's "Invalid status" error on subsequent SDK calls.
+      const phone = phoneRef.current;
+      if (phone?.getSession(callId)) {
+        try {
+          phone.reject(callId);
+        } catch (err) {
+          // Session may already be terminated (remote side cancelled) — safe to ignore.
+          console.warn('[useLinkusSDK] reject ignored:', err);
+        }
+      }
+      dismissIncoming(callId);
+      removeCall(callId);
+    },
+    [dismissIncoming, removeCall]
+  );
 
-  const hangup = useCallback((callId: string) => {
-    phoneRef.current?.hangup(callId);
-  }, []);
+  const hangup = useCallback(
+    (callId: string) => {
+      const phone = phoneRef.current;
+      // Only invoke the SDK if the session is still alive on the SDK side.
+      // If it's already gone (remote hung up, we already rejected, etc.),
+      // calling phone.hangup() throws "Invalid status: 8" from JsSIP.
+      if (phone?.getSession(callId)) {
+        try {
+          phone.hangup(callId);
+        } catch (err) {
+          console.warn('[useLinkusSDK] hangup ignored:', err);
+        }
+      }
+      removeCall(callId);
+      if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
+    },
+    [removeCall]
+  );
+
+  // Small helper to safely invoke an SDK action that can throw
+  // "Invalid status" / similar if the session is already torn down.
+  const safeSessionAction = useCallback(
+    (callId: string, label: string, fn: (callId: string) => void) => {
+      const phone = phoneRef.current;
+      if (!phone?.getSession(callId)) return;
+      try {
+        fn(callId);
+      } catch (err) {
+        console.warn(`[useLinkusSDK] ${label} ignored:`, err);
+      }
+    },
+    []
+  );
 
   const hold = useCallback((callId: string) => {
-    phoneRef.current?.hold(callId);
-  }, []);
+    safeSessionAction(callId, 'hold', (id) => phoneRef.current?.hold(id));
+  }, [safeSessionAction]);
 
   const unhold = useCallback((callId: string) => {
-    phoneRef.current?.unhold(callId);
-  }, []);
+    safeSessionAction(callId, 'unhold', (id) => phoneRef.current?.unhold(id));
+  }, [safeSessionAction]);
 
   const mute = useCallback((callId: string) => {
-    phoneRef.current?.mute(callId);
-  }, []);
+    safeSessionAction(callId, 'mute', (id) => phoneRef.current?.mute(id));
+  }, [safeSessionAction]);
 
   const unmute = useCallback((callId: string) => {
-    phoneRef.current?.unmute(callId);
-  }, []);
+    safeSessionAction(callId, 'unmute', (id) => phoneRef.current?.unmute(id));
+  }, [safeSessionAction]);
 
   const dtmf = useCallback((callId: string, digit: string) => {
-    phoneRef.current?.dtmf(callId, digit);
-  }, []);
+    safeSessionAction(callId, 'dtmf', (id) => phoneRef.current?.dtmf(id, digit));
+  }, [safeSessionAction]);
 
   // ── Derived lists ────────────────────────────────────────
 

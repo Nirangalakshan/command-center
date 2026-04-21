@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '@/services/types';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useLiveClock } from '@/hooks/useLiveClock';
+import { useFirebaseAuth } from '@/integrations/firebase/useFirebaseAuth';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { SoftphoneWidget } from '@/components/dashboard/SoftphoneWidget';
 import DashboardSidebar from '@/tabs/DashboardSidebar';
@@ -31,6 +32,7 @@ interface DashboardPageProps {
 export default function DashboardPage({ session, permissions, onSignOut }: DashboardPageProps) {
   const d = useDashboardData({ session });
   const { formatted: clockStr } = useLiveClock();
+  const { firebaseUser } = useFirebaseAuth();
   const [clients, setClients] = useState<TenantOnboarding[]>([]);
   const navigate = useNavigate();
 
@@ -86,16 +88,24 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     setClients(updated);
   }, [session, d.selectedTenant]);
 
-  // Resolve the logged-in agent's email for the Linkus softphone.
-  // Only agents with a matching record in the agents table get the widget.
-  const currentAgent = session.role === 'agent'
-    ? d.agents.find((a) => a.userId === session.userId)
-    : null;
-  const softphoneEmail = currentAgent?.email ?? null;
+  // Resolve the email used to register with the Linkus softphone.
+  //   • Agents  → use their record in the agents table (per-agent Yeastar extension)
+  //   • Super admin → use VITE_YEASTAR_ADMIN_EMAIL if set (dedicated admin extension),
+  //                   otherwise fall back to the Firebase login email
+  //   • Other roles (client-admin, supervisor) → no softphone
+  const adminExtEmail = (import.meta.env.VITE_YEASTAR_ADMIN_EMAIL as string | undefined)?.trim();
+
+  let softphoneEmail: string | null = null;
+  if (session.role === 'agent') {
+    const currentAgent = d.agents.find((a) => a.userId === session.userId);
+    softphoneEmail = currentAgent?.email ?? null;
+  } else if (session.role === 'super-admin') {
+    softphoneEmail = adminExtEmail || firebaseUser?.email || null;
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
-      {/* Floating softphone widget — only visible for agent accounts */}
+      {/* Floating softphone widget — visible for agents and super admins */}
       <SoftphoneWidget agentEmail={softphoneEmail} />
 
       {/* Sidebar */}
