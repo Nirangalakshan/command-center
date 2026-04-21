@@ -19,6 +19,8 @@ interface QueueSummaryCardProps {
   now?: number;
   interactive?: boolean;
   isIncoming?: boolean;
+  /** True when an agent in this queue is currently on a connected call. */
+  isLive?: boolean;
   incomingCallers?: IncomingCallerContext[];
   callHint?: string;
   onClick?: () => void;
@@ -32,6 +34,7 @@ export function QueueSummaryCard({
   now = Date.now(),
   interactive = false, 
   isIncoming = false, 
+  isLive = false,
   incomingCallers, 
   callHint, 
   onClick,
@@ -56,11 +59,24 @@ export function QueueSummaryCard({
       : incomingSeverity === "warning"
         ? "linear-gradient(135deg, rgba(245,158,11,0.16), rgba(255,247,237,0.7))"
         : "linear-gradient(135deg, rgba(6,182,212,0.12), rgba(236,254,255,0.65))";
+
+  // Answered / on-call treatment — distinct from ringing/incoming.
+  const liveTone = "var(--cc-color-green)";
+  const liveSurface =
+    "linear-gradient(135deg, rgba(16,185,129,0.14), rgba(236,253,245,0.7))";
+
+  // Only show the "live" treatment if there isn't also an incoming call
+  // (incoming takes visual priority because it demands attention).
+  const showLive = isLive && !isIncoming;
+
   const stats = [
     {
       label: 'Active',
       value: queue.activeCalls,
-      color: queue.activeCalls > 0 ? 'var(--cc-color-red)' : 'var(--cc-color-slate)',
+      color:
+        queue.activeCalls > 0
+          ? 'var(--cc-color-green)'
+          : 'var(--cc-color-slate)',
       icon: PhoneCall,
     },
     {
@@ -72,7 +88,7 @@ export function QueueSummaryCard({
     {
       label: 'Ready',
       value: queue.availableAgents,
-      color: 'var(--cc-color-green)',
+      color: 'var(--cc-color-cyan)',
       icon: HeadphonesIcon,
     },
     {
@@ -87,17 +103,32 @@ export function QueueSummaryCard({
     <Card
       className={`group relative overflow-hidden bg-white transition-all duration-300 ${
         interactive ? 'cursor-pointer hover:-translate-y-1 hover:shadow-xl' : 'shadow-sm'
-      } ${isIncoming ? 'ring-2 ring-offset-2 shadow-lg' : 'border-border/80'}`}
-      style={isIncoming ? { borderColor: `${incomingTone}55`, boxShadow: `0 0 0 1px ${incomingTone}33` } : undefined}
+      } ${isIncoming || showLive ? 'ring-2 ring-offset-2 shadow-lg' : 'border-border/80'}`}
+      style={
+        isIncoming
+          ? { borderColor: `${incomingTone}55`, boxShadow: `0 0 0 1px ${incomingTone}33` }
+          : showLive
+            ? { borderColor: `${liveTone}55`, boxShadow: `0 0 0 1px ${liveTone}33` }
+            : undefined
+      }
       onClick={interactive ? onClick : undefined}
     >
-      {/* Background glow effect for incoming calls */}
+      {/* Background glow effect for incoming / live calls */}
       {isIncoming && (
         <>
           <div className="pointer-events-none absolute inset-0" style={{ background: incomingSurface }} />
           <div
             className="pointer-events-none absolute inset-y-0 left-0 w-1.5 animate-pulse"
             style={{ backgroundColor: incomingTone }}
+          />
+        </>
+      )}
+      {showLive && (
+        <>
+          <div className="pointer-events-none absolute inset-0" style={{ background: liveSurface }} />
+          <div
+            className="pointer-events-none absolute inset-y-0 left-0 w-1.5"
+            style={{ backgroundColor: liveTone }}
           />
         </>
       )}
@@ -128,6 +159,15 @@ export function QueueSummaryCard({
                   Incoming{incomingCount > 1 ? ` (${incomingCount})` : ""}
                 </div>
               )}
+              {showLive && (
+                <div
+                  className="mt-1.5 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em]"
+                  style={{ background: `${liveTone}1a`, color: liveTone }}
+                >
+                  <PhoneCall className="h-3 w-3" />
+                  On Call
+                </div>
+              )}
             </div>
           </div>
           
@@ -139,9 +179,12 @@ export function QueueSummaryCard({
                 <span className="relative inline-flex h-3 w-3 rounded-full" style={{ backgroundColor: incomingTone }}></span>
               </span>
             )}
-           {!isIncoming && queue.activeCalls > 0 && (
-             <span className="relative flex h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]"></span>
-           )}
+           {showLive && (
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" style={{ backgroundColor: liveTone }}></span>
+                <span className="relative inline-flex h-3 w-3 rounded-full" style={{ backgroundColor: liveTone, boxShadow: `0 0 8px ${liveTone}99` }}></span>
+              </span>
+            )}
           </div>
         </div>
 

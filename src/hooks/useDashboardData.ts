@@ -157,38 +157,75 @@ export function useDashboardData({
     }
   }, [loadData, session]);
 
-  // Reconcile session-restored incoming calls against the CDR table.
-  // When the user navigates to /bookings/* and back (or refreshes the tab),
-  // the realtime subscription is torn down and any CallHangup broadcast fired
-  // during that window is lost. CDRs are the definitive end-of-call signal:
-  // if a `yeastar-<callid>` row's `endTime` is AFTER the current ring started
-  // (`waitingSince`), the matching `incoming-<callid>` entry is stale and
-  // must be evicted immediately instead of waiting for the 2-minute stale
-  // timer below.
+  // Reconcile incoming calls against the CDR table. CDRs are the definitive
+  // end-of-call signal — once `handleNewCdr` writes a row, the call is over
+  // regardless of whether the browser heard the matching CallHangup
+  // broadcast (e.g. because the dashboard was unmounted during navigation,
+  // or Yeastar fires BYE without a corresponding CallHangup event).
   //
-  // IMPORTANT: we only evict when the CDR ended *after* this specific ring
-  // began. A bare callid match is not enough — Yeastar can reuse callids
-  // across calls, and an old CDR from a previous ring would otherwise wipe
-  // a currently-ringing card the moment `fetchCalls` returns.
+  // We try two match strategies:
+  //   1. Exact callid match (`incoming-<id>` ↔ `yeastar-<id>`).
+  //   2. Fuzzy match by tenant + caller number + time window — covers the
+  //      case where Yeastar emits different callid formats between
+  //      IncomingCall and NewCdr payloads.
+  //
+  // In both cases we only evict when the CDR ended *after* the ring began,
+  // so an old CDR from a previous call with the same caller number (or a
+  // reused callid) cannot wipe a currently-ringing card.
   useEffect(() => {
     setIncomingCalls((prev) => {
       if (prev.length === 0) return prev;
-      const endTimeById = new Map<string, string | null>();
-      for (const c of calls) endTimeById.set(c.id, c.endTime);
+      const RING_MATCH_WINDOW_MS = 5 * 60_000; // 5 min
+
       const fresh = prev.filter((ic) => {
         const callid = ic.id.replace(/^incoming-/, "");
-        const cdrEnd = endTimeById.get(`yeastar-${callid}`);
-        if (!cdrEnd) return true;
-        const cdrEndMs = new Date(cdrEnd).getTime();
-        if (!Number.isFinite(cdrEndMs)) return true;
-        const endedAfterRing = cdrEndMs >= ic.waitingSince;
-        if (endedAfterRing) {
+        const normalizedIcCaller = (ic.callerNumber ?? "").replace(/\D/g, "");
+
+        const cdrEndedAfter = (endTimeIso: string | null): boolean => {
+          if (!endTimeIso) return false;
+          const endMs = new Date(endTimeIso).getTime();
+          if (!Number.isFinite(endMs)) return false;
+          return endMs >= ic.waitingSince;
+        };
+
+        const directMatch = calls.find((c) => c.id === `yeastar-${callid}`);
+        if (directMatch && cdrEndedAfter(directMatch.endTime)) {
           console.log(
-            `[useDashboardData] Evicting ${ic.id} — CDR ended ${cdrEnd} ` +
-              `(ring started ${new Date(ic.waitingSince).toISOString()})`,
+            `[useDashboardData] Evicting ${ic.id} (direct callid match) — ` +
+              `CDR ended ${directMatch.endTime} (ring started ${new Date(ic.waitingSince).toISOString()})`,
           );
+          return false;
         }
-        return !endedAfterRing;
+
+        if (normalizedIcCaller) {
+          const fuzzyMatch = calls.find((c) => {
+            if (c.tenantId !== ic.tenantId) return false;
+            if (!c.endTime) return false;
+            const normalizedCdrCaller = (c.callerNumber ?? "").replace(/\D/g, "");
+            if (!normalizedCdrCaller) return false;
+            // Phone-number suffix match (handles with/without country code).
+            const sharesSuffix =
+              normalizedCdrCaller.endsWith(normalizedIcCaller) ||
+              normalizedIcCaller.endsWith(normalizedCdrCaller);
+            if (!sharesSuffix) return false;
+            const startMs = new Date(c.startTime).getTime();
+            if (!Number.isFinite(startMs)) return false;
+            // The CDR must belong to this specific ring — started within
+            // a few minutes of waitingSince (either side, to tolerate
+            // clock skew between the PBX and the browser).
+            return Math.abs(startMs - ic.waitingSince) < RING_MATCH_WINDOW_MS;
+          });
+          if (fuzzyMatch && cdrEndedAfter(fuzzyMatch.endTime)) {
+            console.log(
+              `[useDashboardData] Evicting ${ic.id} (caller+time match) — ` +
+                `CDR ${fuzzyMatch.id} ended ${fuzzyMatch.endTime} ` +
+                `(caller ${ic.callerNumber}, ring started ${new Date(ic.waitingSince).toISOString()})`,
+            );
+            return false;
+          }
+        }
+
+        return true;
       });
       return fresh.length === prev.length ? prev : fresh;
     });

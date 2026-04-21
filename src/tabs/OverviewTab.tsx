@@ -155,6 +155,7 @@ export function OverviewTab({
         detail: CallDetailSnapshot;
         hint: string;
         isIncoming: boolean;
+        isLive: boolean;
         incomingCallers: Array<{
           number: string;
           name: string | null;
@@ -170,35 +171,62 @@ export function OverviewTab({
       // The agent DB state (ringing / on-call + current_caller) is the most
       // stable source — it persists across polls and CDC refreshes.
       // The realtime IncomingCall broadcast is fast but volatile.
-      // We try broadcast first (fastest), then agent DB fallback.
+      //
+      // Once an agent answers the call, Yeastar does NOT fire CallHangup
+      // (the call is still live), so the IncomingCall entry lingers in
+      // `incomingCalls`. To prevent the card from staying amber after
+      // answer, we exclude any incoming whose caller number matches a
+      // live agent's currentCaller in this queue.
+
+      const liveAgentForQueue = liveAgents.find((agent) =>
+        agent.queueIds.includes(queue.id),
+      );
+      const answeredNumbersForQueue = new Set<string>();
+      if (liveAgentForQueue?.currentCaller) {
+        answeredNumbersForQueue.add(normalizeNumber(liveAgentForQueue.currentCaller));
+      }
 
       const allIncomingForQueue = (incomingCalls || []).filter(
         (call) => call.queueId === queue.id && call.callerNumber,
       );
-      const incomingCallers = allIncomingForQueue.map((c) => ({
+      const unansweredIncoming = allIncomingForQueue.filter(
+        (call) => !answeredNumbersForQueue.has(normalizeNumber(call.callerNumber)),
+      );
+      const incomingCallers = unansweredIncoming.map((c) => ({
         number: c.callerNumber,
         name: c.callerName || null,
         waitingSince: c.waitingSince,
         detail: buildIncomingCallSnapshot(c, now),
       }));
 
-      if (allIncomingForQueue.length > 0) {
+      if (unansweredIncoming.length > 0) {
         map.set(queue.id, {
-          detail: buildIncomingCallSnapshot(allIncomingForQueue[0], now),
+          detail: buildIncomingCallSnapshot(unansweredIncoming[0], now),
           hint:
-            allIncomingForQueue.length > 1
+            unansweredIncoming.length > 1
               ? "Click a caller below to see their details."
               : "Click to open the incoming caller details.",
           isIncoming: true,
+          isLive: false,
           incomingCallers,
         });
         continue;
       }
 
-      // Priority 2: ringing agent in DB (stable across Yeastar event churn)
-      const ringingAgentForQueue = ringingAgents.find((agent) =>
-        agent.queueIds.includes(queue.id),
-      );
+      // Priority 2: ringing agent in DB (stable across Yeastar event churn).
+      // Skip any ringing agent whose caller has already been answered by
+      // the live agent in this queue (Yeastar can lag between ring → answer
+      // events across agents in the same queue).
+      const ringingAgentForQueue = ringingAgents.find((agent) => {
+        if (!agent.queueIds.includes(queue.id)) return false;
+        if (
+          agent.currentCaller &&
+          answeredNumbersForQueue.has(normalizeNumber(agent.currentCaller))
+        ) {
+          return false;
+        }
+        return true;
+      });
       if (ringingAgentForQueue) {
         const cPhone = ringingAgentForQueue.currentCaller;
         const detail = buildLiveOrIncomingDetail(
@@ -214,6 +242,7 @@ export function OverviewTab({
           detail,
           hint: "Click to open the incoming caller details.",
           isIncoming: true,
+          isLive: false,
           incomingCallers: cPhone
             ? [{ number: cPhone, name: null, waitingSince: null, detail }]
             : [],
@@ -221,10 +250,7 @@ export function OverviewTab({
         continue;
       }
 
-      // Priority 3: agent on-call (answered) in this queue
-      const liveAgentForQueue = liveAgents.find((agent) =>
-        agent.queueIds.includes(queue.id),
-      );
+      // Priority 3: agent on-call (answered) in this queue.
       if (liveAgentForQueue) {
         map.set(queue.id, {
           detail: buildLiveOrIncomingDetail(
@@ -238,6 +264,7 @@ export function OverviewTab({
           ),
           hint: "Click to open the live caller details.",
           isIncoming: false,
+          isLive: true,
           incomingCallers: [],
         });
         continue;
@@ -260,6 +287,7 @@ export function OverviewTab({
           ),
           hint: "Click to open the incoming caller details.",
           isIncoming: true,
+          isLive: false,
           incomingCallers: [],
         });
       }
@@ -398,6 +426,7 @@ export function OverviewTab({
                 showTenant={permissions.canViewTenantNames}
                 interactive={Boolean(queueDetail) && !multipleIncomingPickers}
                 isIncoming={queueDetail?.isIncoming}
+                isLive={queueDetail?.isLive}
                 incomingCallers={queueDetail?.incomingCallers}
                 now={now}
                 callHint={queueDetail?.hint}
@@ -587,6 +616,11 @@ function buildLiveOrIncomingDetail(
   }
 
   throw new Error("Queue detail requested without an active call.");
+}
+
+/** Strip non-digit chars so "+94 77 123 4567" and "0771234567" match. */
+function normalizeNumber(phone: string | null | undefined): string {
+  return (phone ?? "").replace(/\D/g, "");
 }
 
 function findIncomingCallForAgent(
