@@ -115,11 +115,12 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
   const phoneRef = useRef<PhoneOperator | null>(null);
   const pbxRef = useRef<PBXOperator | null>(null);
 
-  // Derive combined status — but don't overwrite terminal states set by the
-  // bootstrap function (ip-forbidden, error) with a derived 'idle'.
+  // Derive combined status — only keep terminal states (ip-forbidden, error)
+  // sticky. 'initializing' must unlock once registration succeeds, otherwise
+  // the UI gets stuck on "Connecting to PBX…" even after the SDK registers.
   useEffect(() => {
     setStatus((prev) => {
-      if (prev === 'ip-forbidden' || prev === 'error' || prev === 'initializing') {
+      if (prev === 'ip-forbidden' || prev === 'error') {
         return prev;
       }
       return deriveStatus(incomingCallIds, activeCalls, isRegistered);
@@ -179,11 +180,17 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
         const sign = await fetchSdkSign(agentEmail!);
         if (cancelled) return;
 
+        console.log('[useLinkusSDK] Initialising SDK', {
+          username: agentEmail,
+          pbxURL: LINKUS_PBX_URL,
+          signLen: sign?.length ?? 0,
+        });
+
         const operator = await init({
           username: agentEmail!,
           secret: sign,
           pbxURL: LINKUS_PBX_URL,
-          enableLog: false,
+          enableLog: import.meta.env.DEV,
         });
 
         if (cancelled) {
@@ -199,24 +206,28 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
         // ── Registration events ──────────────────────────
         phone.on('registered', () => {
           if (cancelled) return;
+          console.log('[useLinkusSDK] SIP registered');
           setIsRegistered(true);
           setError(null);
         });
 
-        phone.on('registrationFailed', () => {
+        phone.on('registrationFailed', (info: unknown) => {
           if (cancelled) return;
+          console.error('[useLinkusSDK] SIP registration failed', info);
           setIsRegistered(false);
           setStatus('error');
           setError('SIP registration failed — check extension credentials');
         });
 
-        phone.on('disconnected', () => {
+        phone.on('disconnected', (info: unknown) => {
           if (cancelled) return;
+          console.warn('[useLinkusSDK] SIP disconnected', info);
           setIsRegistered(false);
         });
 
         phone.on('isRegisteredChange', (reg: boolean) => {
           if (cancelled) return;
+          console.log('[useLinkusSDK] isRegisteredChange →', reg);
           setIsRegistered(reg);
         });
 
@@ -297,6 +308,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
           setError(`PBX error ${result.code}: ${result.message}`);
         });
 
+        console.log('[useLinkusSDK] Calling phone.start() — awaiting SIP registration');
         phone.start();
       } catch (err) {
         if (cancelled) return;
@@ -305,6 +317,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
           setError(null);
         } else {
           const msg = err instanceof Error ? err.message : String(err);
+          console.error('[useLinkusSDK] Bootstrap failed:', err);
           setStatus('error');
           setError(msg);
         }
