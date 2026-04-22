@@ -74,6 +74,7 @@ interface UseLinkusSdkOptions {
 // ─── Audio helpers ─────────────────────────────────────────
 
 const AUDIO_ELEMENT_ID = '__softphone_remote_audio__';
+const RINGTONE_ELEMENT_ID = '__softphone_ringtone__';
 
 function getOrCreateAudio(): HTMLAudioElement {
   let el = document.getElementById(AUDIO_ELEMENT_ID) as HTMLAudioElement | null;
@@ -81,6 +82,19 @@ function getOrCreateAudio(): HTMLAudioElement {
     el = document.createElement('audio');
     el.id = AUDIO_ELEMENT_ID;
     el.autoplay = true;
+    el.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function getOrCreateRingtone(): HTMLAudioElement {
+  let el = document.getElementById(RINGTONE_ELEMENT_ID) as HTMLAudioElement | null;
+  if (!el) {
+    el = document.createElement('audio');
+    el.id = RINGTONE_ELEMENT_ID;
+    el.src = '/ringtone.mp3'; // Expecting a ringtone file in the public/ folder
+    el.loop = true;
     el.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;';
     document.body.appendChild(el);
   }
@@ -105,6 +119,14 @@ function detachAudio() {
   if (el) {
     el.srcObject = null;
     el.pause();
+  }
+}
+
+function stopRingtone() {
+  const el = document.getElementById(RINGTONE_ELEMENT_ID) as HTMLAudioElement | null;
+  if (el) {
+    el.pause();
+    el.currentTime = 0;
   }
 }
 
@@ -134,6 +156,37 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
       return deriveStatus(incomingCallIds, activeCalls, isRegistered);
     });
   }, [incomingCallIds, activeCalls, isRegistered]);
+
+  // Manage ringtone playback
+  useEffect(() => {
+    let retryPlay: (() => void) | null = null;
+
+    if (incomingCallIds.length > 0) {
+      const ringtone = getOrCreateRingtone();
+      ringtone.play().catch((err) => {
+        console.warn('[useLinkusSDK] Autoplay blocked for ringtone:', err);
+        // Wait for user interaction to unblock audio
+        retryPlay = () => {
+          ringtone.play().catch(e => console.warn('[useLinkusSDK] Retry failed:', e));
+          if (retryPlay) {
+            document.removeEventListener('click', retryPlay);
+            document.removeEventListener('keydown', retryPlay);
+          }
+        };
+        document.addEventListener('click', retryPlay);
+        document.addEventListener('keydown', retryPlay);
+      });
+    } else {
+      stopRingtone();
+    }
+
+    return () => {
+      if (retryPlay) {
+        document.removeEventListener('click', retryPlay);
+        document.removeEventListener('keydown', retryPlay);
+      }
+    };
+  }, [incomingCallIds.length]);
 
   const upsertCall = useCallback((sdkStatus: CallStatus) => {
     setActiveCalls((prev) => {

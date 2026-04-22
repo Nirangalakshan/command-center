@@ -228,37 +228,99 @@ function mapBookingToServiceRecord(
  * Much cheaper than fetchFirebaseCallerContext — skips vehicles & service history.
  */
 export async function fetchCallerNameByPhone(
-  ownerUid: string,
+  _ownerUid: string,
   callerNumber: string,
 ): Promise<string | null> {
   const variants = buildPhoneLookupVariants(callerNumber);
-  if (!ownerUid || variants.length === 0) {
-    console.warn("[CallerName] Skipped — empty ownerUid or no phone variants", {
-      ownerUid,
-      callerNumber,
-    });
+  if (variants.length === 0) {
+    console.warn("[CallerName] Skipped — no phone variants", { callerNumber });
     return null;
   }
 
   console.log("[CallerName] Looking up", {
-    ownerUid,
     callerNumber,
     variantCount: variants.length,
   });
   try {
-    const bookings = await fetchBookingsByPhone(ownerUid, variants);
-    if (bookings.length === 0) return null;
-    const data = bookings[0].data;
+    // For name-only lookups we query by phone number alone (no ownerUid filter).
+    // The ownerUid passed from CallsTab is typically a Supabase tenant ID
+    // (e.g. "t-xxx") which doesn't match the Firebase document's ownerUid field,
+    // so filtering by it would return zero results. The phone number is sufficient
+    // to identify the customer for display-name purposes.
+    const bookings = await fetchBookingsByPhoneOnly(variants);
+    if (bookings.length === 0) {
+      console.log("[CallerName] Result:", { callerNumber, name: "(no bookings)" });
+      return null;
+    }
+
+    // Sort descending by date — most recent booking first
+    bookings.sort((a, b) => {
+      const da = String(a.data.date ?? a.data.bookingDate ?? "");
+      const db2 = String(b.data.date ?? b.data.bookingDate ?? "");
+      return db2.localeCompare(da);
+    });
+
+    // Find the first booking that has a valid name
+    const bookingWithName = bookings.find((b) => {
+      const d = b.data;
+      const n = String(
+        d.client ?? d.clientName ?? d.customerName ?? d.name ?? "",
+      ).trim();
+      return n.length > 0;
+    });
+
+    if (!bookingWithName) {
+      console.log("[CallerName] Result:", {
+        callerNumber,
+        name: "(not found)",
+      });
+      return null;
+    }
+
+    const data = bookingWithName.data;
     const name = String(
       data.client ?? data.clientName ?? data.customerName ?? data.name ?? "",
-    );
+    ).trim();
+
     console.log("[CallerName] Result:", {
       callerNumber,
-      name: name || "(not found)",
+      name,
     });
-    return name || null;
+    return name;
   } catch (err) {
     console.error("[CallerName] Error:", err);
     return null;
   }
+}
+
+// ─── Phone-only booking lookup (no ownerUid filter) ──────────────────────────
+
+/**
+ * Queries the root `bookings` collection for documents where a phone field
+ * matches any of the given variants. No ownerUid filtering — used for
+ * lightweight name resolution where the phone number alone is sufficient.
+ */
+async function fetchBookingsByPhoneOnly(
+  variants: string[],
+): Promise<RawBooking[]> {
+  const bookingsRef = collection(db, "bookings");
+  const safeVariants = variants.slice(0, 30); // Firestore 'in' max = 30
+
+  const results = new Map<string, RawBooking>(); // keyed by doc ID to deduplicate
+
+  for (const field of ["clientPhone", "customerPhone", "phone", "contactNumber"]) {
+    try {
+      const q = query(bookingsRef, where(field, "in", safeVariants));
+      const snap = await getDocs(q);
+      if (snap.empty) continue;
+
+      for (const doc of snap.docs) {
+        results.set(doc.id, { id: doc.id, data: doc.data() });
+      }
+    } catch {
+      // Field doesn't exist or has no single-field index — skip silently
+    }
+  }
+
+  return Array.from(results.values());
 }

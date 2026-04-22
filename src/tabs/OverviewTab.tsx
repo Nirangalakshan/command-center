@@ -265,16 +265,25 @@ export function OverviewTab({
           incomingCalls || [],
           now,
         );
-        const incomingMatch = findIncomingCallForAgent(liveAgentForQueue, incomingCalls || []);
-        const cPhone = liveAgentForQueue.currentCaller || incomingMatch?.callerNumber || "Unknown";
-        const cName = incomingMatch?.callerName || `Agent: ${liveAgentForQueue.name}`;
+        const incomingMatch = findIncomingCallForAgent(
+          liveAgentForQueue,
+          incomingCalls || [],
+        );
+        const cPhone =
+          liveAgentForQueue.currentCaller ||
+          incomingMatch?.callerNumber ||
+          "Unknown";
+        const cName =
+          incomingMatch?.callerName || `Agent: ${liveAgentForQueue.name}`;
 
         map.set(queue.id, {
           detail,
           hint: "Click to open the live caller details.",
           isIncoming: false,
           isLive: true,
-          incomingCallers: [{ number: cPhone, name: cName, waitingSince: null, detail }],
+          incomingCallers: [
+            { number: cPhone, name: cName, waitingSince: null, detail },
+          ],
         });
         continue;
       }

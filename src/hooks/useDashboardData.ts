@@ -29,7 +29,7 @@ import {
 import { fetchAgentOnboarding } from "@/services/agentOnboardingApi";
 
 const POLL_INTERVAL = 8000;
-const INCOMING_CALLS_STORAGE_KEY = 'cc_incoming_calls';
+const INCOMING_CALLS_STORAGE_KEY = "cc_incoming_calls";
 
 export interface DashboardData {
   selectedTenant: string | null;
@@ -75,10 +75,13 @@ export function useDashboardData({
   const [incomingCalls, setIncomingCalls] = useState<IncomingCall[]>(() => {
     try {
       const saved = sessionStorage.getItem(INCOMING_CALLS_STORAGE_KEY);
-      console.log('[useDashboardData] Init incomingCalls. Saved data:', saved);
+      console.log("[useDashboardData] Init incomingCalls. Saved data:", saved);
       if (saved) return JSON.parse(saved) as IncomingCall[];
     } catch (e) {
-      console.error('[useDashboardData] Failed to parse saved incoming calls:', e);
+      console.error(
+        "[useDashboardData] Failed to parse saved incoming calls:",
+        e,
+      );
     }
     return [];
   });
@@ -89,13 +92,21 @@ export function useDashboardData({
   // Keep sessionStorage in sync whenever incomingCalls changes
   useEffect(() => {
     try {
-      console.log('[useDashboardData] incomingCalls changed:', incomingCalls.length);
+      console.log(
+        "[useDashboardData] incomingCalls changed:",
+        incomingCalls.length,
+      );
       if (incomingCalls.length > 0) {
-        sessionStorage.setItem(INCOMING_CALLS_STORAGE_KEY, JSON.stringify(incomingCalls));
+        sessionStorage.setItem(
+          INCOMING_CALLS_STORAGE_KEY,
+          JSON.stringify(incomingCalls),
+        );
       } else {
         sessionStorage.removeItem(INCOMING_CALLS_STORAGE_KEY);
       }
-    } catch { /* ignore quota errors */ }
+    } catch {
+      /* ignore quota errors */
+    }
   }, [incomingCalls]);
 
   // Set tenant from session
@@ -202,7 +213,10 @@ export function useDashboardData({
           const fuzzyMatch = calls.find((c) => {
             if (c.tenantId !== ic.tenantId) return false;
             if (!c.endTime) return false;
-            const normalizedCdrCaller = (c.callerNumber ?? "").replace(/\D/g, "");
+            const normalizedCdrCaller = (c.callerNumber ?? "").replace(
+              /\D/g,
+              "",
+            );
             if (!normalizedCdrCaller) return false;
             // Phone-number suffix match (handles with/without country code).
             const sharesSuffix =
@@ -239,16 +253,19 @@ export function useDashboardData({
   useEffect(() => {
     setIncomingCalls((prev) => {
       if (prev.length === 0) return prev;
-      const fresh = prev.filter(
-        (c) => {
-          const age = now - c.waitingSince;
-          const keep = age < STALE_INCOMING_MS;
-          if (!keep) console.log(`[useDashboardData] Evicting stale call ${c.id}. Age: ${age}ms`);
-          return keep;
-        }
-      );
+      const fresh = prev.filter((c) => {
+        const age = now - c.waitingSince;
+        const keep = age < STALE_INCOMING_MS;
+        if (!keep)
+          console.log(
+            `[useDashboardData] Evicting stale call ${c.id}. Age: ${age}ms`,
+          );
+        return keep;
+      });
       if (fresh.length !== prev.length) {
-        console.log(`[useDashboardData] Evicted ${prev.length - fresh.length} stale calls`);
+        console.log(
+          `[useDashboardData] Evicted ${prev.length - fresh.length} stale calls`,
+        );
       }
       return fresh.length === prev.length ? prev : fresh;
     });

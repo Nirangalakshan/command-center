@@ -41,10 +41,11 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
   // Map<callerNumber, resolvedName | null>
   const [nameMap, setNameMap] = useState<Map<string, string | null>>(new Map());
   const [loading, setLoading] = useState(false);
-  // Persistent cache that survives across effect re-runs
+  // Persistent cache keyed by "ownerUid::callerNumber" so it invalidates when ownerUid changes
   const cacheRef = useRef<Map<string, string | null>>(new Map());
   // DID → ownerId from did_mappings table
   const [didOwnerMap, setDidOwnerMap] = useState<Map<string, string>>(new Map());
+  const [didMapLoaded, setDidMapLoaded] = useState(false);
   const didMapLoadedRef = useRef(false);
 
   // Build tenantId → bmsOwnerUid lookup
@@ -68,9 +69,13 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
           if (d.ownerId) m.set(d.did, d.ownerId);
         }
         setDidOwnerMap(m);
+        // Clear any names cached with the wrong ownerUid (fallback tenantId)
+        cacheRef.current.clear();
+        setDidMapLoaded(true);
       })
       .catch(() => {
         // DID mappings may not be accessible for non-super-admin — continue without
+        setDidMapLoaded(true);
       });
   }, []);
 
@@ -80,9 +85,6 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
     // Collect unique (ownerUid, callerNumber) pairs that aren't cached yet
     const lookups = new Map<string, string>(); // callerNumber → ownerUid
     for (const call of calls) {
-      if (cacheRef.current.has(call.callerNumber)) continue;
-      if (lookups.has(call.callerNumber)) continue;
-
       // Resolve owner UID in priority order (matches CallDetailsSheet logic):
       // 1. DID mapping ownerId (from dialedNumber)
       // 2. tenant.bmsOwnerUid
@@ -91,14 +93,24 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
       const tenantOwner = ownerByTenant.get(call.tenantId);
       const ownerUid = didOwner || tenantOwner || call.tenantId;
 
+      // Cache key includes ownerUid so if it changes (e.g. DID map loads), we re-fetch
+      const cacheKey = `${ownerUid}::${call.callerNumber}`;
+      if (cacheRef.current.has(cacheKey)) continue;
+      if (lookups.has(call.callerNumber)) continue;
+
       if (ownerUid) {
         lookups.set(call.callerNumber, ownerUid);
       }
     }
 
     if (lookups.size === 0) {
-      // Nothing new to fetch — push cache into state if needed
-      setNameMap(new Map(cacheRef.current));
+      // Nothing new to fetch — rebuild nameMap from cache
+      const next = new Map<string, string | null>();
+      for (const [key, val] of cacheRef.current) {
+        const phone = key.split('::')[1];
+        if (phone) next.set(phone, val);
+      }
+      setNameMap(next);
       return;
     }
 
@@ -110,6 +122,7 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
       entries.map(([phone, ownerUid]) =>
         fetchCallerNameByPhone(ownerUid, phone).then((name) => ({
           phone,
+          ownerUid,
           name,
         })),
       ),
@@ -118,18 +131,25 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
 
       for (const r of results) {
         if (r.status === 'fulfilled') {
-          cacheRef.current.set(r.value.phone, r.value.name);
+          const cacheKey = `${r.value.ownerUid}::${r.value.phone}`;
+          cacheRef.current.set(cacheKey, r.value.name);
         }
       }
 
-      setNameMap(new Map(cacheRef.current));
+      // Rebuild phone → name map from cache
+      const next = new Map<string, string | null>();
+      for (const [key, val] of cacheRef.current) {
+        const phone = key.split('::')[1];
+        if (phone) next.set(phone, val);
+      }
+      setNameMap(next);
       setLoading(false);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [calls, ownerByTenant, didOwnerMap]);
+  }, [calls, ownerByTenant, didOwnerMap, didMapLoaded]);
 
   return { nameMap, loading };
 }
