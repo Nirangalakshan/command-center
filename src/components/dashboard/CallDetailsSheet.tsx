@@ -10,7 +10,6 @@ import {
   Mail,
   MapPin,
   MessageSquareText,
-  PhoneCall,
   Route,
   UserRound,
   Wrench,
@@ -260,10 +259,6 @@ export function CallDetailsSheet({
     };
   }, [detail?.branchId, detail?.ownerId, open]);
 
-  const latestServiceByVehicle = useMemo(
-    () => buildLatestServiceMap(callerContext?.services || []),
-    [callerContext?.services],
-  );
 
   const resolvedCustomerName =
     callerContext?.customer.name || normalizeCustomerName(detail?.customerName);
@@ -464,12 +459,9 @@ export function CallDetailsSheet({
               </Card>
 
               <Tabs defaultValue="vehicles" className="space-y-4">
-                <TabsList className="grid h-auto grid-cols-3 rounded-xl bg-slate-200/70 p-1">
+                <TabsList className="grid h-auto grid-cols-2 rounded-xl bg-slate-200/70 p-1">
                   <TabsTrigger value="vehicles" className="rounded-lg">
-                    Vehicles
-                  </TabsTrigger>
-                  <TabsTrigger value="services" className="rounded-lg">
-                    History
+                    Vehicles &amp; History
                   </TabsTrigger>
                   <TabsTrigger value="branch-services" className="rounded-lg">
                     Branch Services
@@ -480,20 +472,23 @@ export function CallDetailsSheet({
                   {contextLoading ? (
                     <Card className="border-slate-200 bg-white shadow-sm">
                       <CardContent className="p-5 text-sm text-slate-600">
-                        Loading caller vehicles...
+                        Loading caller vehicles and history...
                       </CardContent>
                     </Card>
                   ) : callerContext?.vehicles.length ? (
-                    <div className="space-y-3">
-                      {callerContext.vehicles.map((vehicle) => (
-                        <VehicleCard
-                          key={vehicle.id}
-                          vehicle={vehicle}
-                          latestService={
-                            latestServiceByVehicle.get(vehicle.id) ?? null
-                          }
-                        />
-                      ))}
+                    <div className="space-y-4">
+                      {callerContext.vehicles.map((vehicle) => {
+                        const vehicleServices = (callerContext.services || []).filter(
+                          (s) => s.vehicleId === vehicle.id,
+                        );
+                        return (
+                          <VehicleCard
+                            key={vehicle.id}
+                            vehicle={vehicle}
+                            services={vehicleServices}
+                          />
+                        );
+                      })}
                     </div>
                   ) : (
                     <Card className="border-slate-200 bg-white shadow-sm">
@@ -507,63 +502,6 @@ export function CallDetailsSheet({
                       </CardContent>
                     </Card>
                   )}
-                </TabsContent>
-
-                <TabsContent value="services" className="mt-0">
-                  <Card className="border-slate-200 bg-white shadow-sm">
-                    <CardContent className="space-y-4 p-5">
-                      {contextLoading ? (
-                        <div className="text-sm text-slate-600">
-                          Loading recent service history...
-                        </div>
-                      ) : callerContext?.services.length ? (
-                        callerContext.services.map((service, index) => (
-                          <div key={service.id} className="flex gap-4">
-                            <div className="flex flex-col items-center">
-                              <div className="rounded-full bg-slate-100 p-2 text-slate-700">
-                                {index === 0 ? (
-                                  <PhoneCall className="h-4 w-4" />
-                                ) : index % 2 === 0 ? (
-                                  <History className="h-4 w-4" />
-                                ) : (
-                                  <Wrench className="h-4 w-4" />
-                                )}
-                              </div>
-                              {index < callerContext.services.length - 1 && (
-                                <div className="mt-2 h-full w-px bg-slate-200" />
-                              )}
-                            </div>
-                            <div className="pb-4">
-                              <div className="text-sm font-semibold text-slate-950">
-                                {service.serviceType}
-                              </div>
-                              <div className="mt-1 text-sm text-slate-600">
-                                {describeService(
-                                  service,
-                                  callerContext.vehicles,
-                                )}
-                              </div>
-                              {service.advisorNotes && (
-                                <div className="mt-1 text-sm text-slate-600">
-                                  {service.advisorNotes}
-                                </div>
-                              )}
-                              <div className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
-                                {formatServiceDate(service.serviceDate)}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <EmptyState
-                          message={
-                            contextError ||
-                            "No prior service history found for this caller yet."
-                          }
-                        />
-                      )}
-                    </CardContent>
-                  </Card>
                 </TabsContent>
 
                 <TabsContent value="branch-services" className="mt-0">
@@ -616,17 +554,6 @@ function normalizeCustomerName(name?: string | null): string {
   return name && name.trim() ? name.trim() : "Unknown caller";
 }
 
-function buildLatestServiceMap(
-  services: ServiceRecord[],
-): Map<string, ServiceRecord> {
-  const map = new Map<string, ServiceRecord>();
-  for (const service of services) {
-    if (!map.has(service.vehicleId)) {
-      map.set(service.vehicleId, service);
-    }
-  }
-  return map;
-}
 
 function formatVehicleLabel(vehicle: VehicleRecord): string {
   const parts = [
@@ -652,57 +579,84 @@ function formatAmount(amount: number | null): string | null {
   }).format(amount);
 }
 
-function describeService(
-  service: ServiceRecord,
-  vehicles: VehicleRecord[],
-): string {
-  const vehicle = vehicles.find((entry) => entry.id === service.vehicleId);
-  const parts = [
-    vehicle ? `${vehicle.rego} · ${formatVehicleLabel(vehicle)}` : null,
-    service.odometerKm != null
-      ? `${service.odometerKm.toLocaleString()} km`
-      : null,
-    formatAmount(service.amount),
-  ].filter(Boolean);
-  return parts.join(" · ");
-}
 
 function VehicleCard({
   vehicle,
-  latestService,
+  services,
 }: {
   vehicle: VehicleRecord;
-  latestService: ServiceRecord | null;
+  services: ServiceRecord[];
 }) {
   return (
     <Card className="border-slate-200 bg-white shadow-sm">
-      <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-3">
+      <CardContent className="p-5">
+        {/* Vehicle header */}
+        <div className="flex items-center gap-3 pb-4">
           <div className="rounded-xl bg-slate-100 p-2 text-slate-700">
             <CarFront className="h-5 w-5" />
           </div>
-          <div>
+          <div className="flex-1">
             <div className="font-semibold text-slate-950">{vehicle.rego}</div>
             <div className="text-sm text-slate-600">
               {formatVehicleLabel(vehicle)}
             </div>
             {vehicle.notes && (
-              <div className="mt-1 text-sm text-slate-500">{vehicle.notes}</div>
+              <div className="mt-0.5 text-sm text-slate-500">{vehicle.notes}</div>
             )}
           </div>
-        </div>
-        <div className="space-y-1 text-sm text-slate-600 sm:text-right">
-          <div className="font-medium text-slate-900">
-            {latestService
-              ? latestService.serviceType
-              : "No service history yet"}
-          </div>
-          <div>
-            {latestService
-              ? formatServiceDate(latestService.serviceDate)
-              : "Waiting for first visit"}
+          <div className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+            {services.length} {services.length === 1 ? "visit" : "visits"}
           </div>
         </div>
+
+        {/* Service history timeline for this vehicle */}
+        {services.length > 0 ? (
+          <div className="border-t border-slate-100 pt-3 space-y-0">
+            {services.map((service, index) => (
+              <div key={service.id} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <div className="mt-0.5 rounded-full bg-slate-100 p-1.5 text-slate-600">
+                    {index === 0 ? (
+                      <Wrench className="h-3.5 w-3.5" />
+                    ) : (
+                      <History className="h-3.5 w-3.5" />
+                    )}
+                  </div>
+                  {index < services.length - 1 && (
+                    <div className="mt-1 mb-1 h-full min-h-[16px] w-px bg-slate-200" />
+                  )}
+                </div>
+                <div className="pb-3">
+                  <div className="text-sm font-semibold text-slate-900">
+                    {service.serviceType}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {[
+                      service.odometerKm != null
+                        ? `${service.odometerKm.toLocaleString()} km`
+                        : null,
+                      formatAmount(service.amount),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                  {service.advisorNotes && (
+                    <div className="mt-0.5 text-xs text-slate-500 italic">
+                      {service.advisorNotes}
+                    </div>
+                  )}
+                  <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                    {formatServiceDate(service.serviceDate)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="border-t border-slate-100 pt-3 text-sm text-slate-400 italic">
+            No service history for this vehicle yet.
+          </div>
+        )}
       </CardContent>
     </Card>
   );

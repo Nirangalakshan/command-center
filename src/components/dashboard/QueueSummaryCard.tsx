@@ -188,11 +188,36 @@ export function QueueSummaryCard({
           </div>
         </div>
 
-        {/* Incoming Callers List */}
-        {isIncoming && incomingCallers && incomingCallers.length > 0 && (
+        {/* Callers List (Incoming or Answered/Live) */}
+        {(isIncoming || showLive) && incomingCallers && incomingCallers.length > 0 && (
           <div className="flex flex-col gap-2">
             {incomingCallers.map((caller, i) => {
               const openDetail = caller.detail && onIncomingCallerClick;
+              
+              const isLiveCard = showLive;
+              
+              const cardBg = isLiveCard 
+                ? 'bg-gradient-to-r from-emerald-50 to-emerald-100/50 ring-emerald-200/50' 
+                : 'bg-gradient-to-r from-amber-50 to-amber-100/50 ring-amber-200/50';
+              const hoverStyle = isLiveCard
+                ? 'hover:bg-emerald-100/90 hover:ring-emerald-300/80 focus-visible:outline-emerald-500'
+                : 'hover:bg-amber-100/90 hover:ring-amber-300/80 focus-visible:outline-amber-500';
+              const nonHoverStyle = isLiveCard ? 'hover:bg-emerald-100/70' : 'hover:bg-amber-100/70';
+              
+              const iconContainerStyle = isLiveCard
+                ? 'bg-emerald-100 text-emerald-600 ring-emerald-200'
+                : 'bg-amber-100 text-amber-600 ring-amber-200';
+                
+              const textColor = isLiveCard ? 'text-emerald-950' : 'text-amber-950';
+              const subTextColor = isLiveCard ? 'text-emerald-700/80' : 'text-amber-700/80';
+              const badgeStyle = isLiveCard 
+                ? 'text-emerald-700 ring-emerald-200/60'
+                : 'text-amber-700 ring-amber-200/60';
+                
+              const chevronColor = isLiveCard ? 'text-emerald-700/60' : 'text-amber-700/60';
+
+              const Icon = isLiveCard ? PhoneCall : PhoneIncoming;
+
               return (
                 <div
                   key={caller.detail?.id ?? `${caller.number}-${i}`}
@@ -217,40 +242,44 @@ export function QueueSummaryCard({
                         }
                       : undefined
                   }
-                  className={`relative overflow-hidden rounded-xl bg-gradient-to-r from-amber-50 to-amber-100/50 p-2.5 ring-1 ring-amber-200/50 shadow-sm transition-all ${
+                  className={`relative overflow-hidden rounded-xl ${cardBg} p-2.5 ring-1 shadow-sm transition-all ${
                     openDetail
-                      ? 'cursor-pointer hover:bg-amber-100/90 hover:ring-amber-300/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500'
-                      : 'hover:bg-amber-100/70'
+                      ? `cursor-pointer ${hoverStyle} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2`
+                      : nonHoverStyle
                   }`}
                 >
                   <div className="absolute -right-4 -top-4 opacity-10">
-                    <PhoneIncoming size={56} />
+                    <Icon size={56} />
                   </div>
                   <div className="relative flex items-center gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600 ring-1 ring-amber-200 shadow-sm">
-                      <PhoneIncoming className="h-[14px] w-[14px] animate-pulse" />
+                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${iconContainerStyle} shadow-sm`}>
+                      <Icon className={`h-[14px] w-[14px] ${!isLiveCard ? 'animate-pulse' : ''}`} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-bold text-amber-950 leading-tight">
+                      <div className={`truncate text-[13px] font-bold ${textColor} leading-tight`}>
                         {caller.name || 'Unknown Caller'}
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2">
-                        <div className="truncate font-mono text-[11px] font-semibold text-amber-700/80">
+                        <div className={`truncate font-mono text-[11px] font-semibold ${subTextColor}`}>
                           {formatPhone(caller.number)}
                         </div>
-                        <div className="shrink-0 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-700 ring-1 ring-amber-200/60">
-                          Waiting{" "}
-                          {formatPhoneDurationLabel(
-                            caller.waitingSince
-                              ? Math.max(0, now - caller.waitingSince)
-                              : queue.avgWaitSeconds,
+                        <div className={`shrink-0 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[10px] font-bold ${badgeStyle} ring-1`}>
+                          {isLiveCard ? 'Answered' : (
+                            <>
+                              Waiting{" "}
+                              {formatPhoneDurationLabel(
+                                caller.waitingSince
+                                  ? Math.max(0, now - caller.waitingSince)
+                                  : queue.avgWaitSeconds,
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
                     </div>
                     {openDetail && (
                       <ChevronRight
-                        className="h-4 w-4 shrink-0 text-amber-700/60"
+                        className={`h-4 w-4 shrink-0 ${chevronColor}`}
                         aria-hidden
                       />
                     )}

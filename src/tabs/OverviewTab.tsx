@@ -76,9 +76,8 @@ export function OverviewTab({
     if (!isAgentOverview || !session) return 0;
     const me = agents.find((a) => a.userId === session.userId);
     if (!me) return 0;
-    return calls.filter(
-      (c) => c.agentId === me.id && c.result === "answered",
-    ).length;
+    return calls.filter((c) => c.agentId === me.id && c.result === "answered")
+      .length;
   }, [isAgentOverview, session, agents, calls]);
 
   const liveAgents = useMemo(
@@ -139,7 +138,9 @@ export function OverviewTab({
     const currentIncoming = incomingCalls || [];
     const nextIds = new Set(currentIncoming.map((call) => call.id));
     const seenIds = seenIncomingIdsRef.current;
-    const hasNewIncoming = currentIncoming.some((call) => !seenIds.has(call.id));
+    const hasNewIncoming = currentIncoming.some(
+      (call) => !seenIds.has(call.id),
+    );
 
     if (hasNewIncoming && audioUnlockedRef.current) {
       playIncomingAlertTone();
@@ -183,14 +184,17 @@ export function OverviewTab({
       );
       const answeredNumbersForQueue = new Set<string>();
       if (liveAgentForQueue?.currentCaller) {
-        answeredNumbersForQueue.add(normalizeNumber(liveAgentForQueue.currentCaller));
+        answeredNumbersForQueue.add(
+          normalizeNumber(liveAgentForQueue.currentCaller),
+        );
       }
 
       const allIncomingForQueue = (incomingCalls || []).filter(
         (call) => call.queueId === queue.id && call.callerNumber,
       );
       const unansweredIncoming = allIncomingForQueue.filter(
-        (call) => !answeredNumbersForQueue.has(normalizeNumber(call.callerNumber)),
+        (call) =>
+          !answeredNumbersForQueue.has(normalizeNumber(call.callerNumber)),
       );
       const incomingCallers = unansweredIncoming.map((c) => ({
         number: c.callerNumber,
@@ -252,20 +256,25 @@ export function OverviewTab({
 
       // Priority 3: agent on-call (answered) in this queue.
       if (liveAgentForQueue) {
+        const detail = buildLiveOrIncomingDetail(
+          "live",
+          null,
+          liveAgentForQueue,
+          queues,
+          tenants,
+          incomingCalls || [],
+          now,
+        );
+        const incomingMatch = findIncomingCallForAgent(liveAgentForQueue, incomingCalls || []);
+        const cPhone = liveAgentForQueue.currentCaller || incomingMatch?.callerNumber || "Unknown";
+        const cName = incomingMatch?.callerName || `Agent: ${liveAgentForQueue.name}`;
+
         map.set(queue.id, {
-          detail: buildLiveOrIncomingDetail(
-            "live",
-            null,
-            liveAgentForQueue,
-            queues,
-            tenants,
-            incomingCalls || [],
-            now,
-          ),
+          detail,
           hint: "Click to open the live caller details.",
           isIncoming: false,
           isLive: true,
-          incomingCallers: [],
+          incomingCallers: [{ number: cPhone, name: cName, waitingSince: null, detail }],
         });
         continue;
       }
@@ -321,87 +330,7 @@ export function OverviewTab({
 
   return (
     <div className="cc-fade-in space-y-8">
-      {permissions.canViewShiftPanel && session && (
-        <AgentShiftPanel
-          session={session}
-          tenants={tenants}
-          queues={queues}
-          agentGroups={agentGroups || []}
-          incomingCalls={incomingCalls || []}
-          now={now}
-        />
-      )}
-
-      {isAgentOverview ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <MetricCard
-            label="Answered Calls"
-            value={myAnsweredCallsCount}
-            accent="var(--cc-color-green)"
-            sub="your calls"
-          />
-          <MetricCard
-            label="Active Calls"
-            value={summary.activeCalls}
-            accent="var(--cc-color-red)"
-            sub="live now"
-          />
-          <MetricCard
-            label="Calls Waiting"
-            value={summary.queuedCalls}
-            accent="var(--cc-color-amber)"
-            sub="in queue"
-          />
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-          <MetricCard
-            label="Active Calls"
-            value={summary.activeCalls}
-            accent="var(--cc-color-red)"
-            sub="live now"
-          />
-          <MetricCard
-            label="Calls Waiting"
-            value={summary.queuedCalls}
-            accent="var(--cc-color-amber)"
-            sub="in queue"
-          />
-          <MetricCard
-            label="Agents Online"
-            value={summary.onlineAgents}
-            accent="var(--cc-color-cyan)"
-            sub={`${summary.availableAgents} available`}
-          />
-          <MetricCard
-            label="Calls Today"
-            value={summary.totalCallsToday}
-            accent="var(--cc-color-cyan)"
-          />
-          <MetricCard
-            label="Answer Rate"
-            value={`${summary.answerRate}%`}
-            accent="var(--cc-color-green)"
-          />
-          <MetricCard
-            label="Abandon Rate"
-            value={`${summary.abandonRate}%`}
-            accent="var(--cc-color-red)"
-          />
-          <MetricCard
-            label="Avg Handle"
-            value={formatSeconds(summary.avgHandleTime)}
-            accent="var(--cc-color-purple)"
-          />
-          <MetricCard
-            label="SLA %"
-            value={`${summary.slaPercent}%`}
-            accent="var(--cc-color-green)"
-          />
-        </div>
-      )}
-
-      {/* Queue Status — full width */}
+      {/* Queue Status — top of screen, full width */}
       <div className="space-y-4">
         <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
           <LiveDot color="var(--cc-color-cyan)" />
@@ -446,14 +375,89 @@ export function OverviewTab({
         </div>
       </div>
 
-      {/* Notifications — full width under queue status */}
-      <div>
-        <NotificationsCard
-          queues={queues}
-          agents={agents}
-          summary={summary}
-          session={session}
-        />
+      {/* Metrics (left) + Notifications (right) — two-column row */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Left: Metric Cards */}
+        <div>
+          {isAgentOverview ? (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <MetricCard
+                label="Answered Calls"
+                value={myAnsweredCallsCount}
+                accent="var(--cc-color-green)"
+                sub="your calls"
+              />
+              <MetricCard
+                label="Active Calls"
+                value={summary.activeCalls}
+                accent="var(--cc-color-red)"
+                sub="live now"
+              />
+              <MetricCard
+                label="Calls Waiting"
+                value={summary.queuedCalls}
+                accent="var(--cc-color-amber)"
+                sub="in queue"
+              />
+            </div>
+          ) : (
+            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 xl:grid-cols-4">
+              <MetricCard
+                label="Active Calls"
+                value={summary.activeCalls}
+                accent="var(--cc-color-red)"
+                sub="live now"
+              />
+              <MetricCard
+                label="Calls Waiting"
+                value={summary.queuedCalls}
+                accent="var(--cc-color-amber)"
+                sub="in queue"
+              />
+              <MetricCard
+                label="Agents Online"
+                value={summary.onlineAgents}
+                accent="var(--cc-color-cyan)"
+                sub={`${summary.availableAgents} available`}
+              />
+              <MetricCard
+                label="Calls Today"
+                value={summary.totalCallsToday}
+                accent="var(--cc-color-cyan)"
+              />
+              <MetricCard
+                label="Answer Rate"
+                value={`${summary.answerRate}%`}
+                accent="var(--cc-color-green)"
+              />
+              <MetricCard
+                label="Abandon Rate"
+                value={`${summary.abandonRate}%`}
+                accent="var(--cc-color-red)"
+              />
+              <MetricCard
+                label="Avg Handle"
+                value={formatSeconds(summary.avgHandleTime)}
+                accent="var(--cc-color-purple)"
+              />
+              <MetricCard
+                label="SLA %"
+                value={`${summary.slaPercent}%`}
+                accent="var(--cc-color-green)"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Right: Notifications Card */}
+        <div>
+          <NotificationsCard
+            queues={queues}
+            agents={agents}
+            summary={summary}
+            session={session}
+          />
+        </div>
       </div>
 
       <Card className="border-border/80 bg-white shadow-sm">
@@ -493,7 +497,8 @@ export function OverviewTab({
                   const callerNum =
                     a.currentCaller || incoming?.callerNumber || "";
                   const tenant = tenants.find((t) => t.id === a.tenantId);
-                  const brandColor = tenant?.brandColor || "var(--cc-color-cyan)";
+                  const brandColor =
+                    tenant?.brandColor || "var(--cc-color-cyan)";
 
                   return (
                     <TableRow
@@ -641,7 +646,10 @@ function findIncomingCallForAgent(
 
 function playIncomingAlertTone(): void {
   if (typeof window === "undefined") return;
-  const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  const AudioCtx =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
   if (!AudioCtx) return;
 
   try {

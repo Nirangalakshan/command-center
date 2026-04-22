@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { isValidCallerNumber } from "@/utils/formatters";
 import type {
   Tenant,
   Queue,
@@ -260,7 +261,16 @@ export function useDashboardData({
     // Real-time subscriptions
     const unsubCalls = subscribeToIncomingCalls(
       session.allowedQueueIds,
-      (call) =>
+      (call) => {
+        // Drop internal extensions and numbers from unrecognised countries.
+        // Accept: +94/94 (Sri Lanka), +61/61 (Australia), or local 0… numbers.
+        const effectiveNumber = call.callerNumber;
+        if (!isValidCallerNumber(effectiveNumber)) {
+          console.log(
+            `[useDashboardData] Dropping call ${call.id} — unrecognised caller number: "${effectiveNumber}"`,
+          );
+          return;
+        }
         setIncomingCalls((prev) => {
           const existing = prev.find((c) => c.id === call.id);
           // Yeastar re-ring events often arrive without callfrom — preserve the
@@ -274,7 +284,8 @@ export function useDashboardData({
                 }
               : call;
           return [merged, ...prev.filter((c) => c.id !== call.id)];
-        }),
+        });
+      },
       (callId) =>
         setIncomingCalls((prev) => prev.filter((c) => c.id !== callId)),
     );

@@ -1,5 +1,7 @@
-import { useState, useMemo } from 'react';
-import type { Call, Queue, Tenant, Permissions } from '@/services/types';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import type { Call, Queue, Tenant, DIDMapping, Permissions } from '@/services/types';
+import { fetchCallerNameByPhone } from '@/services/customersApi';
+import { fetchDIDMappings } from '@/services/dashboardApi';
 import { formatTime, formatPhone, formatSeconds } from '@/utils/formatters';
 import { ResultBadge, RESULT_MAP } from '@/components/dashboard/ResultBadge';
 import { EmptyState } from '@/components/dashboard/EmptyState';
@@ -23,10 +25,123 @@ interface CallsTabProps {
   permissions: Permissions;
 }
 
+// ── Caller-name resolution hook ──────────────────────────────────────────────
+
+/**
+ * Fetches real customer names from Firebase for every unique callerNumber
+ * in the calls list, keyed by callerNumber for O(1) lookup in the table.
+ * Results are cached across re-renders so the same number is never fetched twice.
+ *
+ * Owner UID resolution order (mirrors CallDetailsSheet):
+ *   1. DID mapping ownerId (looked up by call.dialedNumber)
+ *   2. tenant.bmsOwnerUid
+ *   3. call.tenantId (final fallback — works when tenantId IS the Firebase owner UID)
+ */
+function useCallerNames(calls: Call[], tenants: Tenant[]) {
+  // Map<callerNumber, resolvedName | null>
+  const [nameMap, setNameMap] = useState<Map<string, string | null>>(new Map());
+  const [loading, setLoading] = useState(false);
+  // Persistent cache that survives across effect re-runs
+  const cacheRef = useRef<Map<string, string | null>>(new Map());
+  // DID → ownerId from did_mappings table
+  const [didOwnerMap, setDidOwnerMap] = useState<Map<string, string>>(new Map());
+  const didMapLoadedRef = useRef(false);
+
+  // Build tenantId → bmsOwnerUid lookup
+  const ownerByTenant = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of tenants) {
+      if (t.bmsOwnerUid) m.set(t.id, t.bmsOwnerUid);
+    }
+    return m;
+  }, [tenants]);
+
+  // Load DID mappings once to resolve ownerId from dialedNumber
+  useEffect(() => {
+    if (didMapLoadedRef.current) return;
+    didMapLoadedRef.current = true;
+
+    fetchDIDMappings()
+      .then((mappings) => {
+        const m = new Map<string, string>();
+        for (const d of mappings) {
+          if (d.ownerId) m.set(d.did, d.ownerId);
+        }
+        setDidOwnerMap(m);
+      })
+      .catch(() => {
+        // DID mappings may not be accessible for non-super-admin — continue without
+      });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // Collect unique (ownerUid, callerNumber) pairs that aren't cached yet
+    const lookups = new Map<string, string>(); // callerNumber → ownerUid
+    for (const call of calls) {
+      if (cacheRef.current.has(call.callerNumber)) continue;
+      if (lookups.has(call.callerNumber)) continue;
+
+      // Resolve owner UID in priority order (matches CallDetailsSheet logic):
+      // 1. DID mapping ownerId (from dialedNumber)
+      // 2. tenant.bmsOwnerUid
+      // 3. tenantId itself (fallback — many setups use tenantId as the Firebase UID)
+      const didOwner = call.dialedNumber ? didOwnerMap.get(call.dialedNumber) : undefined;
+      const tenantOwner = ownerByTenant.get(call.tenantId);
+      const ownerUid = didOwner || tenantOwner || call.tenantId;
+
+      if (ownerUid) {
+        lookups.set(call.callerNumber, ownerUid);
+      }
+    }
+
+    if (lookups.size === 0) {
+      // Nothing new to fetch — push cache into state if needed
+      setNameMap(new Map(cacheRef.current));
+      return;
+    }
+
+    setLoading(true);
+
+    // Fire all lookups in parallel
+    const entries = Array.from(lookups.entries());
+    Promise.allSettled(
+      entries.map(([phone, ownerUid]) =>
+        fetchCallerNameByPhone(ownerUid, phone).then((name) => ({
+          phone,
+          name,
+        })),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          cacheRef.current.set(r.value.phone, r.value.name);
+        }
+      }
+
+      setNameMap(new Map(cacheRef.current));
+      setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [calls, ownerByTenant, didOwnerMap]);
+
+  return { nameMap, loading };
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
 export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps) {
   const [filterResult, setFilterResult] = useState('all');
   const [filterQueue, setFilterQueue] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+
+  const { nameMap, loading: namesLoading } = useCallerNames(calls, tenants);
 
   const availableQueues = useMemo(() => {
     const qids = new Set(calls.map((c) => c.queueId));
@@ -39,16 +154,20 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
     if (filterQueue !== 'all') list = list.filter((c) => c.queueId === filterQueue);
     if (searchTerm) {
       const s = searchTerm.toLowerCase();
-      list = list.filter((c) =>
-        c.callerNumber.includes(s) ||
-        c.agentName.toLowerCase().includes(s) ||
-        c.queueName.toLowerCase().includes(s) ||
-        c.tenantName.toLowerCase().includes(s) ||
-        (c.callerName && c.callerName.toLowerCase().includes(s))
-      );
+      list = list.filter((c) => {
+        const resolvedName = nameMap.get(c.callerNumber);
+        return (
+          c.callerNumber.includes(s) ||
+          c.agentName.toLowerCase().includes(s) ||
+          c.queueName.toLowerCase().includes(s) ||
+          c.tenantName.toLowerCase().includes(s) ||
+          (c.callerName && c.callerName.toLowerCase().includes(s)) ||
+          (resolvedName && resolvedName.toLowerCase().includes(s))
+        );
+      });
     }
     return list;
-  }, [calls, filterResult, filterQueue, searchTerm]);
+  }, [calls, filterResult, filterQueue, searchTerm, nameMap]);
 
   return (
     <div className="cc-fade-in space-y-6">
@@ -131,7 +250,15 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
 
       <Card className="border-border/80 bg-white shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Call History</CardTitle>
+          <CardTitle className="flex items-center gap-3 text-base">
+            Call History
+            {namesLoading && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-normal text-slate-500">
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-slate-400" />
+                Resolving names…
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {filtered.length === 0 ? (
@@ -157,13 +284,14 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                 {filtered.map((c) => {
                   const tenant = tenants.find((t) => t.id === c.tenantId);
                   const brandColor = tenant?.brandColor || 'var(--cc-color-cyan)';
+                  const resolvedName = nameMap.get(c.callerNumber) || c.callerName;
 
                   return (
                     <TableRow key={c.id}>
                       <TableCell className="font-mono text-xs">{formatTime(c.startTime)}</TableCell>
                       <TableCell className="text-sm">
-                        {c.callerName ? (
-                          <span className="font-medium text-foreground">{c.callerName}</span>
+                        {resolvedName ? (
+                          <span className="font-medium text-foreground">{resolvedName}</span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -217,3 +345,4 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
     </div>
   );
 }
+

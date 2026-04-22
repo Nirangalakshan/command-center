@@ -41,3 +41,34 @@ export function formatPhone(num: string | null): string {
   }
   return num;
 }
+
+/**
+ * Returns true if the caller number looks like a real external phone number.
+ *
+ * Accepted patterns:
+ *   +94…   Sri Lanka international (E.164)
+ *   +61…   Australia international (E.164)
+ *   94…    Sri Lanka without leading +
+ *   61…    Australia without leading +
+ *   0…     Local number (Sri Lanka 0xx / Australian 0x)
+ *
+ * Rejected: internal extensions (≤ 6 digits), empty, or unrecognised prefixes.
+ */
+export function isValidCallerNumber(num: string | null | undefined): boolean {
+  if (!num) return false;
+  const raw = String(num).trim();
+  if (!raw) return false;
+
+  // Allow international formats: +94, +61
+  if (/^\+94\d{7,}$/.test(raw)) return true;
+  if (/^\+61\d{7,}$/.test(raw)) return true;
+
+  // Allow without leading +: 94…, 61…
+  if (/^94\d{7,}$/.test(raw)) return true;
+  if (/^61\d{7,}$/.test(raw)) return true;
+
+  // Allow local numbers starting with 0 (min 7 digits after the 0)
+  if (/^0\d{7,}$/.test(raw)) return true;
+
+  return false;
+}
