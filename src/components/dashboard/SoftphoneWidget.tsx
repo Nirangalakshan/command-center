@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Phone,
   PhoneCall,
@@ -218,19 +218,27 @@ function ActiveCallCard({
   const [xferError, setXferError] = useState<string | null>(null);
   const [xferQuery, setXferQuery] = useState('');
 
+  // Load directory as soon as the call is connected so the list is ready when
+  // the user expands "Transfer call" (same cached fetch as the Directory tab).
   const { status: extStatus, extensions, error: extErr, refresh } = useExtensions({
-    enabled: isConnected && xferOpen,
+    enabled: isConnected,
   });
 
-  const filteredXfer = extensions.filter((e) => {
-    if (!xferQuery) return true;
-    const q = xferQuery.toLowerCase();
-    return (
-      e.number.toLowerCase().includes(q) ||
-      e.name.toLowerCase().includes(q) ||
-      (e.email?.toLowerCase().includes(q) ?? false)
-    );
-  });
+  const filteredXfer = useMemo(() => {
+    const q = xferQuery.trim().toLowerCase();
+    const list = extensions.filter((e) => {
+      if (!q) return true;
+      return (
+        e.number.toLowerCase().includes(q) ||
+        e.name.toLowerCase().includes(q) ||
+        (e.email?.toLowerCase().includes(q) ?? false)
+      );
+    });
+    return [...list].sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return a.number.localeCompare(b.number, undefined, { numeric: true });
+    });
+  }, [extensions, xferQuery]);
 
   const runBlindTransfer = useCallback(
     (raw: string) => {
@@ -363,7 +371,14 @@ function ActiveCallCard({
           >
             <span className="flex items-center gap-1.5">
               <ArrowRightLeft className="h-3.5 w-3.5" />
-              Transfer call
+              <span>
+                Transfer call
+                {extStatus === 'ready' && extensions.length > 0 && (
+                  <span className="ml-1 font-normal text-violet-600/80">
+                    ({extensions.length})
+                  </span>
+                )}
+              </span>
             </span>
             <ChevronRight
               className={`h-3.5 w-3.5 text-violet-500 transition-transform ${xferOpen ? 'rotate-90' : ''}`}
@@ -373,89 +388,113 @@ function ActiveCallCard({
           {xferOpen && (
             <div className="mt-2 space-y-2 rounded-lg border border-violet-200/60 bg-white/80 p-2">
               <p className="text-[10px] leading-snug text-slate-500">
-                Blind transfer sends the caller to the extension immediately and clears your
-                line when the PBX accepts it.
+                Tap an extension to blind transfer, or dial another number below.
               </p>
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={xferDest}
-                  onChange={(e) => {
-                    setXferDest(e.target.value);
-                    setXferError(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') runBlindTransfer(xferDest);
-                  }}
-                  placeholder="Extension or number"
-                  className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-xs text-slate-900 outline-none focus:border-violet-400"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="shrink-0 border-violet-300 text-violet-800 hover:bg-violet-50"
-                  disabled={!xferDest.trim()}
-                  onClick={() => runBlindTransfer(xferDest)}
-                >
-                  Transfer
-                </Button>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-slate-800">
+                    Extensions
+                  </span>
+                  {extStatus === 'ready' && extensions.length > 0 && (
+                    <span className="text-[10px] text-slate-500">
+                      {xferQuery.trim() ? `${filteredXfer.length} match` : `${extensions.length} total`}
+                    </span>
+                  )}
+                </div>
+
+                <div className="mb-1.5 flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+                  <Search className="h-3 w-3 flex-shrink-0 text-slate-400" />
+                  <input
+                    type="text"
+                    value={xferQuery}
+                    onChange={(e) => setXferQuery(e.target.value)}
+                    placeholder="Filter by name or extension…"
+                    className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-800 outline-none placeholder:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={refresh}
+                    className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                    title="Refresh extensions"
+                    aria-label="Refresh extensions"
+                    disabled={extStatus === 'loading'}
+                  >
+                    <RefreshCw
+                      className={`h-3 w-3 ${extStatus === 'loading' ? 'animate-spin' : ''}`}
+                    />
+                  </button>
+                </div>
+
+                {extStatus === 'loading' && extensions.length === 0 && (
+                  <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-slate-200 py-6 text-[11px] text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Loading extensions…</span>
+                  </div>
+                )}
+
+                {extStatus === 'error' && (
+                  <div className="flex items-start gap-1.5 rounded bg-rose-50 px-1.5 py-1.5 text-[10px] text-rose-700">
+                    <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                    <span className="min-w-0 break-words">{extErr}</span>
+                  </div>
+                )}
+
+                {extStatus === 'ready' && extensions.length === 0 && (
+                  <p className="rounded-md border border-dashed border-slate-200 py-3 text-center text-[10px] text-slate-500">
+                    No extensions returned. Check PBX API permissions or refresh.
+                  </p>
+                )}
+
+                {filteredXfer.length > 0 && (
+                  <div className="max-h-52 space-y-0.5 overflow-y-auto overscroll-contain rounded-md border border-slate-100 bg-slate-50/50 pr-0.5">
+                    {filteredXfer.map((ext) => (
+                      <ExtensionTransferRow
+                        key={ext.id}
+                        ext={ext}
+                        onTransfer={(n) => runBlindTransfer(n)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {extStatus === 'ready' && extensions.length > 0 && filteredXfer.length === 0 && (
+                  <p className="py-2 text-center text-[10px] text-slate-500">
+                    No extensions match your filter.
+                  </p>
+                )}
+              </div>
+
+              <div className="border-t border-slate-200/80 pt-2">
+                <p className="mb-1 text-[10px] font-medium text-slate-600">Other number</p>
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    value={xferDest}
+                    onChange={(e) => {
+                      setXferDest(e.target.value);
+                      setXferError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') runBlindTransfer(xferDest);
+                    }}
+                    placeholder="Extension or external number"
+                    className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-xs text-slate-900 outline-none focus:border-violet-400"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0 border-violet-300 text-violet-800 hover:bg-violet-50"
+                    disabled={!xferDest.trim()}
+                    onClick={() => runBlindTransfer(xferDest)}
+                  >
+                    Transfer
+                  </Button>
+                </div>
               </div>
 
               {xferError && (
                 <p className="text-[10px] text-rose-600">{xferError}</p>
-              )}
-
-              <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
-                <Search className="h-3 w-3 flex-shrink-0 text-slate-400" />
-                <input
-                  type="text"
-                  value={xferQuery}
-                  onChange={(e) => setXferQuery(e.target.value)}
-                  placeholder="Search directory…"
-                  className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-800 outline-none placeholder:text-slate-400"
-                />
-                <button
-                  type="button"
-                  onClick={refresh}
-                  className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
-                  title="Refresh extensions"
-                  aria-label="Refresh extensions"
-                  disabled={extStatus === 'loading'}
-                >
-                  <RefreshCw
-                    className={`h-3 w-3 ${extStatus === 'loading' ? 'animate-spin' : ''}`}
-                  />
-                </button>
-              </div>
-
-              {extStatus === 'loading' && extensions.length === 0 && (
-                <div className="flex items-center gap-1.5 py-2 text-[11px] text-slate-500">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Loading extensions…
-                </div>
-              )}
-
-              {extStatus === 'error' && (
-                <div className="flex items-start gap-1.5 rounded bg-rose-50 px-1.5 py-1 text-[10px] text-rose-700">
-                  <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0" />
-                  <span className="min-w-0 break-words">{extErr}</span>
-                </div>
-              )}
-
-              {filteredXfer.length > 0 && (
-                <div className="max-h-36 space-y-0.5 overflow-y-auto pr-0.5">
-                  {filteredXfer.map((ext) => (
-                    <ExtensionTransferRow
-                      key={ext.id}
-                      ext={ext}
-                      onTransfer={(n) => runBlindTransfer(n)}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {extStatus === 'ready' && filteredXfer.length === 0 && extensions.length > 0 && (
-                <p className="text-center text-[10px] text-slate-500">No directory matches.</p>
               )}
             </div>
           )}

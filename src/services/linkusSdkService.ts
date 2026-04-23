@@ -25,6 +25,18 @@ const SDK_ACCESS_ID =
   (import.meta.env.VITE_YEASTAR_SDK_ACCESS_ID as string) ?? '';
 const SDK_ACCESS_KEY =
   (import.meta.env.VITE_YEASTAR_SDK_ACCESS_KEY as string) ?? '';
+const CLIENT_ACCESS_ID =
+  (import.meta.env.VITE_YEASTAR_CLIENT_ID as string) ?? '';
+const CLIENT_ACCESS_KEY =
+  (import.meta.env.VITE_YEASTAR_CLIENT_SECRET as string) ?? '';
+
+/** If set, `extension/list` uses this Open API app (for Extension scope) instead of the SDK app. */
+const OPENAPI_EXT_LIST_ID = (
+  (import.meta.env.VITE_YEASTAR_OPENAPI_ACCESS_ID as string) ?? ''
+).trim();
+const OPENAPI_EXT_LIST_KEY = (
+  (import.meta.env.VITE_YEASTAR_OPENAPI_ACCESS_KEY as string) ?? ''
+).trim();
 
 export const LINKUS_PBX_URL = PBX_BASE;
 
@@ -89,6 +101,75 @@ async function getPbxAccessToken(): Promise<string> {
   _pbxTokenExpiresAt = Date.now() + ttlMs;
 
   return _pbxToken;
+}
+
+type ExtListCredential = { label: string; id: string; key: string };
+const _extListTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+function getExtListCredentialCandidates(): ExtListCredential[] {
+  const raw: ExtListCredential[] = [];
+  if (OPENAPI_EXT_LIST_ID && OPENAPI_EXT_LIST_KEY) {
+    raw.push({
+      label: 'VITE_YEASTAR_OPENAPI_ACCESS_*',
+      id: OPENAPI_EXT_LIST_ID,
+      key: OPENAPI_EXT_LIST_KEY,
+    });
+  }
+  if (SDK_ACCESS_ID && SDK_ACCESS_KEY) {
+    raw.push({
+      label: 'VITE_YEASTAR_SDK_ACCESS_*',
+      id: SDK_ACCESS_ID,
+      key: SDK_ACCESS_KEY,
+    });
+  }
+  if (CLIENT_ACCESS_ID && CLIENT_ACCESS_KEY) {
+    raw.push({
+      label: 'VITE_YEASTAR_CLIENT_ID/SECRET',
+      id: CLIENT_ACCESS_ID,
+      key: CLIENT_ACCESS_KEY,
+    });
+  }
+
+  // Keep order, but avoid retrying the exact same pair twice.
+  const seen = new Set<string>();
+  return raw.filter((c) => {
+    const k = `${c.id}::${c.key}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+async function getPbxAccessTokenWithCreds(c: ExtListCredential): Promise<string> {
+  const cacheKey = `${c.id}::${c.key}`;
+  const hit = _extListTokenCache.get(cacheKey);
+  if (hit && Date.now() < hit.expiresAt) return hit.token;
+
+  const res = await fetch(`${PBX_BASE}/openapi/v1.0/get_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: c.id, password: c.key }),
+  });
+
+  if (!res.ok) throw new Error(`PBX token (${c.label}) HTTP ${res.status}`);
+
+  const data: {
+    errcode: number;
+    errmsg: string;
+    access_token?: string;
+    access_token_expire_time?: number;
+  } = await res.json();
+
+  if (data.errcode !== 0 || !data.access_token) {
+    throw new Error(`PBX token (${c.label}) error ${data.errcode}: ${data.errmsg}`);
+  }
+
+  const ttlMs = ((data.access_token_expire_time ?? 1800) - 60) * 1000;
+  _extListTokenCache.set(cacheKey, {
+    token: data.access_token,
+    expiresAt: Date.now() + ttlMs,
+  });
+  return data.access_token;
 }
 
 // ─── Public API ────────────────────────────────────────────
@@ -287,6 +368,9 @@ const EXT_CACHE_TTL_MS = 5 * 60 * 1000;
  * piggy-backs on `getPbxAccessToken()`). Results are cached for 5 minutes.
  *
  * Pass `{ force: true }` to bypass the cache (e.g. after a manual refresh).
+ *
+ * Auth: uses `VITE_YEASTAR_OPENAPI_ACCESS_ID` / `KEY` when both are set (PBX app
+ * with Extension → Query Extension List); otherwise the Linkus SDK credentials.
  */
 export async function fetchExtensions(
   opts: { force?: boolean } = {}
@@ -295,62 +379,76 @@ export async function fetchExtensions(
     return _extCache.data;
   }
 
-  if (!PBX_BASE || !SDK_ACCESS_ID || !SDK_ACCESS_KEY) {
+  const candidates = getExtListCredentialCandidates();
+  if (!PBX_BASE || candidates.length === 0) {
     throw new Error(
-      'Linkus SDK env vars missing. Check VITE_YEASTAR_PBX_URL, ' +
-        'VITE_YEASTAR_SDK_ACCESS_ID and VITE_YEASTAR_SDK_ACCESS_KEY in .env'
+      'Yeastar env vars missing. Check VITE_YEASTAR_PBX_URL plus one credential pair: ' +
+        'VITE_YEASTAR_OPENAPI_ACCESS_*, VITE_YEASTAR_SDK_ACCESS_*, or VITE_YEASTAR_CLIENT_ID/SECRET.'
     );
   }
 
-  let accessToken: string;
-  try {
-    accessToken = await getPbxAccessToken();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (isIpForbidden(msg)) throw new IpForbiddenError();
-    throw err;
+  let sawAccessDenied = false;
+  let lastErr: Error | null = null;
+
+  for (const cred of candidates) {
+    try {
+      const accessToken = await getPbxAccessTokenWithCreds(cred);
+
+      // Yeastar P-Series paginates; 500 is well above most deployments.
+      const params = new URLSearchParams({
+        access_token: accessToken,
+        page: '1',
+        page_size: '500',
+        sort_by: 'number',
+        order_by: 'asc',
+      });
+
+      const res = await fetch(
+        `${PBX_BASE}/openapi/v1.0/extension/list?${params.toString()}`,
+        { method: 'GET' }
+      );
+      if (!res.ok) throw new Error(`PBX extension/list (${cred.label}) HTTP ${res.status}`);
+
+      const json: {
+        errcode: number;
+        errmsg: string;
+        total_number?: number;
+        data?: RawExtension[];
+      } = await res.json();
+
+      if (json.errcode !== 0) {
+        const msg = `PBX extension/list (${cred.label}) error ${json.errcode}: ${json.errmsg}`;
+        if (isIpForbidden(msg)) throw new IpForbiddenError();
+        if (json.errcode === 10005) {
+          sawAccessDenied = true;
+          lastErr = new Error(msg);
+          continue;
+        }
+        throw new Error(msg);
+      }
+
+      const raw = Array.isArray(json.data) ? json.data : [];
+      const extensions = raw
+        .map(normaliseExtension)
+        .filter((e) => e.number); // ignore any entries without a dialable number
+
+      _extCache = { at: Date.now(), data: extensions };
+      return extensions;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isIpForbidden(msg)) throw new IpForbiddenError();
+      if (msg.includes('10005') || msg.toLowerCase().includes('access denied')) {
+        sawAccessDenied = true;
+      }
+      lastErr = err instanceof Error ? err : new Error(msg);
+    }
   }
 
-  // Yeastar P-Series paginates; 500 is well above most deployments. If the
-  // tenant has more we'd iterate pages, but that's vanishingly rare.
-  const params = new URLSearchParams({
-    access_token: accessToken,
-    page: '1',
-    page_size: '500',
-    sort_by: 'number',
-    order_by: 'asc',
-  });
-
-  const res = await fetch(
-    `${PBX_BASE}/openapi/v1.0/extension/list?${params.toString()}`,
-    { method: 'GET' }
-  );
-
-  if (!res.ok) throw new Error(`PBX extension/list HTTP ${res.status}`);
-
-  const json: {
-    errcode: number;
-    errmsg: string;
-    total_number?: number;
-    data?: RawExtension[];
-  } = await res.json();
-
-  if (json.errcode !== 0) {
-    const msg = `PBX extension/list error ${json.errcode}: ${json.errmsg}`;
-    if (isIpForbidden(msg)) throw new IpForbiddenError();
-    if (json.errcode === 10005) throw new ApiAccessDeniedError('Extension List');
-    throw new Error(msg);
-  }
-
-  const raw = Array.isArray(json.data) ? json.data : [];
-  const extensions = raw
-    .map(normaliseExtension)
-    .filter((e) => e.number); // ignore any entries without a dialable number
-
-  _extCache = { at: Date.now(), data: extensions };
-  return extensions;
+  if (sawAccessDenied) throw new ApiAccessDeniedError('Extension List');
+  throw lastErr ?? new Error('Failed to query extension list');
 }
 
 export function clearExtensionCache() {
   _extCache = null;
+  _extListTokenCache.clear();
 }

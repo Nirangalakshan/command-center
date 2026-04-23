@@ -67,9 +67,11 @@ export function useExtensions({
           setError('IP blocked by Yeastar PBX (error 70087).');
         } else if (err instanceof ApiAccessDeniedError) {
           setError(
-            'No permission to list extensions. On the PBX, open ' +
-              'Integrations → API, edit the SDK app, and enable the ' +
-              '"Extension" scope (at least Query Extension List).'
+            'No permission to list extensions. On the PBX: Integrations → API → ' +
+              'edit the Open API app you use here. Enable Extension → Query Extension List. ' +
+              'That is either the Linkus SDK app (VITE_YEASTAR_SDK_ACCESS_*) or, if you ' +
+              'prefer a separate app, set VITE_YEASTAR_OPENAPI_ACCESS_ID and ' +
+              'VITE_YEASTAR_OPENAPI_ACCESS_KEY to that separate app.'
           );
         } else {
           setError(err instanceof Error ? err.message : String(err));
