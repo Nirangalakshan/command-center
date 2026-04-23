@@ -85,27 +85,128 @@ Deno.serve(async (req) => {
 // ═══════════════════════════════════════════════════════════
 // NewCdr — call has ended, write full CDR to calls table
 // ═══════════════════════════════════════════════════════════
+
+/** Yeastar often sends `Display Name<2005>` or `Name<+6123456789>`; extensions must be parsed out for DB lookup. */
+function extractYeastarPartyNumber(raw: string): string {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  const angled = /<([^>]+)>/.exec(s);
+  if (angled?.[1]) return angled[1].trim().replace(/\s+/g, '');
+  return s.replace(/\s+/g, '');
+}
+
+function extensionLookupCandidates(raw: string): string[] {
+  const out: string[] = [];
+  const push = (v: string) => {
+    const x = v.trim();
+    if (x && !out.includes(x)) out.push(x);
+  };
+  push(raw);
+  const extracted = extractYeastarPartyNumber(raw);
+  push(extracted);
+  const digits = raw.replace(/\D/g, '');
+  if (digits) {
+    push(digits);
+    const stripped = digits.replace(/^0+/, '') || digits;
+    if (stripped !== digits) push(stripped);
+  }
+  return out;
+}
+
+/** P-Series / S-Series CDR call leg type (not the numeric webhook event id). */
+function readYeastarCdrCallType(body: Record<string, unknown>): 'inbound' | 'outbound' | 'internal' | null {
+  const fields = [body.call_type, body.communication_type, body.type];
+  for (const f of fields) {
+    if (typeof f !== 'string') continue;
+    const s = f.trim().toLowerCase();
+    if (s === 'inbound' || s === 'outbound' || s === 'internal') return s;
+  }
+  return null;
+}
+
+async function findAgentByPartyRaw(rawParty: string): Promise<{ id: string; tenant_id: string; queue_ids: unknown } | null> {
+  const cands = extensionLookupCandidates(rawParty);
+  if (cands.length === 0) return null;
+  const { data: rows, error } = await supabase
+    .from('agents')
+    .select('id, tenant_id, queue_ids, extension')
+    .in('extension', cands);
+  if (error || !rows?.length) return null;
+  if (rows.length === 1) return rows[0];
+  const prefer = cands.find((c) => rows.some((r) => r.extension === c));
+  if (prefer) {
+    const hit = rows.find((r) => r.extension === prefer);
+    if (hit) return hit;
+  }
+  return rows[0];
+}
+
+async function resolveTenantIdFromOutboundTrunk(body: Record<string, unknown>): Promise<string | null> {
+  const trunk = String(body.dst_trunk_name ?? body.desttrunkname ?? body.dst_trunk ?? '').trim();
+  if (!trunk || trunk === ' ') return null;
+  const { data } = await supabase.from('sip_lines').select('tenant_id').eq('trunk_name', trunk).maybeSingle();
+  return data?.tenant_id ?? null;
+}
+
 async function handleNewCdr(body: Record<string, unknown>) {
-  const callid = String(body.callid ?? '');
-  const timestart = String(body.timestart ?? '');
-  const callfrom = String(body.callfrom ?? '');
-  const callto = String(body.callto ?? '');
-  const callduraction = Number(body.callduraction ?? 0);
-  const talkduraction = Number(body.talkduraction ?? 0);
+  const callid = String(body.callid ?? body.call_id ?? '');
+  const timestart = String(body.timestart ?? body.time_start ?? '');
+  if (!callid.trim() || !timestart.trim()) {
+    console.warn('[yeastar-webhook] NewCdr skipped: missing call_id or start time', { callid, timestart });
+    return;
+  }
+  const rawFrom = String(body.callfrom ?? body.call_from ?? body.call_from_number ?? '');
+  const rawTo = String(body.callto ?? body.call_to ?? body.call_to_number ?? '');
+  const callduraction = Number(body.callduraction ?? body.call_duration ?? 0);
+  const talkduraction = Number(body.talkduraction ?? body.talk_duration ?? 0);
   const status = String(body.status ?? '');
-  const did = String(body.did ?? callto);
+  const didFromPayload = String(body.did ?? body.did_number ?? body.didnumber ?? '').trim();
   const recording = body.recording ? String(body.recording) : null;
 
-  // Look up tenant and queue via DID mapping
-  const { data: mapping } = await supabase
-    .from('did_mappings')
-    .select('tenant_id, queue_id')
-    .eq('did', did)
-    .maybeSingle();
+  const cdrKind = readYeastarCdrCallType(body);
 
-  const tenantId = mapping?.tenant_id ?? 'unknown';
-  const queueId = mapping?.queue_id ?? 'unknown';
-  const callerName = await lookupCustomerName(tenantId, callfrom);
+  const [agentTo, agentFrom] = await Promise.all([
+    findAgentByPartyRaw(rawTo),
+    findAgentByPartyRaw(rawFrom),
+  ]);
+
+  let direction: 'inbound' | 'outbound';
+  if (cdrKind === 'outbound') {
+    direction = 'outbound';
+  } else if (cdrKind === 'inbound') {
+    direction = 'inbound';
+  } else if (cdrKind === 'internal') {
+    if (agentTo) direction = 'inbound';
+    else if (agentFrom) direction = 'outbound';
+    else direction = 'inbound';
+  } else {
+    /** No explicit type: callee extension ⇒ inbound; caller extension only ⇒ outbound (S-Series style). */
+    direction = agentTo ? 'inbound' : agentFrom ? 'outbound' : 'inbound';
+  }
+
+  const agentRow = direction === 'inbound' ? agentTo : agentFrom;
+  const customerRaw = direction === 'inbound' ? rawFrom : rawTo;
+  const customerNumber = extractYeastarPartyNumber(customerRaw) || customerRaw.replace(/\s+/g, '').trim();
+
+  const didForMapping = didFromPayload;
+  const { data: mapping } = didForMapping
+    ? await supabase
+      .from('did_mappings')
+      .select('tenant_id, queue_id')
+      .eq('did', didForMapping)
+      .maybeSingle()
+    : { data: null };
+
+  const tenantIdFromAgent = agentRow?.tenant_id;
+  const queueIdFromAgent = Array.isArray(agentRow?.queue_ids) && agentRow.queue_ids.length > 0
+    ? String(agentRow.queue_ids[0])
+    : 'unknown';
+
+  const trunkTenantId = direction === 'outbound' ? await resolveTenantIdFromOutboundTrunk(body) : null;
+
+  const tenantId = mapping?.tenant_id ?? tenantIdFromAgent ?? trunkTenantId ?? 'unknown';
+  const queueId = mapping?.queue_id ?? queueIdFromAgent;
+  const callerName = await lookupCustomerName(tenantId, customerNumber);
 
   // Parse times
   const startTime = parseYeastarDate(timestart);
@@ -114,22 +215,21 @@ async function handleNewCdr(body: Record<string, unknown>) {
     ? new Date(startTime.getTime() + (callduraction - talkduraction) * 1000)
     : null;
 
-  // Look up agent by extension number
-  const { data: agent } = await supabase
-    .from('agents')
-    .select('id')
-    .eq('extension', callto)
-    .maybeSingle();
+  const dialedNumber =
+    direction === 'inbound'
+      ? (didFromPayload || null)
+      : (extractYeastarPartyNumber(rawFrom) || rawFrom.replace(/\s+/g, '').trim() || null);
 
   // Upsert call record (idempotent on callid)
   const { error } = await supabase.from('calls').upsert({
     id: `yeastar-${callid}`,
     tenant_id: tenantId,
     queue_id: queueId,
-    agent_id: agent?.id ?? null,
-    caller_number: callfrom,
+    agent_id: agentRow?.id ?? null,
+    caller_number: customerNumber,
     caller_name: callerName,
-    dialed_number: did || null,
+    dialed_number: dialedNumber,
+    direction,
     start_time: startTime.toISOString(),
     answer_time: answerTime?.toISOString() ?? null,
     end_time: endTime.toISOString(),
@@ -143,12 +243,12 @@ async function handleNewCdr(body: Record<string, unknown>) {
   if (error) throw new Error(`calls upsert failed: ${error.message}`);
 
   // Reset agent status to available after call ends
-  if (agent?.id) {
+  if (agentRow?.id) {
     await supabase.from('agents').update({
       status: 'available',
       current_caller: null,
       call_start_time: null,
-    }).eq('id', agent.id);
+    }).eq('id', agentRow.id);
   }
 
   // Remove the call from the live dashboard — CDR is the definitive end-of-call
@@ -157,7 +257,7 @@ async function handleNewCdr(body: Record<string, unknown>) {
   await supabase.channel('yeastar-incoming-calls').send({
     type: 'broadcast',
     event: 'CallHangup',
-    payload: { id: `incoming-${callid}`, callerNumber: callfrom },
+    payload: { id: `incoming-${callid}`, callerNumber: customerNumber },
   });
 
   // console.log(`[yeastar-webhook] NewCdr written + CallHangup broadcast: yeastar-${callid}`);
@@ -681,6 +781,8 @@ function flattenYeastarPayload(type: number | undefined, payload: Record<string,
       did_number: payload.did_number,
       trunkname: payload.src_trunk_name,
       trunk_name: payload.src_trunk_name,
+      dst_trunk_name: payload.dst_trunk_name,
+      call_type: payload.call_type,
     };
   }
 

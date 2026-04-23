@@ -76,6 +76,8 @@ export interface Call {
   tenantId: string;
   queueId: string;
   agentId: string | null;
+  /** inbound = customer called the centre; outbound = agent dialled the customer (CDR). */
+  direction: "inbound" | "outbound";
   /** Customer / inbound caller number (CLI). */
   callerNumber: string;
   callerName: string | null;

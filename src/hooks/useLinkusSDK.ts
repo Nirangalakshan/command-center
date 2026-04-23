@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { init } from 'ys-webrtc-sdk-core';
 import type { PhoneOperator, PBXOperator, CallStatus } from 'ys-webrtc-sdk-core';
 import {
@@ -7,6 +7,9 @@ import {
   IpForbiddenError,
   clearCachedSdkSign,
 } from '@/services/linkusSdkService';
+import type { LinkusSessionEndPayload } from '@/services/linkusCallLog';
+
+export type { LinkusSessionEndPayload };
 
 export type MicPermission = 'unknown' | 'granted' | 'denied';
 
@@ -34,9 +37,18 @@ export interface ActiveCallInfo {
   startTime: number;
 }
 
-// ─── Internal helpers ──────────────────────────────────────
+export const LINKUS_CALL_STATUS_LABELS: Record<
+  ActiveCallInfo['callStatus'],
+  string
+> = {
+  ringing: 'Dialling',
+  calling: 'Ringing…',
+  talking: 'Connected',
+  connecting: 'Connecting…',
+};
 
-function mapSdkStatus(s: CallStatus): ActiveCallInfo {
+/** Maps Yeastar Linkus `CallStatus` (from `newRTCSession` → `session.status`). */
+export function mapLinkusCallStatus(s: CallStatus): ActiveCallInfo {
   return {
     callId: s.callId,
     number: s.number,
@@ -69,6 +81,8 @@ function deriveStatus(
 interface UseLinkusSdkOptions {
   /** The agent's Yeastar-registered email. Pass null/undefined to stay idle. */
   agentEmail: string | null | undefined;
+  /** Fired once per call when the SDK session ends. Keep reference stable (use ref in parent) so bootstrap is not re-run on every render. */
+  onCallSessionEnd?: (info: LinkusSessionEndPayload) => void;
 }
 
 // ─── Audio helpers ─────────────────────────────────────────
@@ -132,7 +146,10 @@ function stopRingtone() {
 
 // ─── Hook ──────────────────────────────────────────────────
 
-export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
+export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptions) {
+  const onCallSessionEndRef = useRef(onCallSessionEnd);
+  onCallSessionEndRef.current = onCallSessionEnd;
+
   const [status, setStatus] = useState<SoftphoneStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [micPermission, setMicPermission] = useState<MicPermission>('unknown');
@@ -144,6 +161,8 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
 
   const phoneRef = useRef<PhoneOperator | null>(null);
   const pbxRef = useRef<PBXOperator | null>(null);
+  const sessionEndLoggedRef = useRef(new Set<string>());
+  const lastSdkStatusRef = useRef(new Map<string, CallStatus>());
 
   // Derive combined status — only keep terminal states (ip-forbidden, error)
   // sticky. 'initializing' must unlock once registration succeeds, otherwise
@@ -189,9 +208,10 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
   }, [incomingCallIds.length]);
 
   const upsertCall = useCallback((sdkStatus: CallStatus) => {
+    lastSdkStatusRef.current.set(sdkStatus.callId, sdkStatus);
     setActiveCalls((prev) => {
       const next = new Map(prev);
-      next.set(sdkStatus.callId, mapSdkStatus(sdkStatus));
+      next.set(sdkStatus.callId, mapLinkusCallStatus(sdkStatus));
       return next;
     });
   }, []);
@@ -224,6 +244,26 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
 
     let cancelled = false;
     let destroyFn: (() => void) | null = null;
+    sessionEndLoggedRef.current.clear();
+    lastSdkStatusRef.current.clear();
+
+    const emitSessionEnd = (callId: string, status: CallStatus) => {
+      const cb = onCallSessionEndRef.current;
+      if (!cb || sessionEndLoggedRef.current.has(callId)) return;
+      sessionEndLoggedRef.current.add(callId);
+      const effective = lastSdkStatusRef.current.get(callId) ?? status;
+      lastSdkStatusRef.current.delete(callId);
+      const snap = mapLinkusCallStatus(effective);
+      cb({
+        callId,
+        direction: snap.direction,
+        number: snap.number,
+        name: snap.name,
+        startTimeMs: snap.startTime,
+        endTimeMs: Date.now(),
+        lastCallStatus: snap.callStatus,
+      });
+    };
 
     async function bootstrap() {
       setStatus('initializing');
@@ -325,6 +365,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
         });
 
         // ── New session (outbound or inbound) ─────────────
+        // `session.status` is Yeastar CallStatus: communicationType → direction, callStatus, etc.
         phone.on('newRTCSession', ({
           callId,
           session,
@@ -337,7 +378,14 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
           };
         }) => {
           if (cancelled) return;
-          console.log('[useLinkusSDK] newRTCSession', callId, session.status.callStatus, session.status.communicationType);
+          const snap = mapLinkusCallStatus(session.status);
+          console.log('[useLinkusSDK] newRTCSession', {
+            callId,
+            direction: snap.direction,
+            callStatus: snap.callStatus,
+            number: snap.number,
+            name: snap.name || undefined,
+          });
 
           upsertCall(session.status);
 
@@ -378,6 +426,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
           session.on('ended', () => {
             if (cancelled) return;
             console.log('[useLinkusSDK] session ended', callId);
+            emitSessionEnd(callId, session.status);
             removeCall(callId);
             if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
           });
@@ -385,6 +434,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
           session.on('failed', (info: unknown) => {
             if (cancelled) return;
             console.log('[useLinkusSDK] session failed', callId, info);
+            emitSessionEnd(callId, session.status);
             removeCall(callId);
             if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
           });
@@ -410,6 +460,8 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
         phone.on('deleteSession', ({ callId }: { callId: string }) => {
           if (cancelled) return;
           console.log('[useLinkusSDK] deleteSession', callId);
+          const last = lastSdkStatusRef.current.get(callId);
+          if (last) emitSessionEnd(callId, last);
           removeCall(callId);
           if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
         });
@@ -580,9 +632,43 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
     safeSessionAction(callId, 'dtmf', (id) => phoneRef.current?.dtmf(id, digit));
   }, [safeSessionAction]);
 
+  const blindTransfer = useCallback((callId: string, number: string): boolean => {
+    const phone = phoneRef.current;
+    if (!phone?.getSession(callId)) return false;
+    const sanitized = number.replace(/[^0-9+*#]/g, '');
+    if (!sanitized) return false;
+    try {
+      return phone.blindTransfer(callId, sanitized);
+    } catch (err) {
+      console.warn('[useLinkusSDK] blindTransfer ignored:', err);
+      return false;
+    }
+  }, []);
+
+  const attendedTransfer = useCallback((callId: string, number: string): boolean => {
+    const phone = phoneRef.current;
+    if (!phone?.getSession(callId)) return false;
+    const sanitized = number.replace(/[^0-9+*#]/g, '');
+    if (!sanitized) return false;
+    try {
+      return phone.attendedTransfer(callId, sanitized);
+    } catch (err) {
+      console.warn('[useLinkusSDK] attendedTransfer ignored:', err);
+      return false;
+    }
+  }, []);
+
   // ── Derived lists ────────────────────────────────────────
 
   const activeCallsList = Array.from(activeCalls.values());
+
+  const activeCallByCallId = useMemo(() => {
+    const out: Record<string, ActiveCallInfo> = {};
+    for (const c of activeCallsList) {
+      out[c.callId] = c;
+    }
+    return out;
+  }, [activeCallsList]);
 
   const incomingCalls = incomingCallIds
     .map((id) => activeCalls.get(id))
@@ -598,6 +684,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
     error,
     micPermission,
     activeCalls: activeCallsList,
+    activeCallByCallId,
     incomingCalls,
     primaryActiveCall,
     makeCall,
@@ -609,5 +696,7 @@ export function useLinkusSDK({ agentEmail }: UseLinkusSdkOptions) {
     mute,
     unmute,
     dtmf,
+    blindTransfer,
+    attendedTransfer,
   };
 }

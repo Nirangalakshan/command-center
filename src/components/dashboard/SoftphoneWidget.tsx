@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Phone,
   PhoneCall,
@@ -17,12 +17,29 @@ import {
   Volume2,
   ShieldAlert,
   RefreshCw,
+  Users,
+  Search,
+  Hash,
+  ArrowRightLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useLinkusSDK, type ActiveCallInfo, type SoftphoneStatus } from '@/hooks/useLinkusSDK';
+import {
+  useLinkusSDK,
+  type ActiveCallInfo,
+  type SoftphoneStatus,
+  LINKUS_CALL_STATUS_LABELS,
+} from '@/hooks/useLinkusSDK';
 import type { MicPermission } from '@/hooks/useLinkusSDK';
-import { clearCachedSdkSign } from '@/services/linkusSdkService';
+import { clearCachedSdkSign, type PbxExtension } from '@/services/linkusSdkService';
+import {
+  appendLinkusCallLog,
+  buildCallFromLinkusSessionEnd,
+  type LinkusSessionEndPayload,
+  type SoftphoneCallLogContext,
+} from '@/services/linkusCallLog';
+import { useExtensions } from '@/hooks/useExtensions';
 
 // ─── helpers ───────────────────────────────────────────────
 
@@ -83,6 +100,24 @@ const DIALPAD_KEYS = [
   ['*', '0', '#'],
 ];
 
+function presenceDotClass(ext: PbxExtension): string {
+  if (!ext.online) return 'bg-slate-300';
+
+  switch (ext.presence) {
+    case 'do_not_disturb':
+      return 'bg-rose-500';
+    case 'away':
+    case 'lunch':
+    case 'business_trip':
+      return 'bg-amber-400';
+    case 'off_work':
+      return 'bg-slate-400';
+    case 'available':
+    default:
+      return 'bg-emerald-500';
+  }
+}
+
 // ─── Sub-components ────────────────────────────────────────
 
 function IncomingCallCard({
@@ -132,32 +167,107 @@ function IncomingCallCard({
   );
 }
 
+function ExtensionTransferRow({
+  ext,
+  onTransfer,
+}: {
+  ext: PbxExtension;
+  onTransfer: (number: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onTransfer(ext.number)}
+      className="group flex w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors hover:border-violet-200 hover:bg-violet-100/60"
+      title={`Blind transfer to ${ext.name} (${ext.number})`}
+    >
+      <span className="relative flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-violet-100 text-[11px] font-semibold text-violet-700">
+        {ext.name.slice(0, 2).toUpperCase() || ext.number.slice(0, 2)}
+        <span
+          className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white ${presenceDotClass(ext)}`}
+        />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-semibold text-slate-900">{ext.name}</p>
+        <p className="truncate font-mono text-[11px] text-slate-500">{ext.number}</p>
+      </div>
+      <ArrowRightLeft className="h-3.5 w-3.5 flex-shrink-0 text-slate-300 transition-colors group-hover:text-violet-600" />
+    </button>
+  );
+}
+
 function ActiveCallCard({
   call,
   now,
   onHangup,
   onHold,
   onMute,
+  onBlindTransfer,
 }: {
   call: ActiveCallInfo;
   now: number;
   onHangup: () => void;
   onHold: () => void;
   onMute: () => void;
+  /** Returns whether the SDK accepted the blind transfer request. */
+  onBlindTransfer: (toNumber: string) => boolean;
 }) {
   const isConnected = call.callStatus === 'talking';
-  const isDialling = call.callStatus === 'calling' || call.callStatus === 'ringing';
+  const [xferOpen, setXferOpen] = useState(false);
+  const [xferDest, setXferDest] = useState('');
+  const [xferError, setXferError] = useState<string | null>(null);
+  const [xferQuery, setXferQuery] = useState('');
+
+  const { status: extStatus, extensions, error: extErr, refresh } = useExtensions({
+    enabled: isConnected && xferOpen,
+  });
+
+  const filteredXfer = extensions.filter((e) => {
+    if (!xferQuery) return true;
+    const q = xferQuery.toLowerCase();
+    return (
+      e.number.toLowerCase().includes(q) ||
+      e.name.toLowerCase().includes(q) ||
+      (e.email?.toLowerCase().includes(q) ?? false)
+    );
+  });
+
+  const runBlindTransfer = useCallback(
+    (raw: string) => {
+      const sanitized = raw.replace(/[^0-9+*#]/g, '');
+      if (!sanitized) {
+        setXferError('Enter a valid extension or number.');
+        return;
+      }
+      const ok = onBlindTransfer(sanitized);
+      if (ok) {
+        setXferError(null);
+        setXferDest('');
+      } else {
+        setXferError('Transfer was rejected or the call has already ended.');
+      }
+    },
+    [onBlindTransfer]
+  );
 
   return (
     <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold text-violet-700">
-          {isDialling
-            ? 'Calling…'
-            : call.isHeld
-            ? 'On Hold'
-            : 'Active Call'}
-        </span>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge
+            variant="outline"
+            className={
+              call.direction === 'outbound'
+                ? 'border-violet-300 bg-violet-100/80 text-[10px] font-semibold text-violet-800'
+                : 'border-sky-300 bg-sky-100/80 text-[10px] font-semibold text-sky-800'
+            }
+          >
+            {call.direction === 'outbound' ? 'Outbound' : 'Inbound'}
+          </Badge>
+          <Badge variant="outline" className="border-slate-200 bg-white text-[10px] font-medium text-slate-600">
+            {call.isHeld ? 'On hold' : LINKUS_CALL_STATUS_LABELS[call.callStatus]}
+          </Badge>
+        </div>
         <div className="flex items-center gap-1.5">
           {isConnected && !call.isMuted && (
             <Volume2 className="h-3 w-3 text-violet-400" title="Audio active" />
@@ -169,6 +279,12 @@ function ActiveCallCard({
           )}
         </div>
       </div>
+      <p
+        className="mb-2 truncate font-mono text-[10px] text-violet-500/90"
+        title="Linkus session id"
+      >
+        {call.callId}
+      </p>
 
       <div className="mb-3 flex items-center gap-2">
         <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-violet-200 text-violet-700">
@@ -233,6 +349,238 @@ function ActiveCallCard({
           <PhoneOff className="h-3 w-3" />
         </Button>
       </div>
+
+      {/* Blind transfer — only when media path is up (avoids SDK "not connected" errors) */}
+      {isConnected && (
+        <div className="mt-2 border-t border-violet-200/80 pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              setXferOpen((o) => !o);
+              setXferError(null);
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-1 py-1 text-left text-xs font-medium text-violet-800 hover:bg-violet-100/50"
+          >
+            <span className="flex items-center gap-1.5">
+              <ArrowRightLeft className="h-3.5 w-3.5" />
+              Transfer call
+            </span>
+            <ChevronRight
+              className={`h-3.5 w-3.5 text-violet-500 transition-transform ${xferOpen ? 'rotate-90' : ''}`}
+            />
+          </button>
+
+          {xferOpen && (
+            <div className="mt-2 space-y-2 rounded-lg border border-violet-200/60 bg-white/80 p-2">
+              <p className="text-[10px] leading-snug text-slate-500">
+                Blind transfer sends the caller to the extension immediately and clears your
+                line when the PBX accepts it.
+              </p>
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={xferDest}
+                  onChange={(e) => {
+                    setXferDest(e.target.value);
+                    setXferError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') runBlindTransfer(xferDest);
+                  }}
+                  placeholder="Extension or number"
+                  className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-xs text-slate-900 outline-none focus:border-violet-400"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 border-violet-300 text-violet-800 hover:bg-violet-50"
+                  disabled={!xferDest.trim()}
+                  onClick={() => runBlindTransfer(xferDest)}
+                >
+                  Transfer
+                </Button>
+              </div>
+
+              {xferError && (
+                <p className="text-[10px] text-rose-600">{xferError}</p>
+              )}
+
+              <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+                <Search className="h-3 w-3 flex-shrink-0 text-slate-400" />
+                <input
+                  type="text"
+                  value={xferQuery}
+                  onChange={(e) => setXferQuery(e.target.value)}
+                  placeholder="Search directory…"
+                  className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-800 outline-none placeholder:text-slate-400"
+                />
+                <button
+                  type="button"
+                  onClick={refresh}
+                  className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                  title="Refresh extensions"
+                  aria-label="Refresh extensions"
+                  disabled={extStatus === 'loading'}
+                >
+                  <RefreshCw
+                    className={`h-3 w-3 ${extStatus === 'loading' ? 'animate-spin' : ''}`}
+                  />
+                </button>
+              </div>
+
+              {extStatus === 'loading' && extensions.length === 0 && (
+                <div className="flex items-center gap-1.5 py-2 text-[11px] text-slate-500">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading extensions…
+                </div>
+              )}
+
+              {extStatus === 'error' && (
+                <div className="flex items-start gap-1.5 rounded bg-rose-50 px-1.5 py-1 text-[10px] text-rose-700">
+                  <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                  <span className="min-w-0 break-words">{extErr}</span>
+                </div>
+              )}
+
+              {filteredXfer.length > 0 && (
+                <div className="max-h-36 space-y-0.5 overflow-y-auto pr-0.5">
+                  {filteredXfer.map((ext) => (
+                    <ExtensionTransferRow
+                      key={ext.id}
+                      ext={ext}
+                      onTransfer={(n) => runBlindTransfer(n)}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {extStatus === 'ready' && filteredXfer.length === 0 && extensions.length > 0 && (
+                <p className="text-center text-[10px] text-slate-500">No directory matches.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Directory (extension list) ────────────────────────────
+
+function ExtensionRow({
+  ext,
+  onCall,
+  disabled,
+}: {
+  ext: PbxExtension;
+  onCall: (number: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onCall(ext.number)}
+      disabled={disabled}
+      className="group flex w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors hover:border-slate-200 hover:bg-slate-50 disabled:opacity-50"
+      title={`Call ${ext.name} (${ext.number})`}
+    >
+      <span className="relative flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
+        {ext.name.slice(0, 2).toUpperCase() || ext.number.slice(0, 2)}
+        <span
+          className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white ${presenceDotClass(ext)}`}
+        />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-semibold text-slate-900">
+          {ext.name}
+        </p>
+        <p className="truncate font-mono text-[11px] text-slate-500">
+          {ext.number}
+        </p>
+      </div>
+      <Phone className="h-3.5 w-3.5 flex-shrink-0 text-slate-300 transition-colors group-hover:text-emerald-500" />
+    </button>
+  );
+}
+
+function DirectoryView({
+  enabled,
+  onCall,
+  callDisabled,
+}: {
+  enabled: boolean;
+  onCall: (number: string) => void;
+  callDisabled: boolean;
+}) {
+  const { status, extensions, error, refresh } = useExtensions({ enabled });
+  const [query, setQuery] = useState('');
+
+  const filtered = extensions.filter((e) => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (
+      e.number.toLowerCase().includes(q) ||
+      e.name.toLowerCase().includes(q) ||
+      (e.email?.toLowerCase().includes(q) ?? false)
+    );
+  });
+
+  return (
+    <div className="flex flex-col">
+      <div className="mb-2 flex items-center gap-1 rounded-lg border border-border bg-slate-50 px-2 py-1.5">
+        <Search className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search name or extension…"
+          className="min-w-0 flex-1 bg-transparent text-xs text-slate-900 outline-none placeholder:text-slate-400"
+        />
+        <button
+          onClick={refresh}
+          className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+          title="Refresh list"
+          aria-label="Refresh directory"
+          disabled={status === 'loading'}
+        >
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${status === 'loading' ? 'animate-spin' : ''}`}
+          />
+        </button>
+      </div>
+
+      {status === 'loading' && extensions.length === 0 && (
+        <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-50 py-6 text-xs text-slate-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading extensions…
+        </div>
+      )}
+
+      {status === 'error' && (
+        <div className="flex items-start gap-2 rounded-lg bg-rose-50 px-2 py-2 text-[11px] text-rose-700">
+          <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+          <span className="min-w-0 flex-1 break-words">{error}</span>
+        </div>
+      )}
+
+      {status === 'ready' && filtered.length === 0 && (
+        <div className="rounded-lg bg-slate-50 py-6 text-center text-xs text-slate-500">
+          {query ? 'No matches.' : 'No extensions found.'}
+        </div>
+      )}
+
+      {filtered.length > 0 && (
+        <div className="max-h-64 space-y-0.5 overflow-y-auto pr-0.5">
+          {filtered.map((ext) => (
+            <ExtensionRow
+              key={ext.id}
+              ext={ext}
+              onCall={onCall}
+              disabled={callDisabled}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -242,6 +590,8 @@ function ActiveCallCard({
 interface SoftphoneWidgetProps {
   /** The agent's Yeastar-registered email address. */
   agentEmail: string | null | undefined;
+  /** When set, finished Linkus sessions are stored for the Calls tab (stable ref in widget avoids SDK reconnect loop). */
+  callLogContext?: SoftphoneCallLogContext | null;
 }
 
 async function requestMicPermission(): Promise<boolean> {
@@ -254,12 +604,30 @@ async function requestMicPermission(): Promise<boolean> {
   }
 }
 
-export function SoftphoneWidget({ agentEmail }: SoftphoneWidgetProps) {
+type WidgetTab = 'dialpad' | 'directory';
+
+export function SoftphoneWidget({
+  agentEmail,
+  callLogContext,
+}: SoftphoneWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [dialInput, setDialInput] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [tab, setTab] = useState<WidgetTab>('dialpad');
 
-  const sdk = useLinkusSDK({ agentEmail });
+  const callLogContextRef = useRef(callLogContext);
+  callLogContextRef.current = callLogContext;
+
+  const onCallSessionEndStable = useCallback((info: LinkusSessionEndPayload) => {
+    const ctx = callLogContextRef.current;
+    if (!ctx?.tenantId) return;
+    appendLinkusCallLog(buildCallFromLinkusSessionEnd(ctx, info));
+  }, []);
+
+  const sdk = useLinkusSDK({
+    agentEmail,
+    onCallSessionEnd: onCallSessionEndStable,
+  });
   const meta = STATUS_META[sdk.status];
 
   // Tick every second for live call timers
@@ -299,6 +667,20 @@ export function SoftphoneWidget({ agentEmail }: SoftphoneWidgetProps) {
     );
     setDialInput('');
   }, [dialInput, sdk]);
+
+  const handleDirectoryCall = useCallback(
+    (number: string) => {
+      if (!number) return;
+      const sanitized = number.replace(/[^0-9+*#]/g, '');
+      if (!sanitized) return;
+      sdk.makeCall(sanitized).catch((err) =>
+        console.error('[SoftphoneWidget] Directory call failed:', err)
+      );
+      // Jump back to the dialpad so the active-call card is visible.
+      setTab('dialpad');
+    },
+    [sdk]
+  );
 
   // Don't render at all if no email → not an agent with PBX access
   if (!agentEmail) return null;
@@ -457,57 +839,98 @@ export function SoftphoneWidget({ agentEmail }: SoftphoneWidgetProps) {
                       ? sdk.unmute(call.callId)
                       : sdk.mute(call.callId)
                   }
+                  onBlindTransfer={(to) => sdk.blindTransfer(call.callId, to)}
                 />
               ))}
 
-            {/* Dial pad — only show when registered and not on a call */}
+            {/* Dialpad / Directory tabs — only when registered or on call */}
             {(sdk.status === 'registered' || sdk.status === 'on-call') && (
               <div>
-                {/* Number input */}
-                <div className="mb-2 flex items-center gap-1 rounded-lg border border-border bg-slate-50 px-3 py-2">
-                  <input
-                    type="text"
-                    value={dialInput}
-                    onChange={(e) => setDialInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleCall();
-                    }}
-                    placeholder="Enter number…"
-                    className="min-w-0 flex-1 bg-transparent font-mono text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                {/* Tab bar */}
+                <div className="mb-2 flex rounded-lg bg-slate-100 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setTab('dialpad')}
+                    className={`flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-xs font-medium transition-colors ${
+                      tab === 'dialpad'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <Hash className="h-3 w-3" />
+                    Dialpad
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTab('directory')}
+                    className={`flex flex-1 items-center justify-center gap-1 rounded-md py-1 text-xs font-medium transition-colors ${
+                      tab === 'directory'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <Users className="h-3 w-3" />
+                    Directory
+                  </button>
+                </div>
+
+                {tab === 'dialpad' && (
+                  <div>
+                    {/* Number input */}
+                    <div className="mb-2 flex items-center gap-1 rounded-lg border border-border bg-slate-50 px-3 py-2">
+                      <input
+                        type="text"
+                        value={dialInput}
+                        onChange={(e) => setDialInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleCall();
+                        }}
+                        placeholder="Enter number…"
+                        className="min-w-0 flex-1 bg-transparent font-mono text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                      />
+                      {dialInput && (
+                        <button
+                          onClick={handleBackspace}
+                          className="text-slate-400 hover:text-slate-600"
+                          aria-label="Backspace"
+                        >
+                          <Delete className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Keypad */}
+                    <div className="grid grid-cols-3 gap-1">
+                      {DIALPAD_KEYS.flat().map((key) => (
+                        <button
+                          key={key}
+                          onClick={() => handleDialKey(key)}
+                          className="rounded-lg border border-border bg-slate-50 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 active:bg-slate-200"
+                        >
+                          {key}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Call button */}
+                    <Button
+                      className="mt-2 w-full bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50"
+                      disabled={!dialInput}
+                      onClick={handleCall}
+                    >
+                      <Phone className="mr-2 h-4 w-4" />
+                      Call
+                    </Button>
+                  </div>
+                )}
+
+                {tab === 'directory' && (
+                  <DirectoryView
+                    enabled={sdk.status === 'registered' || sdk.status === 'on-call'}
+                    onCall={handleDirectoryCall}
+                    callDisabled={sdk.status !== 'registered' && sdk.status !== 'on-call'}
                   />
-                  {dialInput && (
-                    <button
-                      onClick={handleBackspace}
-                      className="text-slate-400 hover:text-slate-600"
-                      aria-label="Backspace"
-                    >
-                      <Delete className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Keypad */}
-                <div className="grid grid-cols-3 gap-1">
-                  {DIALPAD_KEYS.flat().map((key) => (
-                    <button
-                      key={key}
-                      onClick={() => handleDialKey(key)}
-                      className="rounded-lg border border-border bg-slate-50 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 active:bg-slate-200"
-                    >
-                      {key}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Call button */}
-                <Button
-                  className="mt-2 w-full bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50"
-                  disabled={!dialInput}
-                  onClick={handleCall}
-                >
-                  <Phone className="mr-2 h-4 w-4" />
-                  Call
-                </Button>
+                )}
               </div>
             )}
           </div>

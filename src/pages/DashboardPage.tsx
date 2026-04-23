@@ -1,6 +1,6 @@
 import '@/styles/dashboard.css';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '@/services/types';
 import { useDashboardData } from '@/hooks/useDashboardData';
@@ -22,6 +22,7 @@ import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { SoftphoneCallLogContext } from '@/services/linkusCallLog';
 
 interface DashboardPageProps {
   session: UserSession;
@@ -103,10 +104,41 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     softphoneEmail = adminExtEmail || firebaseUser?.email || null;
   }
 
+  const softphoneCallLogContext = useMemo((): SoftphoneCallLogContext | null => {
+    if (!softphoneEmail) return null;
+    const tid =
+      session.tenantId ?? d.selectedTenant ?? d.tenants[0]?.id ?? null;
+    if (!tid) return null;
+    const tenant = d.tenants.find((t) => t.id === tid);
+    const agent = d.agents.find((a) => a.userId === session.userId);
+    const qid = agent?.queueIds?.[0] ?? 'unknown';
+    const queue = d.queues.find((q) => q.id === qid);
+    return {
+      tenantId: tid,
+      tenantName: tenant?.name ?? tid,
+      agentId: agent?.id ?? null,
+      agentName: agent?.name ?? session.displayName,
+      queueId: qid,
+      queueName: queue?.name ?? 'Queue',
+    };
+  }, [
+    softphoneEmail,
+    session.tenantId,
+    session.userId,
+    session.displayName,
+    d.selectedTenant,
+    d.tenants,
+    d.agents,
+    d.queues,
+  ]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
       {/* Floating softphone widget — visible for agents and super admins */}
-      <SoftphoneWidget agentEmail={softphoneEmail} />
+      <SoftphoneWidget
+        agentEmail={softphoneEmail}
+        callLogContext={softphoneCallLogContext}
+      />
 
       {/* Sidebar */}
       <DashboardSidebar

@@ -205,6 +205,23 @@ export async function deleteDashboardAgent(agentId: string): Promise<void> {
 
 /* ─── Calls ─── */
 
+/** PBX row direction, or infer outbound when `direction` column is absent / default but CDR shape matches outbound. */
+function resolveCallDirectionFromRow(c: {
+  direction?: string | null;
+  caller_number: string;
+  dialed_number?: string | null;
+  agent_id?: string | null;
+}): "inbound" | "outbound" {
+  if (c.direction === "outbound") return "outbound";
+  if (c.direction === "inbound") return "inbound";
+  const cust = String(c.caller_number ?? "").replace(/\D/g, "");
+  const dialed = String(c.dialed_number ?? "").replace(/\D/g, "");
+  const short = (s: string) => s.length >= 1 && s.length <= 7;
+  const long = (s: string) => s.length >= 9;
+  if (c.agent_id && dialed && short(dialed) && long(cust)) return "outbound";
+  return "inbound";
+}
+
 export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
   let query = supabase.from("calls").select("*");
   if (tenantId) query = query.eq("tenant_id", tenantId);
@@ -257,6 +274,7 @@ export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
     tenantId: c.tenant_id,
     queueId: c.queue_id,
     agentId: c.agent_id,
+    direction: resolveCallDirectionFromRow(c),
     callerNumber: c.caller_number,
     callerName: c.caller_name,
     dialedNumber: c.dialed_number ?? null,

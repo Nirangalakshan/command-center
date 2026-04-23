@@ -168,3 +168,189 @@ export class IpForbiddenError extends Error {
     this.name = 'IpForbiddenError';
   }
 }
+
+/**
+ * Raised when the PBX returns 10005 ACCESS_DENIED. Means the API app's
+ * permission list doesn't include the resource we're trying to query — the
+ * fix is to edit the app on the PBX and grant the missing scope.
+ */
+export class ApiAccessDeniedError extends Error {
+  readonly isApiAccessDenied = true;
+  constructor(public resource: string) {
+    super(
+      `Yeastar API access denied for ${resource}. Grant this scope to the ` +
+        `API app on the PBX (Integrations → API → Permissions).`
+    );
+    this.name = 'ApiAccessDeniedError';
+  }
+}
+
+// ─── Extension directory ───────────────────────────────────
+//
+// API reference:
+//   https://help.yeastar.com/en/p-series-cloud-edition/developer-guide/query-extension-list.html
+//
+// IMPORTANT:
+//   * Method is GET (POST returns 10001 INTERFACE NOT EXISTED)
+//   * Parameters are in the query string, not a JSON body
+//   * `sort_by` must be one of: id | number | caller_id_name | email_addr |
+//     mobile_number | presence_status
+//
+// Presence values (Yeastar lower_snake): available | away | business_trip |
+// do_not_disturb | lunch | off_work
+//
+// online_status shape:
+//   {
+//     sip_phone:       { status: 0|1, ext_dev_type?: string, status_list?: [...] },
+//     linkus_desktop:  { status: 0|1, ext_dev_type?: string },
+//     linkus_mobile:   { status: 0|1, ext_dev_type?: string, status_list?: [...] },
+//     linkus_web:      { status: 0|1, ext_dev_type?: string }
+//   }
+
+export type PbxPresence =
+  | 'available'
+  | 'away'
+  | 'business_trip'
+  | 'do_not_disturb'
+  | 'lunch'
+  | 'off_work';
+
+export interface PbxExtension {
+  id: number;
+  /** Dialable extension number, e.g. "1000". */
+  number: string;
+  /** Display name (caller ID). Falls back to the number if empty. */
+  name: string;
+  email?: string;
+  mobileNumber?: string;
+  roleName?: string;
+  /** Presence, lowercased per Yeastar spec. Unknown values pass through as-is. */
+  presence?: PbxPresence | string;
+  /** Free-text custom presence set by the user. */
+  customPresence?: string;
+  /** True if extension is online on ANY endpoint (SIP / Linkus desktop / web / mobile). */
+  online: boolean;
+}
+
+type RawEndpoint = { status?: number } | undefined;
+
+interface RawOnlineStatus {
+  sip_phone?: RawEndpoint;
+  linkus_desktop?: RawEndpoint;
+  linkus_mobile?: RawEndpoint;
+  linkus_web?: RawEndpoint;
+  [key: string]: RawEndpoint;
+}
+
+interface RawExtension {
+  id: number;
+  number?: string;
+  caller_id_name?: string;
+  email_addr?: string;
+  mobile_number?: string;
+  role_name?: string;
+  presence_status?: string;
+  custom_presence_status?: string;
+  online_status?: RawOnlineStatus;
+}
+
+function isOnline(status?: RawOnlineStatus): boolean {
+  if (!status) return false;
+  return Object.values(status).some((ep) => ep?.status === 1);
+}
+
+function normaliseExtension(e: RawExtension): PbxExtension {
+  const number = e.number ?? '';
+  const name = (e.caller_id_name ?? '').trim() || number;
+
+  return {
+    id: e.id,
+    number,
+    name,
+    email: e.email_addr,
+    mobileNumber: e.mobile_number,
+    roleName: e.role_name,
+    presence: e.presence_status,
+    customPresence: e.custom_presence_status,
+    online: isOnline(e.online_status),
+  };
+}
+
+// 5-minute in-memory cache so re-opens of the widget don't hammer the PBX.
+let _extCache: { at: number; data: PbxExtension[] } | null = null;
+const EXT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Fetch the extension directory from Yeastar OpenAPI.
+ *
+ * Requires a PBX access token (we already cache it for the sign flow, so this
+ * piggy-backs on `getPbxAccessToken()`). Results are cached for 5 minutes.
+ *
+ * Pass `{ force: true }` to bypass the cache (e.g. after a manual refresh).
+ */
+export async function fetchExtensions(
+  opts: { force?: boolean } = {}
+): Promise<PbxExtension[]> {
+  if (!opts.force && _extCache && Date.now() - _extCache.at < EXT_CACHE_TTL_MS) {
+    return _extCache.data;
+  }
+
+  if (!PBX_BASE || !SDK_ACCESS_ID || !SDK_ACCESS_KEY) {
+    throw new Error(
+      'Linkus SDK env vars missing. Check VITE_YEASTAR_PBX_URL, ' +
+        'VITE_YEASTAR_SDK_ACCESS_ID and VITE_YEASTAR_SDK_ACCESS_KEY in .env'
+    );
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getPbxAccessToken();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isIpForbidden(msg)) throw new IpForbiddenError();
+    throw err;
+  }
+
+  // Yeastar P-Series paginates; 500 is well above most deployments. If the
+  // tenant has more we'd iterate pages, but that's vanishingly rare.
+  const params = new URLSearchParams({
+    access_token: accessToken,
+    page: '1',
+    page_size: '500',
+    sort_by: 'number',
+    order_by: 'asc',
+  });
+
+  const res = await fetch(
+    `${PBX_BASE}/openapi/v1.0/extension/list?${params.toString()}`,
+    { method: 'GET' }
+  );
+
+  if (!res.ok) throw new Error(`PBX extension/list HTTP ${res.status}`);
+
+  const json: {
+    errcode: number;
+    errmsg: string;
+    total_number?: number;
+    data?: RawExtension[];
+  } = await res.json();
+
+  if (json.errcode !== 0) {
+    const msg = `PBX extension/list error ${json.errcode}: ${json.errmsg}`;
+    if (isIpForbidden(msg)) throw new IpForbiddenError();
+    if (json.errcode === 10005) throw new ApiAccessDeniedError('Extension List');
+    throw new Error(msg);
+  }
+
+  const raw = Array.isArray(json.data) ? json.data : [];
+  const extensions = raw
+    .map(normaliseExtension)
+    .filter((e) => e.number); // ignore any entries without a dialable number
+
+  _extCache = { at: Date.now(), data: extensions };
+  return extensions;
+}
+
+export function clearExtensionCache() {
+  _extCache = null;
+}
