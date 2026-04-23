@@ -1,31 +1,47 @@
 import '@/styles/dashboard.css';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, startOfDay, isBefore } from 'date-fns';
 import BookingSidebar from './BookingSidebar';
 import {
   ArrowLeft, CalendarDays, CarFront, CheckCircle2, Clock,
   FileText, Phone, Mail, User, Wrench, Flag, Ban, LayoutDashboard,
   Eye, ChevronDown, ChevronUp, Activity, CalendarCheck, AlertCircle,
-  Timer,
+  Timer, CalendarRange,
 } from 'lucide-react';
 import {
+  cancelBooking,
+  confirmBookingWithStaff,
+  getBookingAvailability,
   getBookingById,
   getBookings,
+  getStaffForService,
+  getWorkshopStaff,
+  normalizeBookingAvailabilitySlots,
+  patchBookingReschedule,
   resolveDefaultBranchId,
   resolveOwnerUid,
+  trimBmsTimeLabel,
   type Booking,
   type BookingDetail,
   type BookingService,
+  type BookingConfirmStaffAssignments,
+  type BookingReschedulePayload,
+  type BookingServiceDetail,
   type BookingTask,
+  type WorkshopStaff,
 } from '@/services/bookingsApi';
 import type { BookingStatus } from '@/services/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 
 type PageMeta = { title: string; subtitle: string; icon: React.ReactNode };
 
@@ -37,10 +53,50 @@ const PAGE_META: Record<string, PageMeta> = {
   '/bookings/cancelled': { title: 'Cancelled Bookings', subtitle: 'Cancelled or rejected bookings',icon: <Ban className="h-6 w-6 text-white" /> },
 };
 
+const RESCHEDULE_PATHNAMES = new Set([
+  '/bookings/dashboard',
+  '/bookings/pending',
+  '/bookings/confirmed',
+]);
+
+function toMinutesOptional(t: string): number | null {
+  const m = t.trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (Number.isNaN(h) || Number.isNaN(min)) return null;
+  return h * 60 + min;
+}
+
+function generateTimeSlots(start: string, end: string, step = 30): string[] {
+  const slots: string[] = [];
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  let total = sh * 60 + sm;
+  const endTotal = eh * 60 + em;
+  while (total <= endTotal) {
+    const h = Math.floor(total / 60)
+      .toString()
+      .padStart(2, '0');
+    const m = (total % 60).toString().padStart(2, '0');
+    slots.push(`${h}:${m}`);
+    total += step;
+  }
+  return slots;
+}
+
+function canShowRescheduleAction(pathname: string, status: string): boolean {
+  if (!RESCHEDULE_PATHNAMES.has(pathname)) return false;
+  const s = status.toLowerCase();
+  return s === 'pending' || s === 'confirmed';
+}
+
 type BookingRecordWithTasks = {
   id: string;
   bookingCode:string;
   status: string;
+  branchId: string;
+  branchName: string;
   customerName: string;
   customerPhone: string;
   customerEmail: string;
@@ -165,82 +221,683 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
   const navigate = useNavigate();
   const location = useLocation();
   const { session } = useAuth();
+  const { toast } = useToast();
   const [bookings, setBookings] = useState<BookingRecordWithTasks[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ownerUidForApi, setOwnerUidForApi] = useState('');
+  const [updatingBookingId, setUpdatingBookingId] = useState<string | null>(null);
+  const [confirmModalBooking, setConfirmModalBooking] =
+    useState<BookingRecordWithTasks | null>(null);
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [confirmModalLoading, setConfirmModalLoading] = useState(false);
+  const [confirmStaffByService, setConfirmStaffByService] = useState<
+    Record<string, WorkshopStaff[]>
+  >({});
+  const [confirmServices, setConfirmServices] = useState<BookingServiceDetail[]>([]);
+  const [serviceStaffAssignments, setServiceStaffAssignments] = useState<Record<string, string>>({});
+
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleBooking, setRescheduleBooking] =
+    useState<BookingRecordWithTasks | null>(null);
+  const [rescheduleLoading, setRescheduleLoading] = useState(false);
+  const [rescheduleServices, setRescheduleServices] = useState<BookingServiceDetail[]>([]);
+  const [rescheduleBranchId, setRescheduleBranchId] = useState('');
+  const [rescheduleStaffByService, setRescheduleStaffByService] = useState<
+    Record<string, WorkshopStaff[]>
+  >({});
+  const [rescheduleStaffAssignments, setRescheduleStaffAssignments] = useState<
+    Record<string, string>
+  >({});
+  const [rescheduleNewDate, setRescheduleNewDate] = useState('');
+  const [rescheduleNewDropTime, setRescheduleNewDropTime] = useState('');
+  const [rescheduleNewPickupTime, setRescheduleNewPickupTime] = useState('');
+  const [rescheduleReason, setRescheduleReason] = useState('');
+  // Reschedule: GET /bookings/availability — workshop open hours / capacity for the chosen date + services.
+  const [rescheduleAvailSlots, setRescheduleAvailSlots] = useState<string[]>([]);
+  const [rescheduleAvailabilityLoading, setRescheduleAvailabilityLoading] =
+    useState(false);
+  const [rescheduleAvailabilityError, setRescheduleAvailabilityError] = useState<
+    string | null
+  >(null);
+  const [rescheduleAvailabilityDone, setRescheduleAvailabilityDone] =
+    useState(false);
+
+  const rescheduleServiceIds = useMemo(
+    () => rescheduleServices.map((s) => s.id).join(','),
+    [rescheduleServices],
+  );
+
+  const showPendingActions =
+    pathname === '/bookings/dashboard' || pathname === '/bookings/pending';
+
+  const loadBookings = useCallback(async () => {
+    const stateOwnerId = location.state?.ownerId;
+    const stateBranchId = location.state?.branchId;
+
+    if (stateOwnerId) localStorage.setItem('cc_last_owner_id', stateOwnerId);
+    if (stateBranchId) localStorage.setItem('cc_last_branch_id', stateBranchId);
+
+    const ownerUid =
+      stateOwnerId ||
+      localStorage.getItem('cc_last_owner_id') ||
+      (await resolveOwnerUid(session?.tenantId));
+    const branchId =
+      stateBranchId ||
+      localStorage.getItem('cc_last_branch_id') ||
+      (await resolveDefaultBranchId(session?.tenantId)) ||
+      undefined;
+
+    if (!ownerUid) {
+      setBookings([]);
+      setOwnerUidForApi('');
+      setLoading(false);
+      return;
+    }
+
+    setOwnerUidForApi(ownerUid);
+    setLoading(true);
+
+    try {
+      const data = await getBookings(ownerUid, 100, branchId);
+      //console.log('bookings', data);
+      let filtered = data;
+      if (branchId) {
+        filtered = filtered.filter(b => b.branchId === branchId);
+      }
+      const mapped = filtered.map(b => ({
+        id: b.id,
+        bookingCode: (b as any).bookingCode || '',
+        status: ((b as any).status || 'pending').toLowerCase(),
+        branchId: b.branchId || '',
+        branchName: b.branchName || '',
+        customerName: (b as any).clientName || b.client || 'Unknown',
+        customerPhone: b.clientPhone || '',
+        customerEmail: b.clientEmail || '',
+        serviceType: b.services?.map((s: any) => s.serviceName || s.name).join(', ') || 'General Service',
+        bookingDate: b.date || '',
+        dropOffTime: b.time || '',
+        pickupTime: b.pickupTime || '',
+        vehicleMake: (b as any).vehicleMake || '',
+        vehicleModel: '',
+        vehicleYear: null,
+        vehicleRego: b.vehicleNumber || '',
+        notes: b.notes || '',
+        tasks: [],
+        totalPrice: (b as any).totalPrice ?? 0,
+        progress: (b as any).progress ?? { completed: 0, total: 0, percentage: 0 },
+      }));
+      const todayStr = new Date().toISOString().slice(0, 10);
+      let finalBookings = mapped;
+      if (pathname === '/bookings/dashboard') {
+        finalBookings = mapped.filter(b => b.bookingDate === todayStr);
+      } else if (pathname === '/bookings/pending') {
+        finalBookings = mapped.filter(b => b.status === 'pending');
+      } else if (pathname === '/bookings/confirmed') {
+        finalBookings = mapped.filter(b => b.status === 'confirmed');
+      } else if (pathname === '/bookings/completed') {
+        finalBookings = mapped.filter(b => b.status === 'completed');
+      } else if (pathname === '/bookings/cancelled') {
+        finalBookings = mapped.filter(b => b.status === 'cancelled' || b.status === 'canceled');
+      }
+      setBookings(finalBookings);
+    } catch {
+      // console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [pathname, location.state, session?.tenantId]);
 
   useEffect(() => {
-    async function load() {
-      const stateOwnerId = location.state?.ownerId;
-      const stateBranchId = location.state?.branchId;
+    loadBookings();
+  }, [loadBookings]);
 
-      // Persist to localStorage when received via navigation state
-      if (stateOwnerId) localStorage.setItem('cc_last_owner_id', stateOwnerId);
-      if (stateBranchId) localStorage.setItem('cc_last_branch_id', stateBranchId);
-
-      const ownerUid =
-        stateOwnerId ||
-        localStorage.getItem('cc_last_owner_id') ||
-        (await resolveOwnerUid(session?.tenantId));
-      const branchId =
-        stateBranchId ||
-        localStorage.getItem('cc_last_branch_id') ||
-        (await resolveDefaultBranchId(session?.tenantId)) ||
-        undefined;
-
-      if (!ownerUid) {
-        setBookings([]);
-        setLoading(false);
+  // Reschedule: per-service staff for the *new* date (separate from open-hours check below).
+  const syncRescheduleStaffForDate = useCallback(
+    async (
+      dateStr: string,
+      services: BookingServiceDetail[],
+      branchId: string,
+    ) => {
+      if (!ownerUidForApi || !dateStr || !branchId || services.length === 0) {
+        setRescheduleStaffByService({});
+        setRescheduleStaffAssignments({});
         return;
       }
+      const staffLists = await Promise.all(
+        services.map(async (svc) => {
+          try {
+            const staff = await getStaffForService(ownerUidForApi, svc.id, {
+              branchId,
+              date: dateStr,
+            });
+            return [svc.id, staff] as const;
+          } catch {
+            return [svc.id, []] as const;
+          }
+        }),
+      );
+      const bySvc = Object.fromEntries(staffLists) as Record<string, WorkshopStaff[]>;
+      const assignments: Record<string, string> = {};
+      for (const svc of services) {
+        const pool = bySvc[svc.id] ?? [];
+        const match =
+          pool.find((w) => w.id === svc.staffId) ||
+          pool.find((w) => w.name === svc.staffName);
+        if (match) assignments[svc.id] = match.id;
+      }
+      setRescheduleStaffByService(bySvc);
+      setRescheduleStaffAssignments(assignments);
+    },
+    [ownerUidForApi],
+  );
 
+  useEffect(() => {
+    if (
+      !rescheduleOpen ||
+      !rescheduleNewDate ||
+      !rescheduleBranchId ||
+      !rescheduleServiceIds
+    ) {
+      return;
+    }
+    void syncRescheduleStaffForDate(
+      rescheduleNewDate,
+      rescheduleServices,
+      rescheduleBranchId,
+    );
+  }, [
+    rescheduleOpen,
+    rescheduleNewDate,
+    rescheduleBranchId,
+    rescheduleServiceIds,
+    rescheduleServices,
+    syncRescheduleStaffForDate,
+  ]);
+
+  // Reschedule: booking availability — block saving when branch has no open slots for this date/service mix.
+  useEffect(() => {
+    if (!rescheduleOpen || !rescheduleNewDate || !rescheduleBranchId || !ownerUidForApi) {
+      return;
+    }
+
+    if (rescheduleServices.length === 0) {
+      setRescheduleAvailSlots([]);
+      setRescheduleAvailabilityError(null);
+      setRescheduleAvailabilityLoading(false);
+      setRescheduleAvailabilityDone(true);
+      return;
+    }
+
+    let cancelled = false;
+    setRescheduleAvailabilityLoading(true);
+    setRescheduleAvailabilityDone(false);
+    setRescheduleAvailabilityError(null);
+
+    const serviceIds = rescheduleServices.map((s) => s.id);
+
+    void (async () => {
       try {
-        const data = await getBookings(ownerUid, 100, branchId);
-        let filtered = data;
-        if (branchId) {
-          filtered = filtered.filter(b => b.branchId === branchId);
-        }
-        const mapped = filtered.map(b => ({
-          id: b.id,
-          bookingCode: (b as any).bookingCode || '',
-          status: ((b as any).status || 'pending').toLowerCase(),
-          customerName: (b as any).clientName || b.client || 'Unknown',
-          customerPhone: b.clientPhone || '',
-          customerEmail: b.clientEmail || '',
-          serviceType: b.services?.map((s: any) => s.serviceName || s.name).join(', ') || 'General Service',
-          bookingDate: b.date || '',
-          dropOffTime: b.time || '',
-          pickupTime: b.pickupTime || '',
-          vehicleMake: (b as any).vehicleMake || '',
-          vehicleModel: '',
-          vehicleYear: null,
-          vehicleRego: b.vehicleNumber || '',
-          notes: b.notes || '',
-          tasks: [],
-          totalPrice: (b as any).totalPrice ?? 0,
-          progress: (b as any).progress ?? { completed: 0, total: 0, percentage: 0 },
-        }));
-        const todayStr = new Date().toISOString().slice(0, 10);
-        let finalBookings = mapped;
-        if (pathname === '/bookings/dashboard') {
-          finalBookings = mapped.filter(b => b.bookingDate === todayStr);
-        } else if (pathname === '/bookings/pending') {
-          finalBookings = mapped.filter(b => b.status === 'pending');
-        } else if (pathname === '/bookings/confirmed') {
-          finalBookings = mapped.filter(b => b.status === 'confirmed');
-        } else if (pathname === '/bookings/completed') {
-          finalBookings = mapped.filter(b => b.status === 'completed');
-        } else if (pathname === '/bookings/cancelled') {
-          finalBookings = mapped.filter(b => b.status === 'cancelled' || b.status === 'canceled');
-        }
-        setBookings(finalBookings);
-      } catch {
-        // console.error(e);
+        const avail = await getBookingAvailability(
+          ownerUidForApi,
+          rescheduleBranchId,
+          rescheduleNewDate,
+          serviceIds,
+        );
+        if (cancelled) return;
+        const slots = Array.isArray(avail.availableSlots)
+          ? avail.availableSlots
+          : [];
+        setRescheduleAvailSlots(slots);
+      } catch (e) {
+        if (cancelled) return;
+        setRescheduleAvailSlots([]);
+        setRescheduleAvailabilityError(
+          e instanceof Error ? e.message : 'Could not load availability.',
+        );
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setRescheduleAvailabilityLoading(false);
+          setRescheduleAvailabilityDone(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    rescheduleOpen,
+    rescheduleNewDate,
+    rescheduleBranchId,
+    rescheduleServiceIds,
+    ownerUidForApi,
+    rescheduleServices,
+  ]);
+
+  const openConfirmModal = useCallback(
+    async (booking: BookingRecordWithTasks) => {
+      if (!ownerUidForApi) {
+        toast({
+          variant: 'destructive',
+          title: 'Cannot confirm',
+          description: 'Workshop context is missing.',
+        });
+        return;
+      }
+      setConfirmModalBooking(booking);
+      setConfirmModalOpen(true);
+      setConfirmModalLoading(true);
+      try {
+        const bookingDetail = await getBookingById(ownerUidForApi, booking.id);
+        const services = bookingDetail.services ?? [];
+        const bookingBranchId =
+          bookingDetail.booking?.branchId || booking.branchId || '';
+        const bookingDate = bookingDetail.booking?.date || booking.bookingDate || '';
+
+        if (bookingBranchId) {
+          await getWorkshopStaff(ownerUidForApi, {
+            branchId: bookingBranchId,
+            status: 'Active',
+          }).catch((err) => {
+            console.warn(
+              '[openConfirmModal] getWorkshopStaff failed; per-service staff still loads.',
+              err,
+            );
+            return [];
+          });
+        }
+
+        const staffLists = await Promise.all(
+          services.map(async (svc) => {
+            if (!bookingBranchId || !bookingDate) return [svc.id, []] as const;
+            try {
+              const staff = await getStaffForService(ownerUidForApi, svc.id, {
+                branchId: bookingBranchId,
+                date: bookingDate,
+              });
+              return [svc.id, staff] as const;
+            } catch {
+              return [svc.id, []] as const;
+            }
+          }),
+        );
+        const staffByService = Object.fromEntries(staffLists) as Record<
+          string,
+          WorkshopStaff[]
+        >;
+        const assignments: Record<string, string> = {};
+        for (const svc of services) {
+          const options = staffByService[svc.id] ?? [];
+          const match =
+            options.find((s) => s.id === svc.staffId) ||
+            options.find((s) => s.name === svc.staffName);
+          if (match) assignments[svc.id] = match.id;
+        }
+        setConfirmStaffByService(staffByService);
+        setConfirmServices(services);
+        setServiceStaffAssignments(assignments);
+      } catch (e) {
+        setConfirmStaffByService({});
+        setConfirmServices([]);
+        setServiceStaffAssignments({});
+        toast({
+          variant: 'destructive',
+          title: 'Failed to load staff/services',
+          description:
+            e instanceof Error ? e.message : 'Could not load confirmation data.',
+        });
+      } finally {
+        setConfirmModalLoading(false);
+      }
+    },
+    [ownerUidForApi, toast],
+  );
+
+  const handleCancelBookingRequest = useCallback(
+    async (bookingId: string) => {
+      if (!ownerUidForApi) {
+        toast({
+          variant: 'destructive',
+          title: 'Cannot update',
+          description:
+            'Workshop context is missing. Open bookings from the dashboard with a tenant selected.',
+        });
+        return;
+      }
+      setUpdatingBookingId(bookingId);
+      try {
+        await cancelBooking(ownerUidForApi, bookingId);
+        toast({
+          title: 'Booking canceled',
+          description: 'The request has been canceled.',
+        });
+        await loadBookings();
+      } catch (e) {
+        toast({
+          variant: 'destructive',
+          title: 'Update failed',
+          description:
+            e instanceof Error ? e.message : 'Could not cancel this booking.',
+        });
+      } finally {
+        setUpdatingBookingId(null);
+      }
+    },
+    [ownerUidForApi, toast, loadBookings],
+  );
+
+  const handleConfirmBookingWithStaff = useCallback(
+    async (
+      bookingId: string,
+      services: BookingServiceDetail[],
+      assignments: Record<string, string>,
+      staffByService: Record<string, WorkshopStaff[]>,
+    ): Promise<boolean> => {
+      if (!ownerUidForApi) {
+        toast({
+          variant: 'destructive',
+          title: 'Cannot confirm',
+          description:
+            'Workshop context is missing. Open bookings from the dashboard with a tenant selected.',
+        });
+        return false;
+      }
+      const staffAssignments: BookingConfirmStaffAssignments = {};
+      for (const s of services) {
+        const staffId = assignments[s.id];
+        if (!staffId) {
+          toast({
+            variant: 'destructive',
+            title: 'Cannot confirm',
+            description: 'Assign staff for every service before confirming.',
+          });
+          return false;
+        }
+        const pool = staffByService[s.id] ?? [];
+        const member = pool.find((w) => w.id === staffId);
+        staffAssignments[s.id] = {
+          staffId,
+          staffName: member?.name?.trim() || staffId,
+        };
+      }
+
+      setUpdatingBookingId(bookingId);
+      try {
+        await confirmBookingWithStaff(ownerUidForApi, bookingId, staffAssignments);
+        toast({
+          title: 'Booking confirmed',
+          description: 'Staff assignments were sent and the booking was confirmed.',
+        });
+        await loadBookings();
+        return true;
+      } catch (e) {
+        toast({
+          variant: 'destructive',
+          title: 'Confirm failed',
+          description:
+            e instanceof Error ? e.message : 'Could not confirm this booking.',
+        });
+        return false;
+      } finally {
+        setUpdatingBookingId(null);
+      }
+    },
+    [ownerUidForApi, toast, loadBookings],
+  );
+
+  const openRescheduleModal = useCallback(
+    async (booking: BookingRecordWithTasks) => {
+      if (!ownerUidForApi) {
+        toast({
+          variant: 'destructive',
+          title: 'Cannot reschedule',
+          description: 'Workshop context is missing.',
+        });
+        return;
+      }
+      setRescheduleBooking(booking);
+      setRescheduleNewDate(booking.bookingDate);
+      setRescheduleNewDropTime(trimBmsTimeLabel(booking.dropOffTime));
+      setRescheduleNewPickupTime(trimBmsTimeLabel(booking.pickupTime));
+      setRescheduleReason('');
+      setRescheduleOpen(true);
+      setRescheduleLoading(true);
+      setRescheduleServices([]);
+      setRescheduleStaffByService({});
+      setRescheduleStaffAssignments({});
+      setRescheduleBranchId('');
+      setRescheduleAvailSlots([]);
+      setRescheduleAvailabilityError(null);
+      setRescheduleAvailabilityLoading(false);
+      setRescheduleAvailabilityDone(false);
+      try {
+        const detail = await getBookingById(ownerUidForApi, booking.id);
+        const services = detail.services ?? [];
+        const br = detail.booking?.branchId || booking.branchId || '';
+        setRescheduleBranchId(br);
+        setRescheduleServices(services);
+      } catch (e) {
+        toast({
+          variant: 'destructive',
+          title: 'Failed to load booking',
+          description:
+            e instanceof Error ? e.message : 'Could not open reschedule.',
+        });
+        setRescheduleOpen(false);
+        setRescheduleBooking(null);
+      } finally {
+        setRescheduleLoading(false);
+      }
+    },
+    [ownerUidForApi, toast],
+  );
+
+  const handleRescheduleSubmit = useCallback(async (): Promise<boolean> => {
+    if (!ownerUidForApi || !rescheduleBooking) return false;
+    if (!rescheduleNewDate.trim() || !rescheduleNewDropTime.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing fields',
+        description: 'Choose a new date and drop-off time.',
+      });
+      return false;
+    }
+
+    // Drop-off must fall in BMS availability when we have services + a loaded slot list (workshop open hours).
+    const allowedSlots = normalizeBookingAvailabilitySlots(rescheduleAvailSlots);
+    if (rescheduleServices.length > 0 && allowedSlots.length > 0) {
+      const dropNorm = trimBmsTimeLabel(rescheduleNewDropTime);
+      if (!allowedSlots.includes(dropNorm)) {
+        toast({
+          variant: 'destructive',
+          title: 'Invalid drop-off time',
+          description:
+            'Choose a drop-off time from the available slots for this date.',
+        });
+        return false;
       }
     }
-    load();
-  }, [pathname, location.state, session?.tenantId]);
+    if (
+      rescheduleServices.length > 0 &&
+      rescheduleAvailabilityDone &&
+      !rescheduleAvailabilityLoading &&
+      allowedSlots.length === 0 &&
+      !rescheduleAvailabilityError
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Workshop not available',
+        description:
+          'No open slots on this date for these services. Pick another day.',
+      });
+      return false;
+    }
+    if (rescheduleAvailabilityError) {
+      toast({
+        variant: 'destructive',
+        title: 'Cannot reschedule',
+        description: rescheduleAvailabilityError,
+      });
+      return false;
+    }
+
+    const dropM = toMinutesOptional(rescheduleNewDropTime);
+    const pickM = toMinutesOptional(rescheduleNewPickupTime);
+    if (
+      rescheduleNewPickupTime.trim() &&
+      dropM != null &&
+      pickM != null &&
+      pickM < dropM
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid times',
+        description: 'Pick-up must be on or after drop-off.',
+      });
+      return false;
+    }
+
+    const payload: BookingReschedulePayload = {
+      newDate: rescheduleNewDate.trim(),
+      newTime: rescheduleNewDropTime.trim(),
+    };
+    if (rescheduleNewPickupTime.trim()) {
+      payload.newPickupTime = rescheduleNewPickupTime.trim();
+    }
+    if (rescheduleReason.trim()) {
+      payload.reason = rescheduleReason.trim();
+    }
+
+    const staffAssignments: BookingConfirmStaffAssignments = {};
+    for (const s of rescheduleServices) {
+      const sid = rescheduleStaffAssignments[s.id];
+      if (!sid) continue;
+      const pool = rescheduleStaffByService[s.id] ?? [];
+      const member = pool.find((w) => w.id === sid);
+      staffAssignments[s.id] = {
+        staffId: sid,
+        staffName: member?.name?.trim() || sid,
+      };
+    }
+    if (Object.keys(staffAssignments).length > 0) {
+      payload.staffAssignments = staffAssignments;
+    }
+
+    setUpdatingBookingId(rescheduleBooking.id);
+    try {
+      await patchBookingReschedule(
+        ownerUidForApi,
+        rescheduleBooking.id,
+        payload,
+      );
+      toast({
+        title: 'Booking rescheduled',
+        description:
+          'The customer will be notified of the new date and time.',
+      });
+      await loadBookings();
+      return true;
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'Reschedule failed',
+        description:
+          e instanceof Error ? e.message : 'Could not reschedule this booking.',
+      });
+      return false;
+    } finally {
+      setUpdatingBookingId(null);
+    }
+  }, [
+    ownerUidForApi,
+    rescheduleBooking,
+    rescheduleNewDate,
+    rescheduleNewDropTime,
+    rescheduleNewPickupTime,
+    rescheduleReason,
+    rescheduleServices,
+    rescheduleStaffAssignments,
+    rescheduleStaffByService,
+    rescheduleAvailSlots,
+    rescheduleAvailabilityDone,
+    rescheduleAvailabilityLoading,
+    rescheduleAvailabilityError,
+    toast,
+    loadBookings,
+  ]);
+
+  const rescheduleTimeSlots = useMemo(
+    () => generateTimeSlots('06:00', '21:00', 30),
+    [],
+  );
+
+  const rescheduleAvailSlotsNormalized = useMemo(
+    () => normalizeBookingAvailabilitySlots(rescheduleAvailSlots),
+    [rescheduleAvailSlots],
+  );
+
+  // Prefer BMS availability slots; generic grid only before response or when there are no line items.
+  const rescheduleDropOptions = useMemo(() => {
+    if (rescheduleAvailSlotsNormalized.length > 0) {
+      return rescheduleAvailSlotsNormalized;
+    }
+    return rescheduleTimeSlots;
+  }, [rescheduleAvailSlotsNormalized, rescheduleTimeSlots]);
+
+  const reschedulePickupOptions = useMemo(() => {
+    const dropM = toMinutesOptional(rescheduleNewDropTime);
+    if (dropM == null) return rescheduleDropOptions;
+    return rescheduleDropOptions.filter(
+      (t) => (toMinutesOptional(t) ?? 0) >= dropM,
+    );
+  }, [rescheduleDropOptions, rescheduleNewDropTime]);
+
+  const rescheduleSaveBlockedMessage = useMemo(() => {
+    if (!rescheduleOpen) return '';
+    if (rescheduleServices.length === 0) return '';
+    if (rescheduleAvailabilityLoading) return '';
+    if (!rescheduleAvailabilityDone) return '';
+    if (rescheduleAvailabilityError) return rescheduleAvailabilityError;
+    if (rescheduleAvailSlotsNormalized.length === 0) {
+      return 'No open slots on this date. The workshop may be closed or fully booked for these services.';
+    }
+    const drop = trimBmsTimeLabel(rescheduleNewDropTime);
+    if (drop && !rescheduleAvailSlotsNormalized.includes(drop)) {
+      return 'Pick a drop-off time from the available list for this date.';
+    }
+    return '';
+  }, [
+    rescheduleOpen,
+    rescheduleServices.length,
+    rescheduleAvailabilityLoading,
+    rescheduleAvailabilityDone,
+    rescheduleAvailabilityError,
+    rescheduleAvailSlotsNormalized,
+    rescheduleNewDropTime,
+  ]);
+
+  // If drop-off moves later, clear pick-up when it would be before the new drop-off.
+  useEffect(() => {
+    if (!rescheduleOpen || !rescheduleNewPickupTime.trim()) return;
+    const pick = trimBmsTimeLabel(rescheduleNewPickupTime);
+    if (!reschedulePickupOptions.includes(pick)) {
+      setRescheduleNewPickupTime('');
+    }
+  }, [
+    rescheduleOpen,
+    rescheduleNewDropTime,
+    reschedulePickupOptions,
+    rescheduleNewPickupTime,
+  ]);
+
+  const rescheduleCalendarSelected = useMemo(() => {
+    if (!rescheduleNewDate || rescheduleNewDate.length < 10) return undefined;
+    try {
+      return parseISO(`${rescheduleNewDate.slice(0, 10)}T12:00:00`);
+    } catch {
+      return undefined;
+    }
+  }, [rescheduleNewDate]);
 
   return (
     <div className="cc-fade-in flex-1 overflow-y-auto bg-[#f5f5f5]">
@@ -356,14 +1013,51 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1.5 text-xs"
-                            onClick={() => navigate(`/bookings/${b.id}`)}
-                          >
-                            <Eye className="h-3.5 w-3.5" /> View
-                          </Button>
+                          <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5 text-xs"
+                              onClick={() => navigate(`/bookings/${b.id}`)}
+                            >
+                              <Eye className="h-3.5 w-3.5" /> View
+                            </Button>
+                            {canShowRescheduleAction(pathname, b.status) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50"
+                                disabled={Boolean(updatingBookingId)}
+                                onClick={() => openRescheduleModal(b)}
+                              >
+                                <CalendarRange className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                                Reschedule
+                              </Button>
+                            )}
+                            {showPendingActions && b.status === 'pending' && (
+                              <div className="flex flex-wrap gap-1">
+                                <Button
+                                  size="sm"
+                                  className="gap-1 bg-emerald-600 px-2 text-xs text-white hover:bg-emerald-700"
+                                  disabled={updatingBookingId === b.id}
+                                  onClick={() => openConfirmModal(b)}
+                                >
+                                  <CheckCircle2 className="h-3 w-3" />
+                                  {updatingBookingId === b.id ? '…' : 'Confirm'}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1 border-rose-300 px-2 text-xs text-rose-700 hover:bg-rose-50"
+                                  disabled={updatingBookingId === b.id}
+                                  onClick={() => handleCancelBookingRequest(b.id)}
+                                >
+                                  <Ban className="h-3 w-3" />
+                                  Cancel
+                                </Button>
+                              </div>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -374,6 +1068,381 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
           </Card>
         )}
       </div>
+
+      <Dialog
+        open={confirmModalOpen}
+        onOpenChange={(open) => {
+          setConfirmModalOpen(open);
+          if (!open) {
+            setConfirmModalBooking(null);
+            setConfirmStaffByService({});
+            setConfirmServices([]);
+            setServiceStaffAssignments({});
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Confirm Booking
+              {confirmModalBooking?.bookingCode
+                ? ` #${confirmModalBooking.bookingCode}`
+                : ''}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              <div><span className="font-semibold">Customer:</span> {confirmModalBooking?.customerName || '—'}</div>
+              <div><span className="font-semibold">Branch:</span> {confirmModalBooking?.branchName || '—'}</div>
+            </div>
+
+            {confirmModalLoading ? (
+              <div className="py-4 text-sm text-slate-500">Loading staff and services…</div>
+            ) : (
+              <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    Services ({confirmServices.length})
+                  </div>
+                  <div className="max-h-48 space-y-1 overflow-y-auto text-sm">
+                    {confirmServices.length === 0 ? (
+                      <div className="text-slate-500">No booking services found.</div>
+                    ) : (
+                      confirmServices.map((s) => (
+                        <div key={s.id} className="rounded-md bg-slate-50 px-2 py-1">
+                          <div className="font-medium text-slate-800">{s.name}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            ${Number(s.price || 0).toLocaleString()} • {s.duration || 0} min
+                          </div>
+                          <select
+                            className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                            value={serviceStaffAssignments[s.id] || ''}
+                            onChange={(e) =>
+                              setServiceStaffAssignments((prev) => ({
+                                ...prev,
+                                [s.id]: e.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">Select staff…</option>
+                            {(confirmStaffByService[s.id] ?? []).map((staff) => (
+                              <option key={staff.id} value={staff.id}>
+                                {staff.name}
+                                {staff.staffRole ? ` (${staff.staffRole})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))
+                    )}
+                  </div>
+              </div>
+            )}
+
+            {!confirmModalLoading &&
+              confirmServices.length > 0 &&
+              confirmServices.some((s) => !serviceStaffAssignments[s.id]) && (
+                <p className="text-xs text-amber-700">
+                  Please assign a staff member for every service before confirming.
+                </p>
+              )}
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setConfirmModalOpen(false)}
+                disabled={Boolean(updatingBookingId)}
+              >
+                Close
+              </Button>
+              <Button
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
+                disabled={
+                  !confirmModalBooking ||
+                  Boolean(updatingBookingId) ||
+                  confirmServices.some((s) => !serviceStaffAssignments[s.id])
+                }
+                onClick={async () => {
+                  if (!confirmModalBooking) return;
+                  const ok = await handleConfirmBookingWithStaff(
+                    confirmModalBooking.id,
+                    confirmServices,
+                    serviceStaffAssignments,
+                    confirmStaffByService,
+                  );
+                  if (ok) setConfirmModalOpen(false);
+                }}
+              >
+                {updatingBookingId === confirmModalBooking?.id ? 'Confirming…' : 'Confirm Booking'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={rescheduleOpen}
+        onOpenChange={(open) => {
+          setRescheduleOpen(open);
+          if (!open) {
+            setRescheduleBooking(null);
+            setRescheduleServices([]);
+            setRescheduleStaffByService({});
+            setRescheduleStaffAssignments({});
+            setRescheduleBranchId('');
+            setRescheduleNewDate('');
+            setRescheduleNewDropTime('');
+            setRescheduleNewPickupTime('');
+            setRescheduleReason('');
+            setRescheduleAvailSlots([]);
+            setRescheduleAvailabilityError(null);
+            setRescheduleAvailabilityLoading(false);
+            setRescheduleAvailabilityDone(false);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarRange className="h-5 w-5 text-blue-600" />
+              Reschedule booking
+              {rescheduleBooking?.bookingCode
+                ? ` #${rescheduleBooking.bookingCode}`
+                : ''}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Current date and time
+              </div>
+              {rescheduleBooking ? (
+                <>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-800">
+                    <span className="font-medium">
+                      {(() => {
+                        try {
+                          return format(
+                            parseISO(rescheduleBooking.bookingDate),
+                            'yyyy-MM-dd',
+                          );
+                        } catch {
+                          return rescheduleBooking.bookingDate;
+                        }
+                      })()}
+                    </span>
+                    <span className="text-slate-400">·</span>
+                    <span>{rescheduleBooking.dropOffTime || '—'}</span>
+                    {rescheduleBooking.pickupTime ? (
+                      <>
+                        <span className="text-slate-400">·</span>
+                        <span>{rescheduleBooking.pickupTime}</span>
+                      </>
+                    ) : null}
+                  </div>
+                  <div className="text-xs text-slate-600">
+                    {rescheduleBooking.branchName || 'Branch'}
+                  </div>
+                </>
+              ) : (
+                <div className="text-slate-500">—</div>
+              )}
+            </div>
+
+            {rescheduleLoading ? (
+              <div className="py-4 text-sm text-slate-500">Loading booking…</div>
+            ) : (
+             <>
+
+
+<div className="grid gap-6 lg:grid-cols-2">
+
+{/* 🔹 LEFT SIDE — Calendar */}
+<div>
+  <Label className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+    New date
+  </Label>
+
+  <Calendar
+    mode="single"
+    selected={rescheduleCalendarSelected}
+    onSelect={(d) => {
+      if (!d) return;
+      setRescheduleNewDate(format(d, 'yyyy-MM-dd'));
+    }}
+    disabled={(d) =>
+      isBefore(startOfDay(d), startOfDay(new Date()))
+    }
+    fromDate={new Date()}
+    className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2"
+  />
+</div>
+
+{/* 🔹 RIGHT SIDE — Time Slots */}
+<div className="space-y-4">
+
+  {/* Drop-off (ONLY ≤ 11:00) */}
+  <div>
+    <Label>Drop-off time</Label>
+    <div className="mt-2 grid grid-cols-3 gap-2">
+      {rescheduleDropOptions
+        .filter((t) => t <= "11:00")
+        .map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setRescheduleNewDropTime(t)}
+            className={`px-3 py-2 text-sm rounded-md border 
+              ${
+                rescheduleNewDropTime === t
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+              }`}
+          >
+            {t}
+          </button>
+        ))}
+    </div>
+  </div>
+
+  {/* Pick-up (ONLY ≥ 14:00) */}
+  <div>
+    <Label>Pick-up time (optional)</Label>
+
+    <div className="mt-2 grid grid-cols-3 gap-2">
+      <button
+        type="button"
+        onClick={() => setRescheduleNewPickupTime("")}
+        className={`px-3 py-2 text-sm rounded-md border
+          ${
+            rescheduleNewPickupTime === ""
+              ? "bg-blue-600 text-white border-blue-600"
+              : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+          }`}
+      >
+        None
+      </button>
+
+      {reschedulePickupOptions
+        .filter((t) => t >= "14:00")
+        .map((t) => (
+          <button
+            key={`p-${t}`}
+            type="button"
+            onClick={() => setRescheduleNewPickupTime(t)}
+            className={`px-3 py-2 text-sm rounded-md border
+              ${
+                rescheduleNewPickupTime === t
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+              }`}
+          >
+            {t}
+          </button>
+        ))}
+    </div>
+  </div>
+
+</div>
+
+</div>
+
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    Assigned staff (optional)
+                  </div>
+                  <p className="mb-2 text-xs text-slate-500">
+                    Reassigning will notify the new staff. Staff lists use the new date and branch.
+                  </p>
+                  <div className="max-h-40 space-y-2 overflow-y-auto text-sm">
+                    {rescheduleServices.length === 0 ? (
+                      <div className="text-slate-500">No services on this booking.</div>
+                    ) : (
+                      rescheduleServices.map((s) => (
+                        <div key={s.id} className="rounded-md bg-slate-50 px-2 py-2">
+                          <div className="font-medium text-slate-800">{s.name}</div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            Currently: {s.staffName || '—'}
+                          </div>
+                          <select
+                            className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                            value={rescheduleStaffAssignments[s.id] || ''}
+                            onChange={(e) =>
+                              setRescheduleStaffAssignments((prev) => ({
+                                ...prev,
+                                [s.id]: e.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">Keep / clear selection…</option>
+                            {(rescheduleStaffByService[s.id] ?? []).map((staff) => (
+                              <option key={staff.id} value={staff.id}>
+                                {staff.name}
+                                {staff.staffRole ? ` (${staff.staffRole})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="cc-reschedule-reason">Reason (optional)</Label>
+                  <Textarea
+                    id="cc-reschedule-reason"
+                    className="mt-1.5 min-h-[72px] text-sm"
+                    placeholder="e.g. Customer requested a later slot, staff unavailable…"
+                    value={rescheduleReason}
+                    onChange={(e) => setRescheduleReason(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    The customer may be emailed the new date and time; changes are recorded in the audit log.
+                  </p>
+                </div>
+              </>
+            )}
+
+            {rescheduleSaveBlockedMessage && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                Cannot save reschedule: {rescheduleSaveBlockedMessage}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <Button
+                variant="outline"
+                onClick={() => setRescheduleOpen(false)}
+                disabled={Boolean(updatingBookingId)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-blue-600 text-white hover:bg-blue-700"
+                disabled={
+                  !rescheduleBooking ||
+                  Boolean(updatingBookingId) ||
+                  rescheduleLoading ||
+                  rescheduleAvailabilityLoading ||
+                  Boolean(rescheduleSaveBlockedMessage) ||
+                  !rescheduleNewDate ||
+                  !rescheduleNewDropTime
+                }
+                onClick={async () => {
+                  const ok = await handleRescheduleSubmit();
+                  if (ok) setRescheduleOpen(false);
+                }}
+              >
+                {updatingBookingId === rescheduleBooking?.id
+                  ? 'Saving…'
+                  : 'Save reschedule'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

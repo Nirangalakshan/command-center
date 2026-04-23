@@ -10,17 +10,23 @@ import {
   markNotificationReviewed,
   markCalledCustomer,
   markNotificationReviewedClosed,
+  patchBookingAdditionalIssueCustomerResponse,
+  patchBookingAdditionalIssuePrice,
   type CustomerNotification,
+  type AdditionalIssueCustomerResponse,
 } from "@/services/notificationsApi";
-import { 
-  logSystemActivity, 
-  fetchAgentAnsweredNotificationIds, 
+import {
+  logSystemActivity,
+  fetchAgentAnsweredNotificationIds,
   fetchCallCustomerAgentMap,
-  fetchAnsweredCustomerAgentMap
+  fetchAnsweredCustomerAgentMap,
 } from "@/services/auditLogApi";
+import { resolveOwnerUid } from "@/services/bookingsApi";
+import { toast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
@@ -36,6 +42,7 @@ import {
   User,
   Mail,
   Bell,
+  XCircle,
 } from "lucide-react";
 
 /* ─── Types ─── */
@@ -71,6 +78,34 @@ function getKind(type: string): NotifKind {
   if (type === "additional_issue_asking" || type === "additional_issue_quote")
     return "asking";
   return "other";
+}
+
+function pickFirstNonEmpty(...values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function getRefFromSource(
+  source: string | null | undefined,
+  keys: string[],
+): string {
+  const raw = String(source ?? "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    for (const key of keys) {
+      const value = parsed[key];
+      if (value == null) continue;
+      const text = String(value).trim();
+      if (text) return text;
+    }
+  } catch {
+    // Source is not JSON; ignore.
+  }
+  return "";
 }
 
 const KIND_CONFIG: Record<
@@ -121,24 +156,67 @@ function NotificationModal({
   open,
   onClose,
   onCalledCustomer,
+  onAdditionalIssueResponded,
   session,
 }: {
   notification: DisplayItem | null;
   open: boolean;
   onClose: () => void;
   onCalledCustomer: (id: string) => void;
+  onAdditionalIssueResponded: (id: string) => void;
   session?: UserSession | null;
 }) {
   const [callingCustomer, setCallingCustomer] = useState(false);
+  const [issueDecisionLoading, setIssueDecisionLoading] =
+    useState<AdditionalIssueCustomerResponse | null>(null);
+  const [issuePriceInput, setIssuePriceInput] = useState("");
+  const [issuePriceSubmitting, setIssuePriceSubmitting] = useState(false);
+  const kind = getKind(notification?.type ?? "");
+  const cfg = KIND_CONFIG[kind];
+  const isAdditionalIssueQuote = notification?.type === "additional_issue_quote";
+  const isAdditionalIssueFound = notification?.type === "additional_issue_found";
+  const bookingRef = pickFirstNonEmpty(
+    notification?.bookingId,
+    getRefFromSource(notification?.source, [
+      "bookingId",
+      "booking_id",
+      "bmsBookingId",
+      "bms_booking_id",
+    ]),
+  );
+  const issueRef = pickFirstNonEmpty(
+    notification?.issueId,
+    getRefFromSource(notification?.source, [
+      "issueId",
+      "issue_id",
+      "additionalIssueId",
+      "additional_issue_id",
+    ]),
+  );
+  const canSubmitIssueDecision =
+    Boolean(isAdditionalIssueQuote) &&
+    Boolean(bookingRef) &&
+    Boolean(issueRef);
+  const canSubmitIssuePrice =
+    Boolean(isAdditionalIssueFound) &&
+    Boolean(bookingRef) &&
+    Boolean(issueRef);
+  const phone =
+    notification?.customerPhone ??
+    MOCK_PHONES[notification?.clientName ?? ""] ??
+    "";
+
+  useEffect(() => {
+    if (!open || !notification) return;
+    setIssuePriceInput(
+      typeof notification.price === "number" && !Number.isNaN(notification.price)
+        ? String(notification.price)
+        : "",
+    );
+    setIssuePriceSubmitting(false);
+  }, [open, notification]);
 
   if (!notification) return null;
-
-  const kind = getKind(notification.type);
-  const cfg = KIND_CONFIG[kind];
-  const phone =
-    notification.customerPhone ??
-    MOCK_PHONES[notification.clientName ?? ""] ??
-    "";
 
   async function handleCalledCustomer() {
     setCallingCustomer(true);
@@ -163,6 +241,157 @@ function NotificationModal({
       // console.error(e);
     } finally {
       setCallingCustomer(false);
+    }
+  }
+
+  async function handleAdditionalIssueDecision(
+    customerResponse: AdditionalIssueCustomerResponse,
+  ) {
+    if (!bookingRef || !issueRef) return;
+    setIssueDecisionLoading(customerResponse);
+    try {
+      const ownerUid =
+        notification.ownerUid?.trim() ||
+        (await resolveOwnerUid(session?.tenantId)).trim() ||
+        null;
+      await patchBookingAdditionalIssueCustomerResponse(
+        bookingRef,
+        issueRef,
+        customerResponse,
+        { ownerUid },
+      );
+      await logSystemActivity(
+        session,
+        "notification_additional_issue_decision",
+        "notification",
+        notification.id,
+        {
+          customerResponse,
+          bookingId: bookingRef,
+          issueId: issueRef,
+        },
+      );
+      onAdditionalIssueResponded(notification.id);
+      toast({
+        title:
+          customerResponse === "accept"
+            ? "Quote accepted"
+            : "Quote rejected",
+        description:
+          customerResponse === "accept"
+            ? "Customer accepted the additional issue quote."
+            : "Customer rejected the additional issue quote.",
+      });
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "Could not save accept / reject.";
+      console.error("[handleAdditionalIssueDecision]", e);
+      toast({
+        variant: "destructive",
+        title: "Could not update quote",
+        description: message,
+      });
+    } finally {
+      setIssueDecisionLoading(null);
+    }
+  }
+
+  async function handleApproveAdditionalIssue() {
+    if (!bookingRef || !issueRef) {
+      toast({
+        variant: "destructive",
+        title: "Missing server references",
+        description:
+          `Cannot approve yet. bookingId: ${bookingRef || "missing"}, issueId: ${issueRef || "missing"}.`,
+      });
+      return;
+    }
+    const parsedPrice = Number(issuePriceInput);
+    if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
+      toast({
+        variant: "destructive",
+        title: "Invalid price",
+        description: "Enter a valid price greater than or equal to 0.",
+      });
+      return;
+    }
+
+    setIssuePriceSubmitting(true);
+    try {
+      const ownerUid =
+        notification.ownerUid?.trim() ||
+        (await resolveOwnerUid(session?.tenantId)).trim() ||
+        null;
+      await patchBookingAdditionalIssuePrice(
+        bookingRef,
+        issueRef,
+        {
+          status: "approved",
+          price: parsedPrice,
+          customerPhone: notification.customerPhone ?? undefined,
+          customerEmail: notification.customerEmail ?? undefined,
+        },
+        { ownerUid },
+      );
+      toast({
+        title: "Issue approved",
+        description: "Additional issue approved and price submitted.",
+      });
+      onAdditionalIssueResponded(notification.id);
+      //onClose();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not approve issue.";
+      toast({
+        variant: "destructive",
+        title: "Approval failed",
+        description: message,
+      });
+    } finally {
+      setIssuePriceSubmitting(false);
+    }
+  }
+
+  async function handleDeclineAdditionalIssue() {
+    if (!bookingRef || !issueRef) {
+      toast({
+        variant: "destructive",
+        title: "Missing server references",
+        description:
+          `Cannot decline yet. bookingId: ${bookingRef || "missing"}, issueId: ${issueRef || "missing"}.`,
+      });
+      return;
+    }
+    setIssuePriceSubmitting(true);
+    try {
+      const ownerUid =
+        notification.ownerUid?.trim() ||
+        (await resolveOwnerUid(session?.tenantId)).trim() ||
+        null;
+      await patchBookingAdditionalIssuePrice(
+        bookingRef,
+        issueRef,
+        {
+          status: "rejected",
+          customerPhone: notification.customerPhone ?? undefined,
+          customerEmail: notification.customerEmail ?? undefined,
+        },
+        { ownerUid },
+      );
+      toast({
+        title: "Issue declined",
+        description: "Additional issue was declined.",
+      });
+      onAdditionalIssueResponded(notification.id);
+      // onClose();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not decline issue.";
+      toast({
+        variant: "destructive",
+        title: "Decline failed",
+        description: message,
+      });
+    } finally {
+      setIssuePriceSubmitting(false);
     }
   }
 
@@ -225,6 +454,93 @@ function NotificationModal({
         </div>
 
         <Separator />
+
+        {isAdditionalIssueQuote && (
+          <>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 border-rose-300 text-rose-700 hover:bg-rose-50"
+                disabled={
+                  !canSubmitIssueDecision || issueDecisionLoading !== null
+                }
+                onClick={() => handleAdditionalIssueDecision("reject")}
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                {issueDecisionLoading === "reject" ? "Saving…" : "Reject"}
+              </Button>
+              <Button
+                size="sm"
+                className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                disabled={
+                  !canSubmitIssueDecision || issueDecisionLoading !== null
+                }
+                onClick={() => handleAdditionalIssueDecision("accept")}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {issueDecisionLoading === "accept" ? "Saving…" : "Accept"}
+              </Button>
+            </div>
+            {!canSubmitIssueDecision && (
+              <p className="text-center text-xs text-amber-700">
+                Quote response needs a booking and issue reference from the server.
+              </p>
+            )}
+            <Separator />
+          </>
+        )}
+
+        {isAdditionalIssueFound && (
+          <>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Approve additional issue
+              </p>
+              {/* <p>issueid: {notification.issueId}</p> */}
+              <p>price</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={issuePriceInput}
+                  onChange={(e) => setIssuePriceInput(e.target.value)}
+                  placeholder="Enter price (e.g. 120.00)"
+                  disabled={issuePriceSubmitting}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="border-rose-300 text-rose-700 hover:bg-rose-50"
+                  disabled={issuePriceSubmitting}
+                  onClick={handleDeclineAdditionalIssue}
+                >
+                  {issuePriceSubmitting ? "Saving..." : "Decline"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="bg-blue-600 text-white hover:bg-blue-700"
+                  disabled={
+                    issuePriceSubmitting ||
+                    !issuePriceInput.trim()
+                  }
+                  onClick={handleApproveAdditionalIssue}
+                >
+                  {issuePriceSubmitting ? "Saving..." : "Approve & Submit"}
+                </Button>
+              </div>
+              {!canSubmitIssuePrice && (
+                <p className="text-xs text-amber-700">
+                  This action needs booking and issue references from the server.
+                </p>
+              )}
+            </div>
+            <Separator />
+          </>
+        )}
 
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-slate-600">
@@ -332,7 +648,13 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
       setAnsweredByMap(aMap);
 
       const base = allNotifs
-        .filter((n) => !["estimate_reply", "booking_canceled", "estimate_request", "booking_confirmed", "additional_issue_quote"].includes(n.type));
+        .filter((n) => !["estimate_reply", 
+         "booking_canceled", 
+         "estimate_request", 
+         "booking_confirmed",
+        //  "additional_issue_found",
+         "booking_status_changed" 
+       ].includes(n.type));
 
       // 1. Pending List
       setItems(
@@ -524,7 +846,12 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
         onCalledCustomer={(id) => {
           setItems((prev) => prev.filter((n) => n.id !== id));
         }}
+        onAdditionalIssueResponded={(id) => {
+          setItems((prev) => prev.filter((n) => n.id !== id));
+        }}
       />
     </div>
   );
 }
+
+export type { AdditionalIssueCustomerResponse } from "@/services/notificationsApi";

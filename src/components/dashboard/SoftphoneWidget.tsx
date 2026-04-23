@@ -100,6 +100,36 @@ const DIALPAD_KEYS = [
   ['*', '0', '#'],
 ];
 
+type ExtensionRange = { min: number; max: number };
+
+function rangeFromExtensionNumber(raw: string | null | undefined): ExtensionRange | null {
+  const numeric = (raw ?? '').replace(/\D/g, '');
+  const n = Number.parseInt(numeric, 10);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const min = Math.floor(n / 1000) * 1000;
+  return { min, max: min + 999 };
+}
+
+function resolveRangeFromAgentEmail(
+  extensions: PbxExtension[],
+  agentEmail: string | null | undefined
+): ExtensionRange | null {
+  if (!agentEmail) return null;
+  const normalized = agentEmail.trim().toLowerCase();
+  if (!normalized) return null;
+  const self = extensions.find(
+    (e) => (e.email ?? '').trim().toLowerCase() === normalized
+  );
+  return rangeFromExtensionNumber(self?.number);
+}
+
+function extensionInRange(number: string, range?: ExtensionRange | null): boolean {
+  if (!range) return true;
+  const n = Number.parseInt(number, 10);
+  if (!Number.isFinite(n)) return false;
+  return n >= range.min && n <= range.max;
+}
+
 function presenceDotClass(ext: PbxExtension): string {
   if (!ext.online) return 'bg-slate-300';
 
@@ -203,6 +233,8 @@ function ActiveCallCard({
   onHold,
   onMute,
   onBlindTransfer,
+  visibleExtensionRange,
+  agentEmail,
 }: {
   call: ActiveCallInfo;
   now: number;
@@ -211,6 +243,10 @@ function ActiveCallCard({
   onMute: () => void;
   /** Returns whether the SDK accepted the blind transfer request. */
   onBlindTransfer: (toNumber: string) => boolean;
+  /** Optional range gate for visible transfer targets. */
+  visibleExtensionRange?: ExtensionRange | null;
+  /** Current Linkus identity email for fallback range resolution. */
+  agentEmail?: string | null;
 }) {
   const isConnected = call.callStatus === 'talking';
   const [xferOpen, setXferOpen] = useState(false);
@@ -224,9 +260,15 @@ function ActiveCallCard({
     enabled: isConnected,
   });
 
+  const effectiveRange = useMemo(
+    () => visibleExtensionRange ?? resolveRangeFromAgentEmail(extensions, agentEmail),
+    [visibleExtensionRange, extensions, agentEmail]
+  );
+
   const filteredXfer = useMemo(() => {
     const q = xferQuery.trim().toLowerCase();
     const list = extensions.filter((e) => {
+      if (!extensionInRange(e.number, effectiveRange)) return false;
       if (!q) return true;
       return (
         e.number.toLowerCase().includes(q) ||
@@ -238,7 +280,7 @@ function ActiveCallCard({
       if (a.online !== b.online) return a.online ? -1 : 1;
       return a.number.localeCompare(b.number, undefined, { numeric: true });
     });
-  }, [extensions, xferQuery]);
+  }, [extensions, xferQuery, effectiveRange]);
 
   const runBlindTransfer = useCallback(
     (raw: string) => {
@@ -546,15 +588,26 @@ function DirectoryView({
   enabled,
   onCall,
   callDisabled,
+  visibleExtensionRange,
+  agentEmail,
 }: {
   enabled: boolean;
   onCall: (number: string) => void;
   callDisabled: boolean;
+  /** Optional range gate for visible directory entries. */
+  visibleExtensionRange?: ExtensionRange | null;
+  /** Current Linkus identity email for fallback range resolution. */
+  agentEmail?: string | null;
 }) {
   const { status, extensions, error, refresh } = useExtensions({ enabled });
   const [query, setQuery] = useState('');
+  const effectiveRange = useMemo(
+    () => visibleExtensionRange ?? resolveRangeFromAgentEmail(extensions, agentEmail),
+    [visibleExtensionRange, extensions, agentEmail]
+  );
 
   const filtered = extensions.filter((e) => {
+    if (!extensionInRange(e.number, effectiveRange)) return false;
     if (!query) return true;
     const q = query.toLowerCase();
     return (
@@ -631,6 +684,8 @@ interface SoftphoneWidgetProps {
   agentEmail: string | null | undefined;
   /** When set, finished Linkus sessions are stored for the Calls tab (stable ref in widget avoids SDK reconnect loop). */
   callLogContext?: SoftphoneCallLogContext | null;
+  /** Optional range gate for visible extensions in directory/transfer UI. */
+  visibleExtensionRange?: ExtensionRange | null;
 }
 
 async function requestMicPermission(): Promise<boolean> {
@@ -648,6 +703,7 @@ type WidgetTab = 'dialpad' | 'directory';
 export function SoftphoneWidget({
   agentEmail,
   callLogContext,
+  visibleExtensionRange,
 }: SoftphoneWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [dialInput, setDialInput] = useState('');
@@ -879,6 +935,8 @@ export function SoftphoneWidget({
                       : sdk.mute(call.callId)
                   }
                   onBlindTransfer={(to) => sdk.blindTransfer(call.callId, to)}
+                  visibleExtensionRange={visibleExtensionRange}
+                  agentEmail={agentEmail}
                 />
               ))}
 
@@ -968,6 +1026,8 @@ export function SoftphoneWidget({
                     enabled={sdk.status === 'registered' || sdk.status === 'on-call'}
                     onCall={handleDirectoryCall}
                     callDisabled={sdk.status !== 'registered' && sdk.status !== 'on-call'}
+                    visibleExtensionRange={visibleExtensionRange}
+                    agentEmail={agentEmail}
                   />
                 )}
               </div>

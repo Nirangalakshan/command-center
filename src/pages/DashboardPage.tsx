@@ -97,9 +97,11 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
   const adminExtEmail = (import.meta.env.VITE_YEASTAR_ADMIN_EMAIL as string | undefined)?.trim();
 
   let softphoneEmail: string | null = null;
+  let currentUserExtension: string | null = null;
   if (session.role === 'agent') {
     const currentAgent = d.agents.find((a) => a.userId === session.userId);
     softphoneEmail = currentAgent?.email ?? null;
+    currentUserExtension = currentAgent?.extension?.trim() || null;
   } else if (session.role === 'super-admin') {
     softphoneEmail = adminExtEmail || firebaseUser?.email || null;
   }
@@ -132,12 +134,35 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     d.queues,
   ]);
 
+  const softphoneIdentityExtension = useMemo(() => {
+    if (currentUserExtension) return currentUserExtension;
+    if (!softphoneEmail) return null;
+    const byEmail = d.agents.find(
+      (a) =>
+        (a.email ?? '').trim().toLowerCase() ===
+        softphoneEmail.trim().toLowerCase()
+    );
+    return byEmail?.extension?.trim() || null;
+  }, [currentUserExtension, softphoneEmail, d.agents]);
+
+  // Restrict visible extensions to the same thousand block as the logged-in
+  // extension (e.g. 2000-2999, 3000-3999, etc.).
+  const softphoneVisibleRange = useMemo(() => {
+    if (!softphoneEmail) return null;
+    const numeric = (softphoneIdentityExtension ?? '').replace(/\D/g, '');
+    const n = Number.parseInt(numeric, 10);
+    if (!Number.isFinite(n) || n < 0) return null;
+    const min = Math.floor(n / 1000) * 1000;
+    return { min, max: min + 999 };
+  }, [softphoneEmail, softphoneIdentityExtension]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
       {/* Floating softphone widget — visible for agents and super admins */}
       <SoftphoneWidget
         agentEmail={softphoneEmail}
         callLogContext={softphoneCallLogContext}
+        visibleExtensionRange={softphoneVisibleRange}
       />
 
       {/* Sidebar */}
