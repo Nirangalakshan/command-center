@@ -21,6 +21,7 @@ import {
   fetchCallCustomerAgentMap,
   fetchAnsweredCustomerAgentMap,
 } from "@/services/auditLogApi";
+import { fetchDIDMappings } from "@/services/dashboardApi";
 import { resolveOwnerUid } from "@/services/bookingsApi";
 import { toast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -205,6 +206,7 @@ function NotificationModal({
     notification?.customerPhone ??
     MOCK_PHONES[notification?.clientName ?? ""] ??
     "";
+  const didNumber = notification?.didNumber?.trim() ?? "";
 
   useEffect(() => {
     if (!open || !notification) return;
@@ -444,6 +446,12 @@ function NotificationModal({
               <Phone className="h-3.5 w-3.5 text-slate-400" />
               {phone || "N/A"}
             </div>
+            {didNumber && (
+              <div className="flex items-center gap-2.5 text-slate-700 text-xs">
+                <Phone className="h-3.5 w-3.5 text-slate-400" />
+                DID: {didNumber}
+              </div>
+            )}
             {notification.branchName && (
               <div className="flex items-center gap-2.5 text-slate-700 text-xs">
                 <MapPin className="h-3.5 w-3.5 text-slate-400" />
@@ -611,6 +619,7 @@ function toDisplayItem(n: CustomerNotification) {
     bookingId: n.bookingId,
     source: n.source,
     ownerUid: n.ownerUid,
+    didNumber: null as string | null,
     notificationReviewed: n.notificationReviewed,
     calledCustomer: n.calledCustomer,
     calledCustomerByDisplayName: n.calledCustomerByDisplayName,
@@ -619,6 +628,21 @@ function toDisplayItem(n: CustomerNotification) {
 }
 
 type DisplayItem = ReturnType<typeof toDisplayItem>;
+
+function buildDidByOwnerMap(
+  rows: Array<{ did: string; ownerId: string }>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const owner = String(row.ownerId ?? "").trim();
+    const did = String(row.did ?? "").trim();
+    if (!owner || !did) continue;
+    if (!map.has(owner)) {
+      map.set(owner, did);
+    }
+  }
+  return map;
+}
 
 /* ─── Main Card ─── */
 
@@ -633,8 +657,26 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
   // Custom maps for data enrichment from Supabase logs
   const [calledByMap, setCalledByMap] = useState<Map<string, string>>(new Map());
   const [answeredByMap, setAnsweredByMap] = useState<Map<string, string>>(new Map());
+  const [didByOwnerMap, setDidByOwnerMap] = useState<Map<string, string>>(new Map());
 
   const isAgent = session?.role === "agent";
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDIDMappings()
+      .then((mappings) => {
+        if (cancelled) return;
+        setDidByOwnerMap(buildDidByOwnerMap(mappings));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Do not replace with an empty map: a later retry or duplicate effect
+        // failure would wipe DIDs that were already resolved.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadNotifications = useCallback(async () => {
     try {
@@ -660,11 +702,17 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
       setItems(
         base
           .filter((n) => !n.notificationReviewed && !n.calledCustomer)
-          .map(toDisplayItem),
+          .map((n) => ({
+            ...toDisplayItem(n),
+            didNumber: n.ownerUid ? didByOwnerMap.get(n.ownerUid) ?? null : null,
+          })),
       );
 
       // 2. Answered List (with filtering for Agents)
-      const allAnswered = base.filter((n) => n.calledCustomer).map(toDisplayItem);
+      const allAnswered = base.filter((n) => n.calledCustomer).map((n) => ({
+        ...toDisplayItem(n),
+        didNumber: n.ownerUid ? didByOwnerMap.get(n.ownerUid) ?? null : null,
+      }));
       
       if (isAgent && session?.userId) {
         // Filter: Agent only sees their own answered ones (based on audit logs)
@@ -679,18 +727,19 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
     } catch {
       // console.error("[NotificationsCard] Load failed:", e);
     }
-  }, [isAgent, session?.userId]);
+  }, [didByOwnerMap, isAgent, session?.userId]);
 
   useEffect(() => {
     if (!session?.userId) return;
-    
-    // Initial load
+
+    // Initial load + poll. `loadNotifications` must stay in deps so the interval
+    // never closes over a stale empty `didByOwnerMap` (that caused DID to vanish
+    // after the first 30s tick or any later refresh).
     loadNotifications().finally(() => setLoading(false));
 
     const interval = setInterval(loadNotifications, 30_000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.userId]);
+  }, [session?.userId, loadNotifications]);
 
   function handleSelect(n: DisplayItem) {
     setSelected(n);
@@ -761,6 +810,11 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
                               <Phone className="h-3 w-3" /> {n.customerPhone}
                             </span>
                           )}
+                          {n.didNumber && (
+                            <span className="flex items-center gap-1 rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                              <Phone className="h-3 w-3" /> DID: {n.didNumber}
+                            </span>
+                          )}
                         </div>
                         <div className="mt-1.5 flex flex-wrap gap-1">
                           {n.bookingCode && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500">#{n.bookingCode}</span>}
@@ -822,6 +876,11 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
                         <div className="mt-1 flex flex-wrap gap-1">
                           {n.bookingCode && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500">#{n.bookingCode}</span>}
                           {n.branchName && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{n.branchName}</span>}
+                          {n.didNumber && (
+                            <span className="rounded-md border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
+                              DID: {n.didNumber}
+                            </span>
+                          )}
                           <Badge className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${cfg.badgeClass}`}>{cfg.badgeLabel}</Badge>
                         </div>
                       </div>
