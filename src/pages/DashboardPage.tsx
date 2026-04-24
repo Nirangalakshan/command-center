@@ -225,6 +225,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
               {d.selectedTab === 'agent-onboarding' && (
                 <AgentOnboardingTab
                   agentOnboarding={d.agentOnboarding}
+                  tenants={d.tenants}
                   permissions={permissions}
                   onRefresh={d.refresh}
                 />

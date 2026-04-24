@@ -60,6 +60,10 @@ export interface Agent {
   email?: string;
   phone?: string;
   notes?: string;
+  /** BMS workshop owner UID chosen during onboarding. */
+  bmsOwnerUid?: string | null;
+  /** BMS workshop branch id chosen during onboarding. */
+  bmsBranchId?: string | null;
   role: "agent" | "senior-agent" | "team-lead";
   status: AgentStatus;
   currentCaller: string | null;

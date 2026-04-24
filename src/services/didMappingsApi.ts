@@ -87,7 +87,6 @@ export async function fetchBmsWorkshops(): Promise<
   Array<{ ownerUid: string; name: string }>
 > {
   const url = `${BASE_URL}/workshops`;
-  console.log('[DID] Fetching workshops from:', url);
   const res = await fetch(url, { headers: await bmsHeaders() });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -95,19 +94,23 @@ export async function fetchBmsWorkshops(): Promise<
     throw new Error(`Failed to load workshops (${res.status})`);
   }
   const json = await res.json();
-  console.log('[DID] fetchBmsWorkshops raw response:', json);
-  const list: RawWorkshop[] = Array.isArray(json)
+
+  // Same shape as `fetchBmsWorkshopOptions`: { workshops: [{ workshop: { ownerUid, name, … }, branches, … }] }
+  const rawList: Array<Record<string, unknown>> = Array.isArray(json)
     ? json
     : Array.isArray(json?.workshops)
       ? json.workshops
       : [];
-  console.log('[DID] Parsed workshops count:', list.length);
-  return list
-    .map((w) => ({
-      ownerUid: extractOwnerUid(w),
-      name: extractWorkshopName(w) || extractOwnerUid(w),
-    }))
-    .filter((w) => w.ownerUid);
+
+  return rawList
+    .map((entry) => {
+      const ws = (entry.workshop ?? entry) as RawWorkshop;
+      const ownerUid = extractOwnerUid(ws);
+      const name = extractWorkshopName(ws) || ownerUid;
+      return { ownerUid, name };
+    })
+    .filter((w) => w.ownerUid)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Fetch a single workshop's detail incl. branches. */

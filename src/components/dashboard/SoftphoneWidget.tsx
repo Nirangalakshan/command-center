@@ -42,6 +42,11 @@ import {
 import { useExtensions } from '@/hooks/useExtensions';
 
 // ─── helpers ───────────────────────────────────────────────
+export const SOFTPHONE_DIAL_REQUEST_EVENT = 'softphone:dial-request';
+
+type SoftphoneDialRequestDetail = {
+  number: string;
+};
 
 function formatDuration(startTime: number, now: number): string {
   const secs = Math.max(0, Math.floor((now - startTime) / 1000));
@@ -776,6 +781,29 @@ export function SoftphoneWidget({
     },
     [sdk]
   );
+
+  useEffect(() => {
+    const onDialRequest = (evt: Event) => {
+      const customEvt = evt as CustomEvent<SoftphoneDialRequestDetail>;
+      const rawNumber = String(customEvt.detail?.number ?? '');
+      const sanitized = rawNumber.replace(/[^0-9+*#]/g, '');
+      if (!sanitized) return;
+      setIsOpen(true);
+      setTab('dialpad');
+      sdk.makeCall(sanitized).catch((err) =>
+        console.error('[SoftphoneWidget] External dial failed:', err)
+      );
+    };
+    window.addEventListener(
+      SOFTPHONE_DIAL_REQUEST_EVENT,
+      onDialRequest as EventListener
+    );
+    return () =>
+      window.removeEventListener(
+        SOFTPHONE_DIAL_REQUEST_EVENT,
+        onDialRequest as EventListener
+      );
+  }, [sdk]);
 
   // Don't render at all if no email → not an agent with PBX access
   if (!agentEmail) return null;

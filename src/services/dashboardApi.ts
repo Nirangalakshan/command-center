@@ -159,6 +159,8 @@ function mapAgent(
     email: (a.email as string) || undefined,
     phone: (a.phone_number as string) || (a.phone as string) || undefined,
     notes: (a.notes as string) || undefined,
+    bmsOwnerUid: (a.bms_owner_uid as string | null) ?? null,
+    bmsBranchId: (a.bms_branch_id as string | null) ?? null,
     role: (a.role as Agent["role"]) || "agent",
     status: (a.status as Agent["status"]) || "offline",
     currentCaller: (a.current_caller as string | null) ?? null,

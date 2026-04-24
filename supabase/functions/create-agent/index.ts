@@ -77,7 +77,18 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { name, email, phone, password, extension = "", notes = "" } = body;
+    const {
+      name,
+      email,
+      phone,
+      password,
+      extension = "",
+      notes = "",
+      agentType: agentTypeRaw = "workshop",
+      tenantId: tenantIdRaw = "",
+      workshopOwnerUid: workshopOwnerUidRaw = "",
+      workshopBranchId: workshopBranchIdRaw = "",
+    } = body;
 
     if (!name || !email || !password) {
       return new Response(
@@ -87,6 +98,68 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         },
       );
+    }
+
+    const tenantId = String(tenantIdRaw ?? "").trim();
+    const agentType =
+      String(agentTypeRaw ?? "").trim() === "command-centre"
+        ? "command-centre"
+        : "workshop";
+    const workshopOwnerUid = String(workshopOwnerUidRaw ?? "").trim();
+    const workshopBranchId = String(workshopBranchIdRaw ?? "").trim();
+
+    if (!String(extension ?? "").trim()) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "extension is required — use the Yeastar extension number for this agent.",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+    if (agentType === "workshop" && !workshopOwnerUid) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "workshopOwnerUid is required — choose a workshop from BMS.",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+    if (agentType === "workshop" && !workshopBranchId) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "workshopBranchId is required — choose a workshop branch.",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (tenantId) {
+      const { data: tenantRow, error: tenantErr } = await supabaseAdmin
+        .from("tenants")
+        .select("id")
+        .eq("id", tenantId)
+        .maybeSingle();
+      if (tenantErr || !tenantRow?.id) {
+        return new Response(
+          JSON.stringify({ error: "Invalid tenantId — tenant not found." }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
     }
 
     // 1. Create auth user
@@ -134,13 +207,36 @@ Deno.serve(async (req) => {
       status: "offline",
       role: "agent",
     };
+    if (agentType === "workshop") {
+      agentBase.bms_owner_uid = workshopOwnerUid;
+      agentBase.bms_branch_id = workshopBranchId;
+    }
+    if (tenantId) agentBase.tenant_id = tenantId;
+
+    const minimalWithQueues: Record<string, unknown> = {
+      id: agentId,
+      user_id: userId,
+      name,
+      queue_ids: [],
+      status: "offline",
+    };
+    if (tenantId) minimalWithQueues.tenant_id = tenantId;
+
+    const minimalBare: Record<string, unknown> = {
+      id: agentId,
+      user_id: userId,
+      name,
+      status: "offline",
+    };
+    if (tenantId) minimalBare.tenant_id = tenantId;
+
     const insertCandidates: Record<string, unknown>[] = [
       { ...agentBase, phone_number: normalizedPhone, queue_ids: [] },
       { ...agentBase, phone: normalizedPhone, queue_ids: [] },
       { ...agentBase, phone_number: normalizedPhone },
       { ...agentBase, phone: normalizedPhone },
-      { id: agentId, user_id: userId, name, queue_ids: [], status: "offline" },
-      { id: agentId, user_id: userId, name, status: "offline" },
+      minimalWithQueues,
+      minimalBare,
     ];
 
     let agentErr: { message: string } | null = null;

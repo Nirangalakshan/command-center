@@ -463,6 +463,7 @@ export function OverviewTab({
           <NotificationsCard
             queues={queues}
             agents={agents}
+            tenants={tenants}
             summary={summary}
             session={session}
           />

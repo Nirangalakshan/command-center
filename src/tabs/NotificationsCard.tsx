@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type {
   Queue,
   Agent,
+  Tenant,
   DashboardSummary,
   UserSession,
 } from "@/services/types";
@@ -21,7 +22,7 @@ import {
   fetchCallCustomerAgentMap,
   fetchAnsweredCustomerAgentMap,
 } from "@/services/auditLogApi";
-import { fetchDIDMappings } from "@/services/dashboardApi";
+import { fetchDIDMappings, fetchAgents, fetchTenants } from "@/services/dashboardApi";
 import { resolveOwnerUid } from "@/services/bookingsApi";
 import { toast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,15 +45,26 @@ import {
   Mail,
   Bell,
   XCircle,
+  Hash,
 } from "lucide-react";
+import { SOFTPHONE_DIAL_REQUEST_EVENT } from "@/components/dashboard/SoftphoneWidget";
 
 /* ─── Types ─── */
 
 interface NotificationsCardProps {
   queues: Queue[];
   agents: Agent[];
+  tenants: Tenant[];
   summary: DashboardSummary | null;
   session?: UserSession | null;
+}
+
+/** Extension configured in Yeastar and associated with a workshop (tenant) via `agents`. */
+export interface WorkshopExtension {
+  extension: string;
+  agentName: string;
+  status: Agent["status"];
+  role: Agent["role"];
 }
 
 /* ─── Helpers ─── */
@@ -87,6 +99,17 @@ function pickFirstNonEmpty(...values: Array<string | null | undefined>): string 
     if (text) return text;
   }
   return "";
+}
+
+function requestSoftphoneDial(rawNumber: string): boolean {
+  const sanitized = String(rawNumber ?? "").replace(/[^0-9+*#]/g, "");
+  if (!sanitized) return false;
+  window.dispatchEvent(
+    new CustomEvent(SOFTPHONE_DIAL_REQUEST_EVENT, {
+      detail: { number: sanitized },
+    }),
+  );
+  return true;
 }
 
 function getRefFromSource(
@@ -154,6 +177,7 @@ const MOCK_PHONES: Record<string, string> = {
 
 function NotificationModal({
   notification,
+  workshopExtensions,
   open,
   onClose,
   onCalledCustomer,
@@ -161,6 +185,7 @@ function NotificationModal({
   session,
 }: {
   notification: DisplayItem | null;
+  workshopExtensions: WorkshopExtension[];
   open: boolean;
   onClose: () => void;
   onCalledCustomer: (id: string) => void;
@@ -461,6 +486,72 @@ function NotificationModal({
           </div>
         </div>
 
+        {workshopExtensions.length > 0 && (
+          <>
+            <Separator />
+            <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Workshop Extensions
+                </p>
+                <span className="text-[10px] font-semibold text-slate-400">
+                  {workshopExtensions.length} configured
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {workshopExtensions.map((ext) => (
+                  <div
+                    key={ext.extension}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                          STATUS_DOT_CLASS[ext.status] ?? "bg-slate-300"
+                        }`}
+                      />
+                      <div className="min-w-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const ok = requestSoftphoneDial(ext.extension);
+                            if (!ok) {
+                              toast({
+                                variant: "destructive",
+                                title: "Invalid extension",
+                                description: "Could not dial this extension.",
+                              });
+                              return;
+                            }
+                            onClose();
+                          }}
+                          className="flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-emerald-700"
+                          title={`Call extension ${ext.extension}`}
+                        >
+                          <Hash className="h-3 w-3 text-slate-400" />
+                          <span className="font-mono">{ext.extension}</span>
+                        </button>
+                        <div className="truncate text-[10px] text-slate-500">
+                          {ext.agentName}
+                        </div>
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${
+                        STATUS_BADGE_CLASS[ext.status] ??
+                        "bg-slate-50 border-slate-200 text-slate-500"
+                      }`}
+                    >
+                      {statusLabel(ext.status)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
         <Separator />
 
         {isAdditionalIssueQuote && (
@@ -572,7 +663,16 @@ function NotificationModal({
                       phone: phone,
                     },
                   );
-                  window.open(`tel:${phone}`, "_self");
+                  const ok = requestSoftphoneDial(phone);
+                  if (!ok) {
+                    toast({
+                      variant: "destructive",
+                      title: "Invalid number",
+                      description: "Could not start the call from softphone.",
+                    });
+                    return;
+                  }
+                  onClose();
                 }}
               >
                 <Phone className="h-3.5 w-3.5" />
@@ -644,20 +744,193 @@ function buildDidByOwnerMap(
   return map;
 }
 
+/**
+ * Build a map from a workshop's BMS owner UID → Yeastar extensions configured
+ * for that workshop.
+ *
+ * Primary source: `agents.bms_owner_uid` (saved during agent onboarding).
+ * Fallback source: `agents.tenant_id -> tenants.bms_owner_uid` for legacy rows.
+ */
+function buildExtensionsByOwnerUid(
+  tenants: Tenant[],
+  agents: Agent[],
+): Map<string, WorkshopExtension[]> {
+  const tenantIdToOwnerUid = new Map<string, string>();
+  for (const t of tenants) {
+    const ownerUid = String(t.bmsOwnerUid ?? "").trim();
+    if (ownerUid) tenantIdToOwnerUid.set(t.id, ownerUid);
+  }
+
+  const map = new Map<string, WorkshopExtension[]>();
+  for (const a of agents) {
+    const ownerUid =
+      String(a.bmsOwnerUid ?? "").trim() || tenantIdToOwnerUid.get(a.tenantId);
+    const ext = String(a.extension ?? "").trim();
+    if (!ownerUid || !ext) continue;
+
+    const entry: WorkshopExtension = {
+      extension: ext,
+      agentName: a.name,
+      status: a.status,
+      role: a.role,
+    };
+    const list = map.get(ownerUid);
+    if (list) list.push(entry);
+    else map.set(ownerUid, [entry]);
+  }
+
+  // Stable sort: available first, then ringing/on-call, wrap-up/break, then offline.
+  const statusWeight: Record<string, number> = {
+    available: 0,
+    ringing: 1,
+    "on-call": 2,
+    "wrap-up": 3,
+    break: 4,
+    offline: 5,
+  };
+  for (const list of map.values()) {
+    list.sort((a, b) => {
+      const wa = statusWeight[a.status] ?? 99;
+      const wb = statusWeight[b.status] ?? 99;
+      if (wa !== wb) return wa - wb;
+      return a.extension.localeCompare(b.extension, undefined, { numeric: true });
+    });
+  }
+  return map;
+}
+
+const STATUS_DOT_CLASS: Record<string, string> = {
+  available: "bg-emerald-500",
+  "on-call": "bg-rose-500",
+  ringing: "bg-amber-500",
+  "wrap-up": "bg-sky-400",
+  break: "bg-violet-400",
+  offline: "bg-slate-300",
+};
+
+const STATUS_BADGE_CLASS: Record<string, string> = {
+  available: "bg-emerald-50 border-emerald-200 text-emerald-700",
+  "on-call": "bg-rose-50 border-rose-200 text-rose-700",
+  ringing: "bg-amber-50 border-amber-200 text-amber-700",
+  "wrap-up": "bg-sky-50 border-sky-200 text-sky-700",
+  break: "bg-violet-50 border-violet-200 text-violet-700",
+  offline: "bg-slate-50 border-slate-200 text-slate-500",
+};
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case "on-call":
+      return "On call";
+    case "available":
+      return "Available";
+    case "ringing":
+      return "Ringing";
+    case "wrap-up":
+      return "Wrap-up";
+    case "break":
+      return "Break";
+    case "offline":
+      return "Offline";
+    default:
+      return status;
+  }
+}
+
+/** Compact inline list of workshop extensions for a notification row. */
+function WorkshopExtensionsInline({
+  extensions,
+  max = 4,
+}: {
+  extensions: WorkshopExtension[];
+  max?: number;
+}) {
+  if (extensions.length === 0) return null;
+  const visible = extensions.slice(0, max);
+  const remaining = extensions.length - visible.length;
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        <Hash className="h-3 w-3" /> Ext
+      </span>
+      {visible.map((ext) => (
+        <span
+          key={ext.extension}
+          title={`${ext.extension} — ${ext.agentName} (${statusLabel(ext.status)})`}
+          className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-700"
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${STATUS_DOT_CLASS[ext.status] ?? "bg-slate-300"}`}
+          />
+          {ext.extension}
+        </span>
+      ))}
+      {remaining > 0 && (
+        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+          +{remaining}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /* ─── Main Card ─── */
 
-export function NotificationsCard({ session, ...restProps }: NotificationsCardProps) {
+export function NotificationsCard({
+  session,
+  tenants: tenantsProp,
+  agents: agentsProp,
+}: NotificationsCardProps) {
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [answeredItems, setAnsweredItems] = useState<DisplayItem[]>([]);
   const [showAnswered, setShowAnswered] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<DisplayItem | null>(null);
   const [localReviewed, setLocalReviewed] = useState<Set<string>>(new Set());
-  
+
   // Custom maps for data enrichment from Supabase logs
   const [calledByMap, setCalledByMap] = useState<Map<string, string>>(new Map());
   const [answeredByMap, setAnsweredByMap] = useState<Map<string, string>>(new Map());
   const [didByOwnerMap, setDidByOwnerMap] = useState<Map<string, string>>(new Map());
+
+  // Notifications come from the BMS call-center API with `?all=1` so they can
+  // span every workshop. To resolve the right extensions for each workshop we
+  // always need the full tenants + agents list, not the current-session slice.
+  const [allTenants, setAllTenants] = useState<Tenant[]>(tenantsProp);
+  const [allAgents, setAllAgents] = useState<Agent[]>(agentsProp);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchTenants()
+      .then((list) => {
+        if (!cancelled) setAllTenants(list);
+      })
+      .catch(() => {
+        // Keep the prop-provided fallback if the refetch fails.
+      });
+    // Passing `null` loads every tenant's agents, not just the session's.
+    fetchAgents(null)
+      .then((list) => {
+        if (!cancelled) setAllAgents(list);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Workshop → Yeastar extensions (derived from tenants + agents).
+  const extensionsByOwnerUid = useMemo(
+    () => buildExtensionsByOwnerUid(allTenants, allAgents),
+    [allTenants, allAgents],
+  );
+  const getExtensionsForOwner = useCallback(
+    (ownerUid: string | null | undefined): WorkshopExtension[] => {
+      const key = String(ownerUid ?? "").trim();
+      if (!key) return [];
+      return extensionsByOwnerUid.get(key) ?? [];
+    },
+    [extensionsByOwnerUid],
+  );
 
   const isAgent = session?.role === "agent";
 
@@ -793,6 +1066,7 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
                   const cfg = KIND_CONFIG[getKind(n.type)];
                   const agentAnswered = answeredByMap.get(n.id) || n.calledCustomerByDisplayName || n.calledCustomerByName;
                   const agentCalled = calledByMap.get(n.id);
+                  const workshopExtensions = getExtensionsForOwner(n.ownerUid);
                   return (
                     <div key={n.id} className={`flex items-start gap-3 px-5 py-4 ${i < answeredItems.length - 1 ? "border-b border-border/60" : ""}`}>
                       <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${cfg.iconBg}`}>{cfg.icon}</div>
@@ -831,6 +1105,11 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
                             </span>
                           )}
                         </div>
+                        {workshopExtensions.length > 0 && (
+                          <div className="mt-1.5">
+                            <WorkshopExtensionsInline extensions={workshopExtensions} />
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -847,6 +1126,7 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
                 visibleItems.map((n, i) => {
                   const cfg = KIND_CONFIG[getKind(n.type)];
                   const agentCalled = calledByMap.get(n.id);
+                  const workshopExtensions = getExtensionsForOwner(n.ownerUid);
                   return (
                     <div
                       key={n.id}
@@ -883,6 +1163,11 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
                           )}
                           <Badge className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${cfg.badgeClass}`}>{cfg.badgeLabel}</Badge>
                         </div>
+                        {workshopExtensions.length > 0 && (
+                          <div className="mt-1.5">
+                            <WorkshopExtensionsInline extensions={workshopExtensions} />
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -895,6 +1180,7 @@ export function NotificationsCard({ session, ...restProps }: NotificationsCardPr
 
       <NotificationModal
         notification={selected}
+        workshopExtensions={getExtensionsForOwner(selected?.ownerUid)}
         open={Boolean(selected)}
         session={session}
         onClose={() => {

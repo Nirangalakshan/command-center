@@ -52,10 +52,23 @@ export async function createAgentViaEdge(params: {
   password: string;
   extension: string;
   notes: string;
+  agentType: 'workshop' | 'command-centre';
+  /** Supabase `tenants.id` when a tenant is linked via `bms_owner_uid`; omit or empty if none. */
+  tenantId?: string | null;
+  /** BMS / Firebase workshop owner UID (same as notifications `ownerUid`). */
+  workshopOwnerUid?: string;
+  workshopName?: string;
+  workshopBranchId?: string;
+  workshopBranchName?: string;
 }): Promise<{ agentId: string; userId: string }> {
+  const tid = String(params.tenantId ?? '').trim();
+
   // 1. Supabase Creation
   const { data, error } = await supabase.functions.invoke('create-agent', {
-    body: params,
+    body: {
+      ...params,
+      tenantId: tid || undefined,
+    },
   });
   if (error) {
     let serverMessage = error.message;
@@ -89,15 +102,20 @@ export async function createAgentViaEdge(params: {
       name: params.name,
       email: params.email,
       phone: params.phone || '',
-      extension: params.extension || '',
+      extension: params.extension.trim(),
       notes: params.notes || '',
-      tenantId: '',
+      tenantId: tid || '',
+      agentType: params.agentType,
+      workshopOwnerUid: params.workshopOwnerUid ?? '',
+      workshopName: params.workshopName ?? '',
+      workshopBranchId: params.workshopBranchId ?? '',
+      workshopBranchName: params.workshopBranchName ?? '',
       queueIds: [],
       groupIds: [],
       supabaseUserId: userId,
       invitedAt: new Date().toISOString(),
       role: 'agent',
-      status: 'offline'
+      status: 'offline',
     });
   } catch (err: any) {
     // console.error('Firebase agent creation failed', err);

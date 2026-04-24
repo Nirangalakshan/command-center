@@ -1,5 +1,5 @@
 import { Fragment, useState, useCallback } from 'react';
-import type { AgentOnboarding, AgentStatus, Permissions } from '@/services/types';
+import type { AgentOnboarding, AgentStatus, Permissions, Tenant } from '@/services/types';
 import { AgentOnboardingStageBadge } from '@/components/dashboard/AgentOnboardingStageBadge';
 import { AgentTrainingChecklist } from '@/components/dashboard/AgentTrainingChecklist';
 import { CreateAgentModal, type CreateAgentData } from '@/components/dashboard/CreateAgentModal';
@@ -19,11 +19,12 @@ import {
 
 interface Props {
   agentOnboarding: AgentOnboarding[];
+  tenants: Tenant[];
   permissions: Permissions;
   onRefresh: () => void;
 }
 
-export function AgentOnboardingTab({ agentOnboarding, permissions, onRefresh }: Props) {
+export function AgentOnboardingTab({ agentOnboarding, tenants, permissions, onRefresh }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filterStage, setFilterStage] = useState('all');
@@ -171,6 +172,7 @@ export function AgentOnboardingTab({ agentOnboarding, permissions, onRefresh }: 
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSubmit={handleCreate}
+        tenants={tenants}
       />
     </div>
   );
