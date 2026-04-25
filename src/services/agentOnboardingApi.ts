@@ -1,5 +1,10 @@
 import { supabase } from '@/integrations/supabase/client';
-import type { AgentOnboarding, AgentOnboardingStage, TrainingChecklist } from './types';
+import type {
+  AgentOnboarding,
+  AgentOnboardingStage,
+  TrainingChecklist,
+  WorkshopUserRole,
+} from './types';
 import { db } from '@/lib/firebase';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
@@ -60,6 +65,7 @@ export async function createAgentViaEdge(params: {
   workshopName?: string;
   workshopBranchId?: string;
   workshopBranchName?: string;
+  workshopUserRole?: WorkshopUserRole;
 }): Promise<{ agentId: string; userId: string }> {
   const tid = String(params.tenantId ?? '').trim();
 
@@ -110,6 +116,7 @@ export async function createAgentViaEdge(params: {
       workshopName: params.workshopName ?? '',
       workshopBranchId: params.workshopBranchId ?? '',
       workshopBranchName: params.workshopBranchName ?? '',
+      workshopUserRole: params.workshopUserRole ?? '',
       queueIds: [],
       groupIds: [],
       supabaseUserId: userId,

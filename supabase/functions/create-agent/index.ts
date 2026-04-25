@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
       tenantId: tenantIdRaw = "",
       workshopOwnerUid: workshopOwnerUidRaw = "",
       workshopBranchId: workshopBranchIdRaw = "",
+      workshopUserRole: workshopUserRoleRaw = "",
     } = body;
 
     if (!name || !email || !password) {
@@ -107,6 +108,7 @@ Deno.serve(async (req) => {
         : "workshop";
     const workshopOwnerUid = String(workshopOwnerUidRaw ?? "").trim();
     const workshopBranchId = String(workshopBranchIdRaw ?? "").trim();
+    const workshopUserRole = String(workshopUserRoleRaw ?? "").trim();
 
     if (!String(extension ?? "").trim()) {
       return new Response(
@@ -137,6 +139,24 @@ Deno.serve(async (req) => {
         JSON.stringify({
           error:
             "workshopBranchId is required — choose a workshop branch.",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+    const allowedWorkshopRoles = ["owner", "branch_admin", "staff"] as const;
+    if (
+      agentType === "workshop" &&
+      !allowedWorkshopRoles.includes(
+        workshopUserRole as (typeof allowedWorkshopRoles)[number],
+      )
+    ) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "workshopUserRole is required for workshop agents — use owner, branch_admin, or staff.",
         }),
         {
           status: 400,
@@ -210,6 +230,7 @@ Deno.serve(async (req) => {
     if (agentType === "workshop") {
       agentBase.bms_owner_uid = workshopOwnerUid;
       agentBase.bms_branch_id = workshopBranchId;
+      agentBase.workshop_user_role = workshopUserRole;
     }
     if (tenantId) agentBase.tenant_id = tenantId;
 
@@ -240,10 +261,12 @@ Deno.serve(async (req) => {
     ];
 
     let agentErr: { message: string } | null = null;
+    let insertOk = false;
     for (const payload of insertCandidates) {
       const result = await supabaseAdmin.from("agents").insert(payload);
       if (!result.error) {
         agentErr = null;
+        insertOk = true;
         break;
       }
       const msg = result.error.message || "";
@@ -256,16 +279,43 @@ Deno.serve(async (req) => {
       agentErr = result.error;
     }
 
-    if (agentErr) {
+    if (!insertOk || agentErr) {
       return new Response(
         JSON.stringify({
-          error: `Failed to create agent record: ${agentErr.message}`,
+          error: `Failed to create agent record: ${agentErr?.message ?? "unknown error"}`,
         }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         },
       );
+    }
+
+    // Fallback inserts above may omit BMS / workshop columns. Always persist
+    // workshop linkage and role after insert so `workshop_user_role` is not lost.
+    if (agentType === "workshop") {
+      const { error: workshopPatchErr } = await supabaseAdmin
+        .from("agents")
+        .update({
+          bms_owner_uid: workshopOwnerUid,
+          bms_branch_id: workshopBranchId,
+          workshop_user_role: workshopUserRole,
+          extension: String(extension ?? "").trim(),
+        })
+        .eq("id", agentId);
+      if (workshopPatchErr) {
+        return new Response(
+          JSON.stringify({
+            error:
+              `Agent was created but saving workshop details failed: ${workshopPatchErr.message}. ` +
+              `Apply migrations that add bms_owner_uid, bms_branch_id, and workshop_user_role to public.agents, then update this agent in Supabase.`,
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
     }
 
     return new Response(JSON.stringify({ success: true, agentId, userId }), {

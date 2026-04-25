@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { fetchBmsWorkshopOptions } from '@/services/didMappingsApi';
-import type { Tenant } from '@/services/types';
+import type { Tenant, WorkshopUserRole } from '@/services/types';
 
 interface Props {
   open: boolean;
@@ -45,6 +45,8 @@ export interface CreateAgentData {
   workshopName?: string;
   workshopBranchId?: string;
   workshopBranchName?: string;
+  /** Set for workshop agents: BMS-side role at this extension. */
+  workshopUserRole?: WorkshopUserRole;
 }
 
 export function CreateAgentModal({ open, onClose, onSubmit, tenants }: Props) {
@@ -60,6 +62,7 @@ export function CreateAgentModal({ open, onClose, onSubmit, tenants }: Props) {
   const [agentType, setAgentType] = useState<'workshop' | 'command-centre'>('workshop');
   const [selectedOwnerUid, setSelectedOwnerUid] = useState('');
   const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [workshopUserRole, setWorkshopUserRole] = useState<WorkshopUserRole>('staff');
 
   const [bmsWorkshops, setBmsWorkshops] = useState<
     Array<{ ownerUid: string; name: string; branches: Array<{ id: string; name: string }> }>
@@ -72,6 +75,7 @@ export function CreateAgentModal({ open, onClose, onSubmit, tenants }: Props) {
     setAgentType('workshop');
     setSelectedOwnerUid('');
     setSelectedBranchId('');
+    setWorkshopUserRole('staff');
   }, [open]);
 
   useEffect(() => {
@@ -172,6 +176,7 @@ export function CreateAgentModal({ open, onClose, onSubmit, tenants }: Props) {
               workshopBranchName: selectedBranch?.name,
             }
           : {}),
+        ...(requiresWorkshop ? { workshopUserRole } : {}),
       });
       resetAndClose();
     } catch (err: unknown) {
@@ -191,6 +196,7 @@ export function CreateAgentModal({ open, onClose, onSubmit, tenants }: Props) {
     setAgentType('workshop');
     setSelectedOwnerUid('');
     setSelectedBranchId('');
+    setWorkshopUserRole('staff');
     setError('');
     onClose();
   };
@@ -320,6 +326,25 @@ export function CreateAgentModal({ open, onClose, onSubmit, tenants }: Props) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="workshopUserRole">User role *</Label>
+            <Select
+              value={workshopUserRole}
+              onValueChange={(v) => setWorkshopUserRole(v as WorkshopUserRole)}
+            >
+              <SelectTrigger id="workshopUserRole" className="w-full">
+                <SelectValue placeholder="Select role" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="owner">Owner</SelectItem>
+                <SelectItem value="branch_admin">Branch admin</SelectItem>
+                <SelectItem value="staff">Staff</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              How this person relates to the workshop (shown next to their extension in notifications).
+            </p>
           </div>
             </>
           )}

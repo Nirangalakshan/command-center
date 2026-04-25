@@ -5,6 +5,7 @@ import type {
   Tenant,
   DashboardSummary,
   UserSession,
+  WorkshopUserRole,
 } from "@/services/types";
 import {
   fetchCustomerNotifications,
@@ -64,7 +65,20 @@ export interface WorkshopExtension {
   extension: string;
   agentName: string;
   status: Agent["status"];
-  role: Agent["role"];
+  workshopUserRole: WorkshopUserRole | null;
+}
+
+function workshopUserRoleLabel(role: WorkshopUserRole | null | undefined): string {
+  switch (role) {
+    case "owner":
+      return "Owner";
+    case "branch_admin":
+      return "Branch admin";
+    case "staff":
+      return "Staff";
+    default:
+      return "";
+  }
 }
 
 /* ─── Helpers ─── */
@@ -534,6 +548,11 @@ function NotificationModal({
                         </button>
                         <div className="truncate text-[10px] text-slate-500">
                           {ext.agentName}
+                          {ext.workshopUserRole ? (
+                            <span className="ml-1.5 rounded bg-slate-100 px-1 py-px font-medium text-slate-600">
+                              {workshopUserRoleLabel(ext.workshopUserRole)}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -772,7 +791,7 @@ function buildExtensionsByOwnerUid(
       extension: ext,
       agentName: a.name,
       status: a.status,
-      role: a.role,
+      workshopUserRole: a.workshopUserRole ?? null,
     };
     const list = map.get(ownerUid);
     if (list) list.push(entry);
@@ -852,18 +871,31 @@ function WorkshopExtensionsInline({
       <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
         <Hash className="h-3 w-3" /> Ext
       </span>
-      {visible.map((ext) => (
+      {visible.map((ext) => {
+        const roleBit = ext.workshopUserRole
+          ? ` · ${workshopUserRoleLabel(ext.workshopUserRole)}`
+          : "";
+        return (
         <span
           key={ext.extension}
-          title={`${ext.extension} — ${ext.agentName} (${statusLabel(ext.status)})`}
-          className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-700"
+          title={`${ext.extension} — ${ext.agentName}${roleBit} (${statusLabel(ext.status)})`}
+          className="flex max-w-[9rem] items-center gap-1 rounded-md border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-700"
         >
           <span
-            className={`inline-block h-1.5 w-1.5 rounded-full ${STATUS_DOT_CLASS[ext.status] ?? "bg-slate-300"}`}
+            className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT_CLASS[ext.status] ?? "bg-slate-300"}`}
           />
-          {ext.extension}
+          <span className="min-w-0 truncate">
+            {ext.extension}
+            {ext.workshopUserRole ? (
+              <span className="font-sans font-normal text-slate-500">
+                {" "}
+                · {workshopUserRoleLabel(ext.workshopUserRole)}
+              </span>
+            ) : null}
+          </span>
         </span>
-      ))}
+        );
+      })}
       {remaining > 0 && (
         <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
           +{remaining}
@@ -974,7 +1006,8 @@ export function NotificationsCard({
       // 1. Pending List
       setItems(
         base
-          .filter((n) => !n.notificationReviewed && !n.calledCustomer)
+          // .filter((n) => !n.notificationReviewed && !n.calledCustomer)
+          .filter((n) => !n.notificationReviewed && !n.calledCustomer && !(n.type === "additional_issue_found" && !(n.price === null)))
           .map((n) => ({
             ...toDisplayItem(n),
             didNumber: n.ownerUid ? didByOwnerMap.get(n.ownerUid) ?? null : null,

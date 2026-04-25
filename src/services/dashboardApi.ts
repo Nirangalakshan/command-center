@@ -3,6 +3,7 @@ import type {
   Tenant,
   Queue,
   Agent,
+  WorkshopUserRole,
   Call,
   SipLine,
   DashboardSummary,
@@ -146,6 +147,12 @@ export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
   return (data || []).map(mapAgent);
 }
 
+function parseWorkshopUserRole(raw: unknown): WorkshopUserRole | null {
+  const v = String(raw ?? "").trim();
+  if (v === "owner" || v === "branch_admin" || v === "staff") return v;
+  return null;
+}
+
 function mapAgent(
   a: Record<string, unknown> & { tenants?: { name?: string } },
 ): Agent {
@@ -161,6 +168,7 @@ function mapAgent(
     notes: (a.notes as string) || undefined,
     bmsOwnerUid: (a.bms_owner_uid as string | null) ?? null,
     bmsBranchId: (a.bms_branch_id as string | null) ?? null,
+    workshopUserRole: parseWorkshopUserRole(a.workshop_user_role),
     role: (a.role as Agent["role"]) || "agent",
     status: (a.status as Agent["status"]) || "offline",
     currentCaller: (a.current_caller as string | null) ?? null,

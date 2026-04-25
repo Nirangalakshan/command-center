@@ -49,6 +49,9 @@ export interface Queue {
   slaPercent: number;
 }
 
+/** Role of the user at the workshop extension (BMS), not the call-centre hierarchy. */
+export type WorkshopUserRole = "owner" | "branch_admin" | "staff";
+
 export interface Agent {
   id: string;
   /** Supabase auth user id when this row is linked to a login account. */
@@ -64,6 +67,11 @@ export interface Agent {
   bmsOwnerUid?: string | null;
   /** BMS workshop branch id chosen during onboarding. */
   bmsBranchId?: string | null;
+  /**
+   * Workshop-side role for this extension (owner / branch admin / staff).
+   * Distinct from `role`, which is the call-centre agent tier.
+   */
+  workshopUserRole?: WorkshopUserRole | null;
   role: "agent" | "senior-agent" | "team-lead";
   status: AgentStatus;
   currentCaller: string | null;

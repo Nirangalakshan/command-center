@@ -129,6 +129,7 @@ export type Database = {
           tenant_id: string
           updated_at: string
           user_id: string | null
+          workshop_user_role: string | null
         }
         Insert: {
           allowed_queue_ids?: string[]
@@ -146,6 +147,7 @@ export type Database = {
           tenant_id: string
           updated_at?: string
           user_id?: string | null
+          workshop_user_role?: string | null
         }
         Update: {
           allowed_queue_ids?: string[]
@@ -163,6 +165,7 @@ export type Database = {
           tenant_id?: string
           updated_at?: string
           user_id?: string | null
+          workshop_user_role?: string | null
         }
         Relationships: [
           {

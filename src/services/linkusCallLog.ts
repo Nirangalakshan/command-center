@@ -1,4 +1,5 @@
 import type { Call, CallResult } from '@/services/types';
+import { supabase } from '@/integrations/supabase/client';
 
 const STORAGE_KEY = 'cc_linkus_call_log_v1';
 const MAX_ENTRIES = 80;
@@ -83,6 +84,61 @@ export function appendLinkusCallLog(entry: Call): void {
     window.dispatchEvent(new Event(LINKUS_CALL_LOG_EVENT));
   } catch {
     /* quota / private mode */
+  }
+}
+
+/**
+ * Persist a finished Linkus call into Supabase `calls` so it survives refreshes
+ * and appears in the canonical Calls history.
+ */
+export async function appendLinkusCallToSupabase(entry: Call): Promise<void> {
+  const tenantId = String(entry.tenantId ?? '').trim();
+  const queueId = String(entry.queueId ?? '').trim();
+  const callerNumber = String(entry.callerNumber ?? '').trim();
+  if (!tenantId || !queueId || !callerNumber) {
+    console.warn('[linkusCallLog] Skipping Supabase insert (missing required fields)', {
+      tenantId,
+      queueId,
+      callerNumber,
+    });
+    return;
+  }
+
+  const payload: Record<string, unknown> = {
+    tenant_id: tenantId,
+    queue_id: queueId,
+    agent_id: entry.agentId ?? null,
+    direction: entry.direction,
+    caller_number: callerNumber,
+    caller_name: entry.callerName ?? null,
+    dialed_number: entry.dialedNumber ?? null,
+    start_time: entry.startTime,
+    answer_time: entry.answerTime ?? null,
+    end_time: entry.endTime ?? null,
+    duration_seconds: entry.durationSeconds ?? 0,
+    result: entry.result,
+    recording_url: entry.recordingUrl ?? null,
+    transcript_status: entry.transcriptStatus,
+    summary_status: entry.summaryStatus,
+  };
+
+  // Some environments may lag migrations. Retry insert by removing unknown
+  // columns reported by PostgREST until the row can be saved.
+  const dynamicPayload: Record<string, unknown> = { ...payload };
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const { error } = await supabase.from('calls').insert(dynamicPayload);
+    if (!error) return;
+
+    const message = String(error.message ?? '');
+    const unknownColumnMatch = message.match(/'([^']+)' column/);
+    const unknownColumn = unknownColumnMatch?.[1];
+    if (error.code === 'PGRST204' && unknownColumn && unknownColumn in dynamicPayload) {
+      delete dynamicPayload[unknownColumn];
+      continue;
+    }
+
+    console.error('[linkusCallLog] Failed to insert Linkus call in Supabase', error);
+    return;
   }
 }
 
