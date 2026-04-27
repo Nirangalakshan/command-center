@@ -17,6 +17,7 @@ import { SipLinesTab } from '@/tabs/SipLinesTab';
 import { ClientsTab } from '@/tabs/ClientsTab';
 import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
 import { AuditLogsTab } from '@/tabs/AuditLogsTab';
+import { ChatTab } from '@/tabs/ChatTab';
 import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
 // import { BookingsTab } from '@/tabs/BookingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
@@ -54,6 +55,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'calls') return permissions.canViewCallsTab;
       if (key === 'bookings') return permissions.canViewBookingsTab;
       if (key === 'agents') return permissions.canViewAgentsTab;
+      if (key === 'chat') return permissions.canViewChatTab;
       if (key === 'agent-onboarding') return permissions.canViewAgentOnboardingTab;
       if (key === 'sip') return permissions.canViewSipTab;
       if (key === 'clients') return permissions.canViewClientsTab;
@@ -228,6 +230,14 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   tenants={d.tenants}
                   permissions={permissions}
                   onRefresh={d.refresh}
+                />
+              )}
+              {d.selectedTab === 'chat' && (
+                <ChatTab
+                  agents={d.agents}
+                  queues={d.queues}
+                  tenants={d.tenants}
+                  permissions={permissions}
                 />
               )}
               {d.selectedTab === 'calls' && (

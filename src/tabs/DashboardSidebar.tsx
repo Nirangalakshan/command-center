@@ -12,6 +12,7 @@ import {
   Users,
   UserPlus,
   History,
+  MessageSquare,
 } from 'lucide-react';
 import type { Permissions, UserRole } from '@/services/types';
 
@@ -28,6 +29,7 @@ const TAB_ITEMS = [
   { key: 'overview',          label: 'Overview',          icon: LayoutDashboard, perm: 'canViewOverviewTab' },
   { key: 'agents',            label: 'Agents',             icon: Users,           perm: 'canViewAgentsTab' },
   { key: 'agent-onboarding',  label: 'Agent Onboarding',   icon: UserPlus,        perm: 'canViewAgentOnboardingTab' },
+  { key: 'chat',              label: 'Chat',               icon: MessageSquare,   perm: 'canViewChatTab' },
   { key: 'calls',             label: 'Calls',              icon: Phone,           perm: 'canViewCallsTab' },
   { key: 'sip',               label: 'SIP Lines',          icon: Radio,           perm: 'canViewSipTab' },
   { key: 'clients',           label: 'Clients',            icon: BookOpen,        perm: 'canViewClientsTab' },

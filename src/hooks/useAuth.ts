@@ -20,6 +20,7 @@ interface AuthState {
 const EMPTY_PERMISSIONS: Permissions = {
   canViewAllTenants: false, canSwitchTenant: false, canViewSipInfrastructure: false,
   canViewTenantNames: false, canViewCallsTab: false, canViewBookingsTab: false, canViewAgentsTab: false,
+  canViewChatTab: false,
   canViewOverviewTab: false, canViewSipTab: false, canViewClientsTab: false,
   canSignUpClients: false, canAdvanceOnboarding: false, canEditClientDetails: false,
   canApproveGoLive: false, canRegressStage: false, canViewShiftPanel: false,

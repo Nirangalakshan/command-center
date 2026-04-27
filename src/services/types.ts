@@ -429,6 +429,8 @@ export interface Permissions {
   canViewCallsTab: boolean;
   canViewBookingsTab: boolean;
   canViewAgentsTab: boolean;
+  /** Workshop / agent messaging (Chat tab). */
+  canViewChatTab: boolean;
   canViewOverviewTab: boolean;
   canViewSipTab: boolean;
   canViewClientsTab: boolean;

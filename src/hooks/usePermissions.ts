@@ -14,6 +14,7 @@ export function usePermissions(session: UserSession | null): Permissions {
         canViewCallsTab: false,
         canViewBookingsTab: false,
         canViewAgentsTab: false,
+        canViewChatTab: false,
         canViewOverviewTab: false,
         canViewSipTab: false,
         canViewClientsTab: false,
@@ -28,6 +29,7 @@ export function usePermissions(session: UserSession | null): Permissions {
         canViewAgentOnboardingTab: false,
         canViewAuditLogs: false,
         canManageAgents: false,
+        canManageDIDMappings: false,
         allowedTenantId: null,
         allowedQueueIds: [],
       };

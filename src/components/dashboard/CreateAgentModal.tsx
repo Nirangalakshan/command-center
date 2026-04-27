@@ -203,7 +203,7 @@ export function CreateAgentModal({ open, onClose, onSubmit, tenants }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) resetAndClose(); }}>
-      <DialogContent className="max-w-lg bg-white">
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto bg-white">
         <DialogHeader>
           <DialogTitle>Add New Agent</DialogTitle>
           <DialogDescription>
