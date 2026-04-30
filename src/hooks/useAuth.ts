@@ -36,6 +36,32 @@ export function useAuth(): AuthState {
   const [session, setSession] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const syncFirebaseForSupabaseRole = useCallback(
+    async (role: UserRole): Promise<void> => {
+      const serviceEmail = (import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string | undefined)?.trim();
+      const servicePassword = (import.meta.env.VITE_FIREBASE_AGENT_PASSWORD as string | undefined)?.trim();
+
+      // Agents must never use the service-account Firebase identity.
+      if (role === 'agent') {
+        if (serviceEmail && auth.currentUser?.email === serviceEmail) {
+          await firebaseSignOut(auth).catch(() => {});
+        }
+        return;
+      }
+
+      // For super-admin and other non-agent roles, use configured service creds.
+      if (!serviceEmail || !servicePassword) return;
+      if (auth.currentUser?.email === serviceEmail) return;
+
+      // If signed in as another Firebase user, switch to service account.
+      if (auth.currentUser && auth.currentUser.email !== serviceEmail) {
+        await firebaseSignOut(auth).catch(() => {});
+      }
+      await signInWithEmailAndPassword(auth, serviceEmail, servicePassword);
+    },
+    [],
+  );
+
   const loadUserSession = useCallback(async (authUser: SupabaseUser) => {
     try {
       // Fetch profile and role in parallel
@@ -47,6 +73,8 @@ export function useAuth(): AuthState {
       const profile = profileRes.data;
       const role = (roleRes.data?.role as UserRole) || 'agent';
       const tenantId = profile?.tenant_id || null;
+
+      await syncFirebaseForSupabaseRole(role).catch(() => {});
 
       // For agents, try to fetch allowed queue IDs (row may not exist yet)
       let allowedQueueIds: string[] = [];
@@ -76,7 +104,7 @@ export function useAuth(): AuthState {
     } catch {
       setSession(null);
     }
-  }, []);
+  }, [syncFirebaseForSupabaseRole]);
 
   useEffect(() => {
     // Set up auth state listener FIRST
@@ -155,9 +183,33 @@ export function useAuth(): AuthState {
   }, [session]);
 
   const signIn = useCallback(async (email: string, password: string) => {
+    // Clear any cached owner/branch hints from previous sessions so stale values
+    // (e.g., a super-admin's last selection) don't leak into an agent's session.
+    try {
+      localStorage.removeItem('cc_last_owner_id');
+      localStorage.removeItem('cc_last_branch_id');
+    } catch {
+      // ignore — localStorage may be unavailable in some browsers
+    }
+
     // Attempt Supabase first
     const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error && authData?.user) {
+      // Also try to sign into Firebase with the SAME credentials.
+      // Agents are provisioned in both Supabase and Firebase with matching
+      // email/password, so this gives them their own Firebase identity for
+      // BMS API calls. For super-admins (no Firebase account) this fails
+      // silently and the service-account fallback runs below.
+      try {
+        const fb = await signInWithEmailAndPassword(auth, email, password);
+        console.log('[useAuth.signIn] Firebase login succeeded for', fb.user.email);
+      } catch (e) {
+        console.warn(
+          '[useAuth.signIn] Firebase login with same credentials failed (ok for super-admin):',
+          (e as Error)?.message,
+        );
+      }
+
       setTimeout(async () => {
         try {
           const profileRes = await supabase.from('profiles').select('display_name, tenant_id').eq('id', authData.user.id).single();
@@ -169,6 +221,7 @@ export function useAuth(): AuthState {
             allowedQueueIds: [],
             displayName: profileRes.data?.display_name || authData.user.email || '',
           };
+          await syncFirebaseForSupabaseRole(userSession.role).catch(() => {});
           await logSystemActivity(userSession, 'LOGIN', 'SESSION', authData.user.id, { email });
         } catch {
           // console.error('Failed to log login activity:', e);
@@ -202,7 +255,7 @@ export function useAuth(): AuthState {
       // If Firebase also fails, return the error
       return { error: fbErr.message || 'Invalid login credentials' };
     }
-  }, []);
+  }, [syncFirebaseForSupabaseRole]);
 
   const signOut = useCallback(async () => {
     if (session?.role === 'agent') {
@@ -218,6 +271,13 @@ export function useAuth(): AuthState {
       }
     }
     
+    try {
+      localStorage.removeItem('cc_last_owner_id');
+      localStorage.removeItem('cc_last_branch_id');
+    } catch {
+      // ignore
+    }
+
     await supabase.auth.signOut().catch(() => {});
     await firebaseSignOut(auth).catch(() => {});
     setUser(null);

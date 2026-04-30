@@ -7,12 +7,12 @@ const SIGN_IN_REQUIRED =
 
 /**
  * Bearer token for BMS Pro `/api/call-center` requests.
- * Uses the signed-in Firebase user ID token, or the Supabase session JWT — never a static env secret.
+ * Uses the logged-in user's token only (Firebase first, then Supabase session).
  */
 export async function getBmsBearerToken(options?: {
-  /** Wait for Firebase auth to finish initializing (matches previous bookings/notifications behaviour). */
+  /** Wait for Firebase auth to finish initializing. */
   waitForFirebaseInit?: boolean;
-  /** Request a fresh Firebase ID token (notifications only). */
+  /** Request a fresh Firebase ID token. */
   forceRefreshFirebase?: boolean;
 }): Promise<string> {
   if (options?.waitForFirebaseInit) {
@@ -27,9 +27,7 @@ export async function getBmsBearerToken(options?: {
   const {
     data: { session },
   } = await supabase.auth.getSession();
-  if (session?.access_token) {
-    return session.access_token;
-  }
+  if (session?.access_token) return session.access_token;
 
   throw new Error(SIGN_IN_REQUIRED);
 }

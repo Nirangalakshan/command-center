@@ -184,9 +184,27 @@ async function handleNewCdr(body: Record<string, unknown>) {
     direction = agentTo ? 'inbound' : agentFrom ? 'outbound' : 'inbound';
   }
 
-  const agentRow = direction === 'inbound' ? agentTo : agentFrom;
+  let agentRow = direction === 'inbound' ? agentTo : agentFrom;
   const customerRaw = direction === 'inbound' ? rawFrom : rawTo;
   const customerNumber = extractYeastarPartyNumber(customerRaw) || customerRaw.replace(/\s+/g, '').trim();
+
+  // Queue / ring-group inbound CDRs often put the queue or DID in call_to, so
+  // agentTo is null even when an agent answered. Prefer agent captured at ANSWER.
+  if (direction === 'inbound' && !agentRow && talkduraction > 0) {
+    const { data: logged } = await supabase
+      .from('yeastar_call_answer_agent')
+      .select('agent_id')
+      .eq('yeastar_call_id', callid.trim())
+      .maybeSingle();
+    if (logged?.agent_id) {
+      const { data: agentFull } = await supabase
+        .from('agents')
+        .select('id, tenant_id, queue_ids')
+        .eq('id', logged.agent_id)
+        .maybeSingle();
+      if (agentFull) agentRow = agentFull;
+    }
+  }
 
   const didForMapping = didFromPayload;
   const { data: mapping } = didForMapping
@@ -241,6 +259,8 @@ async function handleNewCdr(body: Record<string, unknown>) {
   }, { onConflict: 'id' });
 
   if (error) throw new Error(`calls upsert failed: ${error.message}`);
+
+  await supabase.from('yeastar_call_answer_agent').delete().eq('yeastar_call_id', callid.trim());
 
   // Reset agent status to available after call ends
   if (agentRow?.id) {
@@ -409,6 +429,21 @@ async function handleIncomingCall(body: Record<string, unknown>) {
   }
 
   await updateAgentLiveCallState(extension, memberStatus, callfrom);
+
+  const statusU = memberStatus.toUpperCase();
+  if ((statusU === 'ANSWER' || statusU === 'ANSWERED') && callid.trim() && extension.trim()) {
+    try {
+      const ansAgent = await findAgentByPartyRaw(extension);
+      if (ansAgent?.id) {
+        await supabase.from('yeastar_call_answer_agent').upsert(
+          { yeastar_call_id: callid.trim(), agent_id: ansAgent.id },
+          { onConflict: 'yeastar_call_id' },
+        );
+      }
+    } catch {
+      // Non-fatal: CDR may still resolve the agent from call_to when not a queue leg.
+    }
+  }
 
   await supabase.channel('yeastar-incoming-calls').send({
     type: 'broadcast',

@@ -352,6 +352,7 @@ const BASE_URL = import.meta.env.VITE_BMS_API_URL as string ?? 'https://black.bm
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
   const token = await getBmsBearerToken({ waitForFirebaseInit: true });
+  console.log('[servicesApi] X-Tenant-Id:', ownerUid);
   return {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`,
@@ -369,7 +370,9 @@ export async function getServices(ownerUid: string): Promise<WorkshopService[]> 
   return rows.map((row) => mapApiServiceToWorkshopService(row, ownerUid));
 }
 
-/** GET /services?branchId=X — services filtered to a specific branch */
+/**
+ * GET /services?branchId=X — services filtered to a specific branch
+ */
 export async function getServicesByBranch(ownerUid: string, branchId: string): Promise<WorkshopService[]> {
   const url = `${BASE_URL}/services?branchId=${encodeURIComponent(branchId)}`;
   const res = await fetch(url, { headers: await apiHeaders(ownerUid) });

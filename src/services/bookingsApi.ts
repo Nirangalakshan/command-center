@@ -27,15 +27,55 @@ export async function resolveBmsDefaultBranchForTenant(tenantId: string | null |
 }
 
 /**
- * After navigation state / `cc_last_owner_id`, pass `session.tenantId` to load `tenants.bms_owner_uid`.
- * No env fallback — configure each tenant in Supabase.
+ * Resolve the BMS workshop owner UID for the active dashboard user.
+ *
+ * Priority:
+ *   1. `agents.bms_owner_uid` for the currently signed-in Supabase user
+ *      (this is the workshop the agent was onboarded into).
+ *   2. `tenants.bms_owner_uid` for `sessionTenantId` (super-admin / non-agent paths).
+ *
+ * No env fallback — configure each tenant/agent row in Supabase.
  */
 export async function resolveOwnerUid(sessionTenantId?: string | null): Promise<string> {
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.user) {
+      const { data: agentRow } = await supabase
+        .from('agents')
+        .select('bms_owner_uid')
+        .eq('user_id', session.user.id)
+        .maybeSingle();
+      const fromAgent = String(agentRow?.bms_owner_uid ?? '').trim();
+      if (fromAgent) return fromAgent;
+    }
+  } catch {
+    // ignore — fall through to tenants lookup
+  }
+
   const fromDb = await resolveBmsOwnerUidForTenant(sessionTenantId);
   return fromDb ?? '';
 }
 
 export async function resolveDefaultBranchId(sessionTenantId?: string | null): Promise<string | undefined> {
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.user) {
+      const { data: agentRow } = await supabase
+        .from('agents')
+        .select('bms_branch_id')
+        .eq('user_id', session.user.id)
+        .maybeSingle();
+      const fromAgent = String(agentRow?.bms_branch_id ?? '').trim();
+      if (fromAgent) return fromAgent;
+    }
+  } catch {
+    // ignore — fall through to tenants lookup
+  }
+
   const fromDb = await resolveBmsDefaultBranchForTenant(sessionTenantId);
   return fromDb ?? undefined;
 }
@@ -151,6 +191,7 @@ const BASE_URL =
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
   const token = await getBmsBearerToken({ waitForFirebaseInit: true });
+  console.log('[bookingsApi] X-Tenant-Id:', ownerUid);
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
@@ -248,12 +289,10 @@ export async function getBookings(
   );
   
   if (branchId) {
-     console.warn(`[getBookings] Filtering ${bookings.length} bookings by branchId: "${branchId}"`);
     bookings = bookings.filter((b: any) => {
       const bBranchId = b.branchId || b.branch_id || b.branchId;
       return bBranchId === branchId;
     });
-     console.warn(`[getBookings] Results after filter: ${bookings.length}`);
   }
   
   return bookings;
