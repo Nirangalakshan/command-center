@@ -7,6 +7,7 @@ import { auth, db } from '@/lib/firebase';
 import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged as firebaseOnAuthStateChange, type User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { logSystemActivity } from '@/services/auditLogApi';
+import { setAllowFirebaseEnvAutoLogin } from '@/lib/firebaseEnvAutoLoginPolicy';
 
 interface AuthState {
   user: SupabaseUser | FirebaseUser | null;
@@ -70,6 +71,7 @@ export function useAuth(): AuthState {
         tenantId,
         allowedQueueIds,
         displayName: profile?.display_name || authUser.email || '',
+        authEmail: authUser.email ?? null,
       };
 
       setSession(userSession);
@@ -102,10 +104,10 @@ export function useAuth(): AuthState {
       }
 
       if (firebaseUser) {
-        setUser(firebaseUser);
         try {
           const agentDoc = await getDoc(doc(db, 'call_center_agents', firebaseUser.uid));
           if (agentDoc.exists()) {
+            setUser(firebaseUser);
             const data = agentDoc.data();
             const userSession: UserSession = {
               userId: firebaseUser.uid,
@@ -113,19 +115,27 @@ export function useAuth(): AuthState {
               tenantId: data.tenantId || null,
               allowedQueueIds: data.queueIds || [],
               displayName: data.name || firebaseUser.email || '',
+              authEmail: firebaseUser.email ?? null,
             };
-            // Set status to available
             await updateDoc(doc(db, 'call_center_agents', firebaseUser.uid), { status: 'available' }).catch(() => {});
             setSession(userSession);
           } else {
-             // If not in our custom collection, log them out
-             await firebaseSignOut(auth);
-             setUser(null);
-             setSession(null);
+            let sb = (await supabase.auth.getSession()).data.session;
+            if (!sb?.user) {
+              await new Promise((r) => setTimeout(r, 120));
+              sb = (await supabase.auth.getSession()).data.session;
+            }
+            if (sb?.user) {
+              // Supabase agent + Firebase for BMS/chat only — do not clear Firebase or replace session.
+              setLoading(false);
+              return;
+            }
+            await firebaseSignOut(auth);
+            setUser(null);
+            setSession(null);
           }
         } catch {
-            // console.error('Failed to load firebase user info:', e);
-            setSession(null);
+          setSession(null);
         }
         setLoading(false);
       } else {
@@ -149,6 +159,36 @@ export function useAuth(): AuthState {
     };
   }, [loadUserSession]);
 
+  /**
+   * Supabase-backed agents: never keep the shared `.env` Firebase service user as `currentUser`.
+   * BMS/chat require a real Firebase ID token — agents obtain theirs via dual sign-in (same password).
+   */
+  useEffect(() => {
+    if (!session || session.role !== 'agent') return;
+
+    let cancelled = false;
+
+    void (async () => {
+      const {
+        data: { session: supabaseSession },
+      } = await supabase.auth.getSession();
+      if (cancelled || !supabaseSession?.user) return;
+
+      setAllowFirebaseEnvAutoLogin(false);
+      const svc = (import.meta.env.VITE_FIREBASE_AGENT_EMAIL as string | undefined)
+        ?.trim()
+        .toLowerCase();
+      const email = auth.currentUser?.email?.trim().toLowerCase();
+      if (svc && email === svc) {
+        await firebaseSignOut(auth).catch(() => {});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.role, session?.userId]);
+
   const permissions = useMemo(() => {
     if (!session) return EMPTY_PERMISSIONS;
     return derivePermissions(session);
@@ -158,16 +198,48 @@ export function useAuth(): AuthState {
     // Attempt Supabase first
     const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
     if (!error && authData?.user) {
+      const roleRes = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', authData.user.id)
+        .maybeSingle();
+      const role = (roleRes.data?.role as UserRole) || 'agent';
+
+      if (role === 'agent') {
+        setAllowFirebaseEnvAutoLogin(false);
+        try {
+          await firebaseSignOut(auth).catch(() => {});
+          await signInWithEmailAndPassword(auth, email, password);
+        } catch (fbErr: unknown) {
+          await supabase.auth.signOut();
+          const msg = fbErr instanceof Error ? fbErr.message : 'Firebase sign-in failed';
+          return {
+            error: `${msg} Use the same email and password as the dashboard for your workshop Firebase user (required for chat / BMS).`,
+          };
+        }
+      } else {
+        setAllowFirebaseEnvAutoLogin(true);
+      }
+
       setTimeout(async () => {
         try {
-          const profileRes = await supabase.from('profiles').select('display_name, tenant_id').eq('id', authData.user.id).single();
-          const roleRes = await supabase.from('user_roles').select('role').eq('user_id', authData.user.id).single();
+          const profileRes = await supabase
+            .from('profiles')
+            .select('display_name, tenant_id')
+            .eq('id', authData.user.id)
+            .single();
+          const roleResInner = await supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', authData.user.id)
+            .maybeSingle();
           const userSession: UserSession = {
             userId: authData.user.id,
-            role: (roleRes.data?.role as UserRole) || 'agent',
+            role: (roleResInner.data?.role as UserRole) || 'agent',
             tenantId: profileRes.data?.tenant_id || null,
             allowedQueueIds: [],
             displayName: profileRes.data?.display_name || authData.user.email || '',
+            authEmail: authData.user.email ?? null,
           };
           await logSystemActivity(userSession, 'LOGIN', 'SESSION', authData.user.id, { email });
         } catch {
@@ -190,6 +262,7 @@ export function useAuth(): AuthState {
           tenantId: data.tenantId || null,
           allowedQueueIds: data.queueIds || [],
           displayName: data.name || fbCred.user.email || '',
+          authEmail: fbCred.user.email ?? null,
         };
         await logSystemActivity(userSession, 'LOGIN', 'SESSION', fbCred.user.uid, { email, from: 'firebase' });
         // setUser and setSession will be handled by the onAuthStateChanged listener
@@ -205,6 +278,8 @@ export function useAuth(): AuthState {
   }, []);
 
   const signOut = useCallback(async () => {
+    setAllowFirebaseEnvAutoLogin(true);
+
     if (session?.role === 'agent') {
       // Offline status for supabase agents
       const { error: presenceErr } = await supabase

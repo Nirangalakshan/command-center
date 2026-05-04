@@ -33,3 +33,16 @@ export async function getBmsBearerToken(options?: {
 
   throw new Error(SIGN_IN_REQUIRED);
 }
+
+/**
+ * Firebase ID token only — for BMS `/api/call-center` routes that must use the
+ * workshop agent identity (chat). Does not fall back to the Supabase session JWT.
+ */
+export async function getFirebaseOnlyBmsBearerToken(): Promise<string> {
+  await waitForAuth();
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error(SIGN_IN_REQUIRED);
+  }
+  return getIdToken(user, false);
+}

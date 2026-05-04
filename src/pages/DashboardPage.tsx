@@ -21,6 +21,7 @@ import { ChatTab } from '@/tabs/ChatTab';
 import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
 // import { BookingsTab } from '@/tabs/BookingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
+import { fetchChats } from '@/services/chatApi';
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { SoftphoneCallLogContext } from '@/services/linkusCallLog';
@@ -102,7 +103,12 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
   let currentUserExtension: string | null = null;
   if (session.role === 'agent') {
     const currentAgent = d.agents.find((a) => a.userId === session.userId);
-    softphoneEmail = currentAgent?.email ?? null;
+    const fromRoster = (currentAgent?.email ?? '').trim();
+    const fromSession = (session.authEmail ?? '').trim();
+    const fromFirebase = (firebaseUser?.email ?? '').trim();
+    // Prefer PBX roster email once loaded; until then keep the FAB using the sign-in email
+    // so the widget does not unmount while `fetchAgents` is still in flight.
+    softphoneEmail = fromRoster || fromSession || fromFirebase || null;
     currentUserExtension = currentAgent?.extension?.trim() || null;
   } else if (session.role === 'super-admin') {
     softphoneEmail = adminExtEmail || firebaseUser?.email || null;
@@ -158,6 +164,54 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     return { min, max: min + 999 };
   }, [softphoneEmail, softphoneIdentityExtension]);
 
+  /** BMS chat list needs a tenant scope; super-admins often have no row in the switcher — fall back like softphone context. */
+  const effectiveChatTenantId = useMemo(
+    () => d.selectedTenant ?? session.tenantId ?? d.tenants[0]?.id ?? null,
+    [d.selectedTenant, session.tenantId, d.tenants],
+  );
+
+  const chatWorkshopOwnerUid = useMemo(() => {
+    const tid = effectiveChatTenantId;
+    if (!tid) return null;
+    const ou = d.tenants.find((t) => t.id === tid)?.bmsOwnerUid?.trim();
+    return ou || null;
+  }, [effectiveChatTenantId, d.tenants]);
+
+  const [chatNavUnreadCount, setChatNavUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!permissions.canViewChatTab) return;
+    if (d.selectedTab === 'chat') return;
+    if (!effectiveChatTenantId) return;
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const rows = await fetchChats({
+          tenantId: effectiveChatTenantId,
+          ownerUid: chatWorkshopOwnerUid,
+        });
+        if (!cancelled) {
+          setChatNavUnreadCount(rows.filter((c) => c.unreadForAgent).length);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void run();
+    const id = setInterval(run, 45_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [
+    permissions.canViewChatTab,
+    d.selectedTab,
+    effectiveChatTenantId,
+    chatWorkshopOwnerUid,
+  ]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
       {/* Floating softphone widget — visible for agents and super admins */}
@@ -175,6 +229,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
         displayName={session.displayName}
         currentRole={session.role}
         onSignOut={onSignOut}
+        chatNavUnreadCount={chatNavUnreadCount}
       />
 
       {/* Main content */}
@@ -182,8 +237,14 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
         {/* Top header */}
         <DashboardHeader connectionStatus={d.connectionStatus} clockStr={clockStr} />
 
-        {/* Scrollable tab content */}
-        <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
+        {/* Tab content: chat fills height and scrolls internally; other tabs scroll the main area */}
+        <main
+          className={
+            d.selectedTab === 'chat'
+              ? 'flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-6 sm:px-6 lg:px-8'
+              : 'min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8'
+          }
+        >
           {d.error && (
             <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:flex-row sm:items-center sm:justify-between">
               <span className="flex items-center gap-2">
@@ -233,12 +294,17 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                 />
               )}
               {d.selectedTab === 'chat' && (
-                <ChatTab
-                  agents={d.agents}
-                  queues={d.queues}
-                  tenants={d.tenants}
-                  permissions={permissions}
-                />
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <ChatTab
+                    session={session}
+                    permissions={permissions}
+                    listTenantId={effectiveChatTenantId}
+                    workshopOwnerUid={chatWorkshopOwnerUid}
+                    onInboxStatsChange={({ unreadCount }) =>
+                      setChatNavUnreadCount(unreadCount)
+                    }
+                  />
+                </div>
               )}
               {d.selectedTab === 'calls' && (
                 <CallsTab

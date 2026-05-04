@@ -62,7 +62,7 @@ export function useExtensions({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        console.error('[useExtensions] Failed to fetch extensions:', err);
+        // console.error('[useExtensions] Failed to fetch extensions:', err);
         if (err instanceof IpForbiddenError) {
           setError('IP blocked by Yeastar PBX (error 70087).');
         } else if (err instanceof ApiAccessDeniedError) {

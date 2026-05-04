@@ -15,6 +15,7 @@ import {
   getBookingAvailability,
   getBookingById,
   getBookings,
+  getBookingsListScope,
   getStaffForService,
   getWorkshopStaff,
   normalizeBookingAvailabilitySlots,
@@ -93,6 +94,8 @@ function canShowRescheduleAction(pathname: string, status: string): boolean {
 
 type BookingRecordWithTasks = {
   id: string;
+  /** BMS workshop owner UID (required for APIs when viewing all-workshop list). */
+  ownerUid: string;
   bookingCode:string;
   status: string;
   branchId: string;
@@ -113,6 +116,15 @@ type BookingRecordWithTasks = {
   totalPrice: number;
   progress: { completed: number; total: number; percentage: number };
 };
+
+function bmsWorkshopUidForBooking(
+  row: Pick<BookingRecordWithTasks, 'ownerUid'> | null | undefined,
+  listScopedOwnerUid: string,
+): string {
+  const fromRow = row?.ownerUid?.trim();
+  if (fromRow) return fromRow;
+  return (listScopedOwnerUid || '').trim();
+}
 
 const MOCK_OTHER_BOOKINGS: BookingRecordWithTasks[] = [];
 
@@ -273,11 +285,12 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
   const loadBookings = useCallback(async () => {
     const stateOwnerId = location.state?.ownerId;
     const stateBranchId = location.state?.branchId;
+    const listScope = getBookingsListScope(session ?? null);
 
     if (stateOwnerId) localStorage.setItem('cc_last_owner_id', stateOwnerId);
     if (stateBranchId) localStorage.setItem('cc_last_branch_id', stateBranchId);
 
-    const ownerUid =
+    const ownerUidResolved =
       stateOwnerId ||
       localStorage.getItem('cc_last_owner_id') ||
       (await resolveOwnerUid(session?.tenantId));
@@ -287,25 +300,35 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       (await resolveDefaultBranchId(session?.tenantId)) ||
       undefined;
 
-    if (!ownerUid) {
+    if (listScope === 'tenant' && !ownerUidResolved.trim()) {
       setBookings([]);
       setOwnerUidForApi('');
       setLoading(false);
       return;
     }
 
-    setOwnerUidForApi(ownerUid);
+    if (listScope === 'tenant') {
+      localStorage.setItem('cc_last_owner_id', ownerUidResolved);
+      setOwnerUidForApi(ownerUidResolved);
+    } else {
+      setOwnerUidForApi('');
+    }
+
     setLoading(true);
 
     try {
-      const data = await getBookings(ownerUid, 100, branchId);
-      //console.log('bookings', data);
-      let filtered = data;
-      if (branchId) {
-        filtered = filtered.filter(b => b.branchId === branchId);
-      }
-      const mapped = filtered.map(b => ({
+      const data =
+        listScope === 'global'
+          ? await getBookings({ scope: 'global', limit: 100, branchId })
+          : await getBookings({
+              scope: 'tenant',
+              ownerUid: ownerUidResolved,
+              limit: 100,
+              branchId,
+            });
+      const mapped = data.map(b => ({
         id: b.id,
+        ownerUid: String(b.ownerUid ?? '').trim(),
         bookingCode: (b as any).bookingCode || '',
         status: ((b as any).status || 'pending').toLowerCase(),
         branchId: b.branchId || '',
@@ -326,7 +349,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
         totalPrice: (b as any).totalPrice ?? 0,
         progress: (b as any).progress ?? { completed: 0, total: 0, percentage: 0 },
       }));
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
       let finalBookings = mapped;
       if (pathname === '/bookings/dashboard') {
         finalBookings = mapped.filter(b => b.bookingDate === todayStr);
@@ -340,12 +363,19 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
         finalBookings = mapped.filter(b => b.status === 'cancelled' || b.status === 'canceled');
       }
       setBookings(finalBookings);
-    } catch {
-      // console.error(e);
+    } catch (e) {
+      // console.error('[BookingListView] loadBookings failed', e);
+      setBookings([]);
+      toast({
+        variant: 'destructive',
+        title: 'Could not load bookings',
+        description:
+          e instanceof Error ? e.message : 'Something went wrong. Check the console.',
+      });
     } finally {
       setLoading(false);
     }
-  }, [pathname, location.state, session?.tenantId]);
+  }, [pathname, location.state, session, toast]);
 
   useEffect(() => {
     loadBookings();
@@ -357,8 +387,9 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       dateStr: string,
       services: BookingServiceDetail[],
       branchId: string,
+      workspaceOwnerUid: string,
     ) => {
-      if (!ownerUidForApi || !dateStr || !branchId || services.length === 0) {
+      if (!workspaceOwnerUid || !dateStr || !branchId || services.length === 0) {
         setRescheduleStaffByService({});
         setRescheduleStaffAssignments({});
         return;
@@ -366,7 +397,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       const staffLists = await Promise.all(
         services.map(async (svc) => {
           try {
-            const staff = await getStaffForService(ownerUidForApi, svc.id, {
+            const staff = await getStaffForService(workspaceOwnerUid, svc.id, {
               branchId,
               date: dateStr,
             });
@@ -388,7 +419,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       setRescheduleStaffByService(bySvc);
       setRescheduleStaffAssignments(assignments);
     },
-    [ownerUidForApi],
+    [],
   );
 
   useEffect(() => {
@@ -400,10 +431,15 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
     ) {
       return;
     }
+    const wo = rescheduleBooking
+      ? bmsWorkshopUidForBooking(rescheduleBooking, ownerUidForApi)
+      : ownerUidForApi.trim();
+
     void syncRescheduleStaffForDate(
       rescheduleNewDate,
       rescheduleServices,
       rescheduleBranchId,
+      wo,
     );
   }, [
     rescheduleOpen,
@@ -411,12 +447,23 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
     rescheduleBranchId,
     rescheduleServiceIds,
     rescheduleServices,
+    rescheduleBooking,
+    ownerUidForApi,
     syncRescheduleStaffForDate,
   ]);
 
   // Reschedule: booking availability — block saving when branch has no open slots for this date/service mix.
   useEffect(() => {
-    if (!rescheduleOpen || !rescheduleNewDate || !rescheduleBranchId || !ownerUidForApi) {
+    const workspaceOwnerUid = rescheduleBooking
+      ? bmsWorkshopUidForBooking(rescheduleBooking, ownerUidForApi)
+      : ownerUidForApi.trim();
+
+    if (
+      !rescheduleOpen ||
+      !rescheduleNewDate ||
+      !rescheduleBranchId ||
+      !workspaceOwnerUid
+    ) {
       return;
     }
 
@@ -438,7 +485,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
     void (async () => {
       try {
         const avail = await getBookingAvailability(
-          ownerUidForApi,
+          workspaceOwnerUid,
           rescheduleBranchId,
           rescheduleNewDate,
           serviceIds,
@@ -471,16 +518,19 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
     rescheduleBranchId,
     rescheduleServiceIds,
     ownerUidForApi,
+    rescheduleBooking,
     rescheduleServices,
   ]);
 
   const openConfirmModal = useCallback(
     async (booking: BookingRecordWithTasks) => {
-      if (!ownerUidForApi) {
+      const wo = bmsWorkshopUidForBooking(booking, ownerUidForApi);
+      if (!wo) {
         toast({
           variant: 'destructive',
           title: 'Cannot confirm',
-          description: 'Workshop context is missing.',
+          description:
+            'Missing workshop owner for this booking. Open bookings with tenant context or ensure each row includes ownerUid.',
         });
         return;
       }
@@ -488,21 +538,21 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       setConfirmModalOpen(true);
       setConfirmModalLoading(true);
       try {
-        const bookingDetail = await getBookingById(ownerUidForApi, booking.id);
+        const bookingDetail = await getBookingById(wo, booking.id);
         const services = bookingDetail.services ?? [];
         const bookingBranchId =
           bookingDetail.booking?.branchId || booking.branchId || '';
         const bookingDate = bookingDetail.booking?.date || booking.bookingDate || '';
 
         if (bookingBranchId) {
-          await getWorkshopStaff(ownerUidForApi, {
+          await getWorkshopStaff(wo, {
             branchId: bookingBranchId,
             status: 'Active',
-          }).catch((err) => {
-            console.warn(
-              '[openConfirmModal] getWorkshopStaff failed; per-service staff still loads.',
-              err,
-            );
+          }).catch((_err) => {
+            // console.warn(
+            //   '[openConfirmModal] getWorkshopStaff failed; per-service staff still loads.',
+            //   _err,
+            // );
             return [];
           });
         }
@@ -511,7 +561,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
           services.map(async (svc) => {
             if (!bookingBranchId || !bookingDate) return [svc.id, []] as const;
             try {
-              const staff = await getStaffForService(ownerUidForApi, svc.id, {
+              const staff = await getStaffForService(wo, svc.id, {
                 branchId: bookingBranchId,
                 date: bookingDate,
               });
@@ -554,19 +604,20 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
   );
 
   const handleCancelBookingRequest = useCallback(
-    async (bookingId: string) => {
-      if (!ownerUidForApi) {
+    async (booking: BookingRecordWithTasks) => {
+      const wo = bmsWorkshopUidForBooking(booking, ownerUidForApi);
+      if (!wo) {
         toast({
           variant: 'destructive',
           title: 'Cannot update',
           description:
-            'Workshop context is missing. Open bookings from the dashboard with a tenant selected.',
+            'Missing workshop owner for this booking.',
         });
         return;
       }
-      setUpdatingBookingId(bookingId);
+      setUpdatingBookingId(booking.id);
       try {
-        await cancelBooking(ownerUidForApi, bookingId);
+        await cancelBooking(wo, booking.id);
         toast({
           title: 'Booking canceled',
           description: 'The request has been canceled.',
@@ -588,17 +639,18 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
 
   const handleConfirmBookingWithStaff = useCallback(
     async (
+      workshopOwnerUid: string,
       bookingId: string,
       services: BookingServiceDetail[],
       assignments: Record<string, string>,
       staffByService: Record<string, WorkshopStaff[]>,
     ): Promise<boolean> => {
-      if (!ownerUidForApi) {
+      if (!workshopOwnerUid) {
         toast({
           variant: 'destructive',
           title: 'Cannot confirm',
           description:
-            'Workshop context is missing. Open bookings from the dashboard with a tenant selected.',
+            'Workshop context is missing.',
         });
         return false;
       }
@@ -623,7 +675,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
 
       setUpdatingBookingId(bookingId);
       try {
-        await confirmBookingWithStaff(ownerUidForApi, bookingId, staffAssignments);
+        await confirmBookingWithStaff(workshopOwnerUid, bookingId, staffAssignments);
         toast({
           title: 'Booking confirmed',
           description: 'Staff assignments were sent and the booking was confirmed.',
@@ -642,16 +694,18 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
         setUpdatingBookingId(null);
       }
     },
-    [ownerUidForApi, toast, loadBookings],
+    [toast, loadBookings],
   );
 
   const openRescheduleModal = useCallback(
     async (booking: BookingRecordWithTasks) => {
-      if (!ownerUidForApi) {
+      const wo = bmsWorkshopUidForBooking(booking, ownerUidForApi);
+      if (!wo) {
         toast({
           variant: 'destructive',
           title: 'Cannot reschedule',
-          description: 'Workshop context is missing.',
+          description:
+            'Missing workshop owner for this booking.',
         });
         return;
       }
@@ -671,7 +725,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
       setRescheduleAvailabilityLoading(false);
       setRescheduleAvailabilityDone(false);
       try {
-        const detail = await getBookingById(ownerUidForApi, booking.id);
+        const detail = await getBookingById(wo, booking.id);
         const services = detail.services ?? [];
         const br = detail.booking?.branchId || booking.branchId || '';
         setRescheduleBranchId(br);
@@ -693,7 +747,16 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
   );
 
   const handleRescheduleSubmit = useCallback(async (): Promise<boolean> => {
-    if (!ownerUidForApi || !rescheduleBooking) return false;
+    if (!rescheduleBooking) return false;
+    const wo = bmsWorkshopUidForBooking(rescheduleBooking, ownerUidForApi);
+    if (!wo) {
+      toast({
+        variant: 'destructive',
+        title: 'Cannot reschedule',
+        description: 'Missing workshop owner for this booking.',
+      });
+      return false;
+    }
     if (!rescheduleNewDate.trim() || !rescheduleNewDropTime.trim()) {
       toast({
         variant: 'destructive',
@@ -786,7 +849,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
     setUpdatingBookingId(rescheduleBooking.id);
     try {
       await patchBookingReschedule(
-        ownerUidForApi,
+        wo,
         rescheduleBooking.id,
         payload,
       );
@@ -1018,7 +1081,15 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                               size="sm"
                               variant="outline"
                               className="gap-1.5 text-xs"
-                              onClick={() => navigate(`/bookings/${b.id}`)}
+                              onClick={() => {
+                                const wo = bmsWorkshopUidForBooking(
+                                  b,
+                                  ownerUidForApi,
+                                );
+                                navigate(`/bookings/${b.id}`, {
+                                  state: wo ? { ownerId: wo } : {},
+                                });
+                              }}
                             >
                               <Eye className="h-3.5 w-3.5" /> View
                             </Button>
@@ -1050,7 +1121,7 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                                   variant="outline"
                                   className="gap-1 border-rose-300 px-2 text-xs text-rose-700 hover:bg-rose-50"
                                   disabled={updatingBookingId === b.id}
-                                  onClick={() => handleCancelBookingRequest(b.id)}
+                                  onClick={() => handleCancelBookingRequest(b)}
                                 >
                                   <Ban className="h-3 w-3" />
                                   Cancel
@@ -1164,7 +1235,12 @@ function BookingListView({ meta, pathname }: { meta: PageMeta; pathname: string 
                 }
                 onClick={async () => {
                   if (!confirmModalBooking) return;
+                  const wo = bmsWorkshopUidForBooking(
+                    confirmModalBooking,
+                    ownerUidForApi,
+                  );
                   const ok = await handleConfirmBookingWithStaff(
+                    wo,
                     confirmModalBooking.id,
                     confirmServices,
                     serviceStaffAssignments,
@@ -1514,6 +1590,7 @@ function BookingDetailView() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [expandedTaskCard, setExpandedTaskCard] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const location = useLocation();
 
@@ -1530,7 +1607,9 @@ function BookingDetailView() {
 
   useEffect(() => {
     if (!id) return;
+    setDetail(null);
     setLoading(true);
+    setLoadError(null);
     async function load() {
       const stateOwnerId = location.state?.ownerId;
       if (stateOwnerId) localStorage.setItem('cc_last_owner_id', stateOwnerId);
@@ -1541,6 +1620,14 @@ function BookingDetailView() {
         (await resolveOwnerUid(session?.tenantId));
 
       if (!ownerUid) {
+        const msg =
+          'Workshop tenant is missing. Open Bookings from the dashboard with a workshop selected.';
+        setLoadError(msg);
+        toast({
+          variant: 'destructive',
+          title: 'Cannot load booking',
+          description: msg,
+        });
         setLoading(false);
         return;
       }
@@ -1548,20 +1635,33 @@ function BookingDetailView() {
       try {
         const data = await getBookingById(ownerUid, id!);
         setDetail(data);
-      } catch {
-        // console.error(e);
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : 'Could not load booking details.';
+        setLoadError(msg);
+        toast({
+          variant: 'destructive',
+          title: 'Failed to load booking',
+          description: msg,
+        });
       } finally {
         setLoading(false);
       }
     }
     load();
-  }, [id, location.state, session?.tenantId]);
+  }, [id, location.state, session?.tenantId, toast]);
 
   const b = detail?.booking ?? null;
-  const statusCfg = b ? (STATUS_CONFIG[b.status.toLowerCase()] ?? { label: b.status, className: 'bg-slate-100 text-slate-600' }) : null;
+  const statusCfg = b
+    ? (STATUS_CONFIG[(b.status ?? '').toLowerCase()] ?? {
+        label: b.status ?? '',
+        className: 'bg-slate-100 text-slate-600',
+      })
+    : null;
   const formattedDate = b?.date ? (() => { try { return format(new Date(b.date), 'EEEE, dd MMMM yyyy'); } catch { return b.date; } })() : null;
   const tasks = detail?.tasks ?? [];
-  const taskPct = detail?.progress.tasks.percentage ?? 0;
+  const taskPct =
+    detail?.progress?.tasks?.percentage ?? 0;
   const isComplete = taskPct === 100;
   const createdAtDate = b?.createdAt ? new Date(b.createdAt._seconds * 1000) : null;
 
@@ -1613,6 +1713,11 @@ function BookingDetailView() {
           <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-500">
             <CalendarDays className="h-10 w-10 text-slate-300" />
             <div className="text-lg font-semibold">Booking not found</div>
+            {loadError && (
+              <p className="max-w-md px-4 text-center text-sm text-slate-600">
+                {loadError}
+              </p>
+            )}
             <Button variant="outline" onClick={() => navigate(-1)}>Go back</Button>
           </div>
         )}
@@ -1654,7 +1759,7 @@ function BookingDetailView() {
                 <Separator />
                 <CardContent className="grid gap-4 pt-4 sm:grid-cols-2">
                   <div className="sm:col-span-2 space-y-2">
-                    {detail.services.map((s) => (
+                    {(detail.services ?? []).map((s) => (
                       <div key={s.id} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
                         <div className="flex items-center gap-2">
                           <div className={`h-2 w-2 rounded-full ${s.completionStatus === 'completed' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
@@ -1715,7 +1820,9 @@ function BookingDetailView() {
                         <div>
                           <div className="text-[11px] font-bold text-neutral-800">Task Progress</div>
                           <div className="text-[9px] text-neutral-400 mt-0.5">
-                            {isComplete ? 'All done!' : `${detail.progress.tasks.completed}/${detail.progress.tasks.total} completed`}
+                            {isComplete
+                              ? 'All done!'
+                              : `${detail.progress?.tasks?.completed ?? 0}/${detail.progress?.tasks?.total ?? 0} completed`}
                           </div>
                         </div>
                         <div className="relative w-10 h-10">
@@ -1908,7 +2015,7 @@ function BookingDetailView() {
               )}
 
               {/* Activity */}
-              {detail.activities.filter((a) => a.message).length > 0 && (
+              {(detail.activities ?? []).filter((a) => a.message).length > 0 && (
                 <Card className="border-0 bg-white shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -1917,7 +2024,7 @@ function BookingDetailView() {
                   </CardHeader>
                   <Separator />
                   <CardContent className="pt-4 space-y-3">
-                    {detail.activities.filter((a) => a.message).map((act) => (
+                    {(detail.activities ?? []).filter((a) => a.message).map((act) => (
                       <div key={act.id} className="flex items-start gap-3">
                         <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-400" />
                         <div className="flex-1 min-w-0">
@@ -1945,8 +2052,8 @@ function BookingDetailView() {
                     <div className="space-y-1.5 text-xs">
                       <div className="text-slate-500">Code: <span className="text-slate-300">{b.bookingCode}</span></div>
                       {createdAtDate && <div className="text-slate-500">Created: <span className="text-slate-400">{format(createdAtDate, 'dd MMM yyyy HH:mm')}</span></div>}
-                      <div className="text-slate-500">Tasks: <span className="text-slate-400">{detail.progress.tasks.completed}/{detail.progress.tasks.total} ({taskPct}%)</span></div>
-                      <div className="text-slate-500">Services: <span className="text-slate-400">{detail.progress.services.completed}/{detail.progress.services.total}</span></div>
+                      <div className="text-slate-500">Tasks: <span className="text-slate-400">{detail.progress?.tasks?.completed ?? 0}/{detail.progress?.tasks?.total ?? 0} ({taskPct}%)</span></div>
+                      <div className="text-slate-500">Services: <span className="text-slate-400">{detail.progress?.services?.completed ?? 0}/{detail.progress?.services?.total ?? 0}</span></div>
                     </div>
                   </CardContent>
                 </Card>

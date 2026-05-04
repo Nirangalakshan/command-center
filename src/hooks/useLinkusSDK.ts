@@ -292,11 +292,11 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
         const tryInit = async () => {
           const sign = await fetchSdkSign(agentEmail!);
           if (cancelled) return null;
-          console.log('[useLinkusSDK] Initialising SDK', {
-            username: agentEmail,
-            pbxURL: LINKUS_PBX_URL,
-            signLen: sign?.length ?? 0,
-          });
+          // console.log('[useLinkusSDK] Initialising SDK', {
+          //   username: agentEmail,
+          //   pbxURL: LINKUS_PBX_URL,
+          //   signLen: sign?.length ?? 0,
+          // });
           return init({
             username: agentEmail!,
             secret: sign,
@@ -344,17 +344,17 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
           setError(null);
         });
 
-        phone.on('registrationFailed', (info: unknown) => {
+        phone.on('registrationFailed', (_info: unknown) => {
           if (cancelled) return;
-          console.error('[useLinkusSDK] SIP registration failed', info);
+          // console.error('[useLinkusSDK] SIP registration failed', _info);
           setIsRegistered(false);
           setStatus('error');
           setError('SIP registration failed — check extension credentials');
         });
 
-        phone.on('disconnected', (info: unknown) => {
+        phone.on('disconnected', (_info: unknown) => {
           if (cancelled) return;
-          console.warn('[useLinkusSDK] SIP disconnected', info);
+          // console.warn('[useLinkusSDK] SIP disconnected', _info);
           setIsRegistered(false);
         });
 
@@ -378,14 +378,13 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
           };
         }) => {
           if (cancelled) return;
-          const snap = mapLinkusCallStatus(session.status);
-          console.log('[useLinkusSDK] newRTCSession', {
-            callId,
-            direction: snap.direction,
-            callStatus: snap.callStatus,
-            number: snap.number,
-            name: snap.name || undefined,
-          });
+          // console.log('[useLinkusSDK] newRTCSession', {
+          //   callId,
+          //   direction: snap.direction,
+          //   callStatus: snap.callStatus,
+          //   number: snap.number,
+          //   name: snap.name || undefined,
+          // });
 
           upsertCall(session.status);
 
@@ -431,9 +430,9 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
             if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
           });
 
-          session.on('failed', (info: unknown) => {
+          session.on('failed', (_info: unknown) => {
             if (cancelled) return;
-            console.log('[useLinkusSDK] session failed', callId, info);
+            // console.log('[useLinkusSDK] session failed', callId, _info);
             emitSessionEnd(callId, session.status);
             removeCall(callId);
             if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
@@ -469,7 +468,7 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
         // PBX-level runtime errors (licence issues, logged in elsewhere, etc.)
         pbx.on('runtimeError', (result: { code: number; message: string }) => {
           if (cancelled) return;
-          console.error('[useLinkusSDK] PBX runtime error:', result);
+          // console.error('[useLinkusSDK] PBX runtime error:', result);
           setStatus('error');
           setError(`PBX error ${result.code}: ${result.message}`);
         });
@@ -486,7 +485,7 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
 
         const info = err as { code?: number; message?: string };
         const raw = info?.message ?? (err instanceof Error ? err.message : String(err));
-        console.error('[useLinkusSDK] Bootstrap failed:', err);
+        // console.error('[useLinkusSDK] Bootstrap failed:', err);
 
         // Map known Yeastar SDK error codes/messages to actionable guidance.
         let friendly = raw;
@@ -548,8 +547,8 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
       dismissIncoming(callId);
       try {
         await phoneRef.current?.answer(callId);
-      } catch (err) {
-        console.error('[useLinkusSDK] answer failed', err);
+      } catch (_err) {
+        // console.error('[useLinkusSDK] answer failed', _err);
         // If answer failed, the session will be torn down by the SDK and
         // deleteSession will clean up activeCalls.
       }
@@ -567,9 +566,9 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
       if (phone?.getSession(callId)) {
         try {
           phone.reject(callId);
-        } catch (err) {
+        } catch (_err) {
           // Session may already be terminated (remote side cancelled) — safe to ignore.
-          console.warn('[useLinkusSDK] reject ignored:', err);
+          // console.warn('[useLinkusSDK] reject ignored:', _err);
         }
       }
       dismissIncoming(callId);
@@ -587,8 +586,8 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
       if (phone?.getSession(callId)) {
         try {
           phone.hangup(callId);
-        } catch (err) {
-          console.warn('[useLinkusSDK] hangup ignored:', err);
+        } catch (_err) {
+          // console.warn('[useLinkusSDK] hangup ignored:', _err);
         }
       }
       removeCall(callId);
@@ -605,8 +604,8 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
       if (!phone?.getSession(callId)) return;
       try {
         fn(callId);
-      } catch (err) {
-        console.warn(`[useLinkusSDK] ${label} ignored:`, err);
+      } catch (_err) {
+        // console.warn(`[useLinkusSDK] ${label} ignored:`, _err);
       }
     },
     []
@@ -639,8 +638,8 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
     if (!sanitized) return false;
     try {
       return phone.blindTransfer(callId, sanitized);
-    } catch (err) {
-      console.warn('[useLinkusSDK] blindTransfer ignored:', err);
+    } catch (_err) {
+      // console.warn('[useLinkusSDK] blindTransfer ignored:', _err);
       return false;
     }
   }, []);
@@ -652,8 +651,8 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
     if (!sanitized) return false;
     try {
       return phone.attendedTransfer(callId, sanitized);
-    } catch (err) {
-      console.warn('[useLinkusSDK] attendedTransfer ignored:', err);
+    } catch (_err) {
+      // console.warn('[useLinkusSDK] attendedTransfer ignored:', _err);
       return false;
     }
   }, []);

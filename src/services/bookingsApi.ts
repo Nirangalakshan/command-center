@@ -1,4 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
+import { getBmsBearerToken } from '@/services/bmsAuth';
+import type { UserRole } from '@/services/types';
+import { getServiceById } from '@/services/servicesApi';
 
 /** Load BMS workshop owner UID for a Supabase tenant (when set in `tenants.bms_owner_uid`). */
 export async function resolveBmsOwnerUidForTenant(tenantId: string | null | undefined): Promise<string | null> {
@@ -138,14 +141,53 @@ export type WorkshopStaff = {
   updatedAt: { _seconds: number; _nanoseconds: number } | null;
 };
 
-import { getBmsBearerToken } from '@/services/bmsAuth';
-import { getServiceById } from '@/services/servicesApi';
+/** Whether GET /bookings should list all workshops (Bearer only, no tenant header). */
+export function getBookingsListScope(session: {
+  role: UserRole;
+  tenantId: string | null;
+} | null | undefined): 'global' | 'tenant' {
+  if (!session) return 'tenant';
+  if (session.role === 'super-admin') return 'global';
+  if (session.role === 'agent' && !session.tenantId?.trim()) return 'global';
+  return 'tenant';
+}
+
+export type GetBookingsParams =
+  | { scope: 'global'; limit?: number; branchId?: string }
+  | {
+      scope: 'tenant';
+      ownerUid: string;
+      limit?: number;
+      branchId?: string;
+    };
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
+/** Call-centre REST root. Booking list is always `${BASE_URL}/bookings` → e.g.
+ * https://black.bmspros.com.au/api/call-center/bookings
+ * (In dev use `VITE_BMS_API_URL=/api/call-center` so Vite proxies to the same host.) */
 const BASE_URL =
   (import.meta.env.VITE_BMS_API_URL as string) ??
   'https://black.bmspros.com.au/api/call-center';
+
+/** Build path + query — avoids `new URL('/relative')` throwing when BASE_URL is `/api/...` (dev proxy). */
+function ccPathWithSearch(path: string, search?: URLSearchParams): string {
+  const q = search?.toString();
+  const p = path.startsWith('/') ? path : `/${path}`;
+  const base = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+  return `${base}${p}${q ? `?${q}` : ''}`;
+}
+
+function extractBookingsListRows(json: unknown): Record<string, unknown>[] {
+  if (Array.isArray(json)) return json as Record<string, unknown>[];
+  if (!json || typeof json !== 'object') return [];
+  const o = json as Record<string, unknown>;
+  const candidates = [o.bookings, o.data, o.items, o.results];
+  for (const c of candidates) {
+    if (Array.isArray(c)) return c as Record<string, unknown>[];
+  }
+  return [];
+}
 
 // ─── Headers Helper ──────────────────────────────────────────────────────────
 
@@ -158,6 +200,53 @@ async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
   };
 }
 
+/** Call-center JWT only — omit `X-Tenant-Id` (all-workshop bookings list). */
+async function bearerOnlyHeaders(): Promise<HeadersInit> {
+  const token = await getBmsBearerToken({ waitForFirebaseInit: true });
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+/** Log HTTP errors (status + body preview) before throwing — use on every `!res.ok` branch. */
+async function bookingsApiHttpError(
+  operation: string,
+  res: Response,
+  url: string,
+): Promise<never> {
+  let preview = '';
+  try {
+    preview = (await res.clone().text()).slice(0, 800);
+  } catch {
+    preview = '';
+  }
+  // console.error(`[bookingsApi] ${operation}`, {
+  //   status: res.status,
+  //   statusText: res.statusText,
+  //   url,
+  //   bodyPreview: preview.length > 0 ? preview : '(empty)',
+  // });
+  const clipped =
+    preview.length > 280 ? `${preview.slice(0, 280)}…` : preview;
+  throw new Error(
+    `${operation} failed: ${res.status}${clipped ? ` — ${clipped}` : ''}`,
+  );
+}
+
+async function bookingsApiFetch(
+  operation: string,
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    // console.error(`[bookingsApi] ${operation} fetch failed`, { url, error: e });
+    throw e;
+  }
+}
+
 // ─── 1. GET Availability ─────────────────────────────────────────────────────
 
 /** Branch capacity / open slots for a date and service mix (new booking + reschedule must respect this). */
@@ -167,18 +256,19 @@ export async function getBookingAvailability(
   date: string,
   serviceIds: string[],
 ): Promise<AvailabilityResponse> {
-  const url = `${BASE_URL}/bookings/availability?branchId=${encodeURIComponent(
+  const search = new URLSearchParams({
     branchId,
-  )}&date=${encodeURIComponent(date)}&serviceIds=${encodeURIComponent(
-    serviceIds.join(','),
-  )}`;
+    date,
+    serviceIds: serviceIds.join(','),
+  });
+  const url = ccPathWithSearch('/bookings/availability', search);
 
-  const res = await fetch(url, {
+  const res = await bookingsApiFetch('getBookingAvailability', url, {
     headers: await apiHeaders(ownerUid),
   });
 
   if (!res.ok) {
-    throw new Error(`getBookingAvailability failed: ${res.status}`);
+    await bookingsApiHttpError('getBookingAvailability', res, url);
   }
 
   return (await res.json()) as AvailabilityResponse;
@@ -196,12 +286,12 @@ function normalizeBookingListItem(
   const additionalIssues = r.additionalIssues;
   return {
     id: String(r.id ?? ''),
-    ownerUid: String(r.ownerUid ?? fallbackOwnerUid),
+    ownerUid: String(r.ownerUid ?? r.owner_uid ?? fallbackOwnerUid),
     bookingCode: r.bookingCode,
     status: r.status,
-    branchId: String(r.branchId ?? ''),
+    branchId: String(r.branchId ?? r.branch_id ?? ''),
     branchName: r.branchName,
-    date: String(r.date ?? ''),
+    date: String(r.date ?? r.booking_date ?? ''),
     time: String(r.time ?? ''),
     pickupTime: r.pickupTime,
     services,
@@ -225,37 +315,58 @@ function normalizeBookingListItem(
   };
 }
 
-export async function getBookings(
-  ownerUid: string,
-  limit: number = 25,
-  branchId?: string,
-): Promise<Booking[]> {
-  const url = new URL(`${BASE_URL}/bookings`);
-  url.searchParams.set('limit', limit.toString());
+export async function getBookings(params: GetBookingsParams): Promise<Booking[]> {
+  const limit = params.limit ?? 25;
+  const branchId = params.branchId;
 
-  const res = await fetch(url.toString(), {
-    headers: await apiHeaders(ownerUid),
-  });
+  const qs = new URLSearchParams({ limit: String(limit) });
+
+  let headers: HeadersInit;
+  let fallbackOwnerUid: string;
+
+  if (params.scope === 'tenant') {
+    const ownerUid = String(params.ownerUid ?? '').trim();
+    if (!ownerUid) {
+      console.warn('[getBookings] tenant scope requires ownerUid — returning empty.');
+      return [];
+    }
+    qs.set('ownerUid', ownerUid);
+    headers = await apiHeaders(ownerUid);
+    fallbackOwnerUid = ownerUid;
+  } else {
+    headers = await bearerOnlyHeaders();
+    fallbackOwnerUid = '';
+  }
+
+  const fetchUrl = ccPathWithSearch('/bookings', qs);
+  const res = await bookingsApiFetch('getBookings', fetchUrl, { headers });
 
   if (!res.ok) {
-    throw new Error(`getBookings failed: ${res.status}`);
+    await bookingsApiHttpError('getBookings', res, fetchUrl);
   }
 
-  const json = await res.json();
-  const rawList = Array.isArray(json.bookings) ? json.bookings : [];
-  let bookings: Booking[] = rawList.map((row: Record<string, unknown>) =>
-    normalizeBookingListItem(row, ownerUid),
-  );
-  
-  if (branchId) {
-     console.warn(`[getBookings] Filtering ${bookings.length} bookings by branchId: "${branchId}"`);
-    bookings = bookings.filter((b: any) => {
-      const bBranchId = b.branchId || b.branch_id || b.branchId;
-      return bBranchId === branchId;
-    });
-     console.warn(`[getBookings] Results after filter: ${bookings.length}`);
+  const json: unknown = await res.json();
+  const rawList = extractBookingsListRows(json);
+  if (
+    rawList.length === 0 &&
+    json &&
+    typeof json === 'object' &&
+    !Array.isArray(json)
+  ) {
+    const keys = Object.keys(json as Record<string, unknown>);
+    if (keys.length > 0) {
+      console.warn('[getBookings] no bookings array found — top-level keys:', keys);
+    }
   }
-  
+
+  let bookings: Booking[] = rawList.map((row: Record<string, unknown>) =>
+    normalizeBookingListItem(row, fallbackOwnerUid),
+  );
+
+  if (branchId) {
+    bookings = bookings.filter((b) => b.branchId === branchId);
+  }
+
   return bookings;
 }
 
@@ -269,23 +380,19 @@ export async function getWorkshopStaff(
     status?: StaffStatus;
   },
 ): Promise<WorkshopStaff[]> {
-  const url = new URL(`${BASE_URL}/staff`);
-  if (options?.branchId) url.searchParams.set('branchId', options.branchId);
-  if (options?.role) url.searchParams.set('role', options.role);
-  if (options?.status) url.searchParams.set('status', options.status);
+  const qs = new URLSearchParams();
+  if (options?.branchId) qs.set('branchId', options.branchId);
+  if (options?.role) qs.set('role', options.role);
+  if (options?.status) qs.set('status', options.status);
 
-  // console.log('[getWorkshopStaff] GET /staff — all workshop staff (filtered by query)', {
-  //   url: url.toString(),
-  //   options,
-  // });
+  const fetchUrl = ccPathWithSearch('/staff', qs);
 
-  const res = await fetch(url.toString(), {
+  const res = await bookingsApiFetch('getWorkshopStaff', fetchUrl, {
     headers: await apiHeaders(ownerUid),
   });
 
   if (!res.ok) {
-    console.warn('[getWorkshopStaff] request failed', { status: res.status, url: url.toString() });
-    throw new Error(`getWorkshopStaff failed: ${res.status}`);
+    await bookingsApiHttpError('getWorkshopStaff', res, fetchUrl);
   }
 
   const json = await res.json();
@@ -359,6 +466,10 @@ async function resolveStaffFromAllowListAndServiceDetail(
   try {
     detail = await getServiceById(ownerUid, serviceId);
   } catch {
+    // console.error(
+    //   '[bookingsApi] resolveStaffFromAllowListAndServiceDetail: getServiceById failed',
+    //   { ownerUid, serviceId, error: e },
+    // );
     detail = null;
   }
 
@@ -400,18 +511,21 @@ export async function getStaffForService(
     date: string;
   },
 ): Promise<WorkshopStaff[]> {
-  const url = new URL(
-    `${BASE_URL}/services/${encodeURIComponent(serviceId)}/staff`,
+  const qs = new URLSearchParams({
+    branchId: options.branchId,
+    date: options.date,
+  });
+  const fetchUrl = ccPathWithSearch(
+    `/services/${encodeURIComponent(serviceId)}/staff`,
+    qs,
   );
-  url.searchParams.set('branchId', options.branchId);
-  url.searchParams.set('date', options.date);
 
-  const res = await fetch(url.toString(), {
+  const res = await bookingsApiFetch('getStaffForService', fetchUrl, {
     headers: await apiHeaders(ownerUid),
   });
 
   if (!res.ok) {
-    throw new Error(`getStaffForService failed: ${res.status}`);
+    await bookingsApiHttpError('getStaffForService', res, fetchUrl);
   }
 
   const json = (await res.json()) as ServiceStaffAvailabilityResponse;
@@ -496,14 +610,15 @@ export async function createBooking(data: {
   vehicleDetails?: VehicleDetails;
   notes?: string;
 }): Promise<{ bookingId: string }> {
-  const res = await fetch(`${BASE_URL}/bookings`, {
+  const fetchUrl = `${BASE_URL}/bookings`;
+  const res = await bookingsApiFetch('createBooking', fetchUrl, {
     method: 'POST',
     headers: await apiHeaders(data.ownerUid),
     body: JSON.stringify(data),
   });
 
   if (!res.ok) {
-    throw new Error(`createBooking failed: ${res.status}`);
+    await bookingsApiHttpError('createBooking', res, fetchUrl);
   }
 
   return await res.json();
@@ -585,22 +700,164 @@ export type BookingDetail = {
   activities: BookingActivity[];
 };
 
+type DetailProgressSlice = BookingDetail['progress']['tasks'];
+
+function coerceDetailProgressSlice(v: unknown): DetailProgressSlice {
+  if (!v || typeof v !== 'object') return { completed: 0, total: 0, percentage: 0 };
+  const o = v as Record<string, unknown>;
+  const completed = Number(o.completed ?? 0);
+  const total = Number(o.total ?? 0);
+  let percentage = Number(o.percentage ?? NaN);
+  if (!Number.isFinite(percentage)) {
+    percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+  }
+  return { completed, total, percentage };
+}
+
+/**
+ * Unwrap `{ data?: … }`-style payloads and guarantee arrays/progress so the booking
+ * detail page never crashes on partial BMS responses.
+ */
+function normalizeBookingDetailPayload(raw: unknown): BookingDetail {
+  let obj =
+    raw && typeof raw === 'object'
+      ? (raw as Record<string, unknown>)
+      : null;
+  if (!obj) throw new Error('Invalid booking detail: empty response');
+
+  for (const key of ['data', 'result', 'payload'] as const) {
+    const inner = obj[key];
+    if (
+      inner &&
+      typeof inner === 'object' &&
+      ('booking' in (inner as object) ||
+        typeof (inner as Record<string, unknown>).id === 'string')
+    ) {
+      obj = inner as Record<string, unknown>;
+      break;
+    }
+  }
+
+  let booking: unknown =
+    obj.booking && typeof obj.booking === 'object' ? obj.booking : null;
+
+  const useFlatBooking =
+    !booking &&
+    typeof obj.id === 'string' &&
+    (obj.bookingCode != null ||
+      obj.date != null ||
+      obj.time != null ||
+      obj.status != null);
+
+  if (useFlatBooking) booking = obj;
+
+  if (!booking || typeof booking !== 'object') {
+    throw new Error('Invalid booking detail: missing booking payload');
+  }
+
+  const bk = booking as Record<string, unknown>;
+
+  const services = (
+    Array.isArray(obj.services) ? obj.services : Array.isArray(bk.services) ? bk.services : []
+  ) as BookingDetail['services'];
+
+  const tasks = (
+    Array.isArray(obj.tasks) ? obj.tasks : Array.isArray(bk.tasks) ? bk.tasks : []
+  ) as BookingDetail['tasks'];
+
+  let additionalIssues: BookingDetail['additionalIssues'] =
+    Array.isArray(obj.additionalIssues)
+      ? (obj.additionalIssues as BookingDetail['additionalIssues'])
+      : [];
+  if (additionalIssues.length === 0 && Array.isArray(bk.additionalIssues)) {
+    additionalIssues = bk.additionalIssues as BookingDetail['additionalIssues'];
+  }
+
+  const activities = (
+    Array.isArray(obj.activities)
+      ? obj.activities
+      : Array.isArray(bk.activities)
+        ? bk.activities
+        : []
+  ) as BookingDetail['activities'];
+
+  const progressSrc = obj.progress ?? bk.progress;
+  const progressRaw =
+    progressSrc && typeof progressSrc === 'object'
+      ? (progressSrc as Record<string, unknown>)
+      : null;
+
+  let progress: BookingDetail['progress'];
+  if (!progressRaw) {
+    const doneSv = services.filter((s: BookingServiceDetail) =>
+      ['completed', 'done'].includes(
+        String(s.completionStatus ?? '').toLowerCase(),
+      ),
+    ).length;
+    const totalTk = tasks.length;
+    const doneTk = tasks.filter((t: BookingTask) => t.done === true).length;
+    progress = {
+      services: {
+        completed: doneSv,
+        total: services.length,
+        percentage:
+          services.length > 0
+            ? Math.round((doneSv / services.length) * 100)
+            : 0,
+      },
+      tasks: {
+        completed: doneTk,
+        total: totalTk,
+        percentage: totalTk > 0 ? Math.round((doneTk / totalTk) * 100) : 0,
+      },
+    };
+  } else {
+    progress = {
+      services: coerceDetailProgressSlice(progressRaw.services),
+      tasks: coerceDetailProgressSlice(progressRaw.tasks),
+    };
+  }
+
+  return {
+    booking: booking as BookingDetail['booking'],
+    services,
+    tasks,
+    additionalIssues,
+    progress,
+    activities,
+  };
+}
+
 export async function getBookingById(
   ownerUid: string,
   bookingId: string,
 ): Promise<BookingDetail> {
-  const res = await fetch(
-    `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`,
-    {
-      headers: await apiHeaders(ownerUid),
-    },
-  );
+  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`;
+  const res = await bookingsApiFetch('getBookingById', fetchUrl, {
+    headers: await apiHeaders(ownerUid),
+  });
 
   if (!res.ok) {
-    throw new Error(`getBookingById failed: ${res.status}`);
+    await bookingsApiHttpError('getBookingById', res, fetchUrl);
   }
 
-  return await res.json();
+  let parsed: unknown;
+  try {
+    parsed = await res.json();
+  } catch (e) {
+    // console.error('[bookingsApi] getBookingById: response is not valid JSON', e);
+    throw e;
+  }
+
+  try {
+    return normalizeBookingDetailPayload(parsed);
+  } catch (e) {
+    // console.error('[bookingsApi] getBookingById: cannot normalize payload', {
+    //   parsed,
+    //   error: e,
+    // });
+    throw e instanceof Error ? e : new Error('Invalid booking detail response');
+  }
 }
 
 /** BMS booking workflow values (see CALL_CENTER_API.md). */
@@ -615,20 +872,15 @@ export async function patchBookingWorkflowStatus(
   bookingId: string,
   status: BmsBookingWorkflowStatus,
 ): Promise<unknown> {
-  const res = await fetch(
-    `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`,
-    {
-      method: 'PATCH',
-      headers: await apiHeaders(ownerUid),
-      body: JSON.stringify({ status }),
-    },
-  );
+  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`;
+  const res = await bookingsApiFetch('patchBookingWorkflowStatus', fetchUrl, {
+    method: 'PATCH',
+    headers: await apiHeaders(ownerUid),
+    body: JSON.stringify({ status }),
+  });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(
-      `patchBookingWorkflowStatus failed: ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ''}`,
-    );
+    await bookingsApiHttpError('patchBookingWorkflowStatus', res, fetchUrl);
   }
 
   return await res.json().catch(() => ({}));
@@ -654,20 +906,15 @@ export async function confirmBookingWithStaff(
   bookingId: string,
   staffAssignments: BookingConfirmStaffAssignments,
 ): Promise<unknown> {
-  const res = await fetch(
-    `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/confirm`,
-    {
-      method: 'POST',
-      headers: await apiHeaders(ownerUid),
-      body: JSON.stringify({ staffAssignments }),
-    },
-  );
+  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/confirm`;
+  const res = await bookingsApiFetch('confirmBookingWithStaff', fetchUrl, {
+    method: 'POST',
+    headers: await apiHeaders(ownerUid),
+    body: JSON.stringify({ staffAssignments }),
+  });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(
-      `confirmBookingWithStaff failed: ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ''}`,
-    );
+    await bookingsApiHttpError('confirmBookingWithStaff', res, fetchUrl);
   }
 
   return await res.json().catch(() => ({}));
@@ -712,20 +959,15 @@ export async function patchBookingReschedule(
     }
   }
 
-  const res = await fetch(
-    `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/reschedule`,
-    {
-      method: 'PATCH',
-      headers: await apiHeaders(ownerUid),
-      body: JSON.stringify(body),
-    },
-  );
+  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/reschedule`;
+  const res = await bookingsApiFetch('patchBookingReschedule', fetchUrl, {
+    method: 'PATCH',
+    headers: await apiHeaders(ownerUid),
+    body: JSON.stringify(body),
+  });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(
-      `patchBookingReschedule failed: ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ''}`,
-    );
+    await bookingsApiHttpError('patchBookingReschedule', res, fetchUrl);
   }
 
   return await res.json().catch(() => ({}));
@@ -741,20 +983,15 @@ export async function cancelBooking(
   reason?: string,
 ): Promise<unknown> {
   const payload = reason?.trim() ? { reason: reason.trim() } : {};
-  const res = await fetch(
-    `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/cancel`,
-    {
-      method: 'POST',
-      headers: await apiHeaders(ownerUid),
-      body: JSON.stringify(payload),
-    },
-  );
+  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/cancel`;
+  const res = await bookingsApiFetch('cancelBooking', fetchUrl, {
+    method: 'POST',
+    headers: await apiHeaders(ownerUid),
+    body: JSON.stringify(payload),
+  });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(
-      `cancelBooking failed: ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ''}`,
-    );
+    await bookingsApiHttpError('cancelBooking', res, fetchUrl);
   }
 
   return await res.json().catch(() => ({}));
@@ -766,15 +1003,13 @@ export async function getAdditionalIssues(
   ownerUid: string,
   bookingId: string,
 ): Promise<any> {
-  const res = await fetch(
-    `${BASE_URL}/bookings/${bookingId}/additional-issues`,
-    {
-      headers: await apiHeaders(ownerUid),
-    },
-  );
+  const fetchUrl = `${BASE_URL}/bookings/${bookingId}/additional-issues`;
+  const res = await bookingsApiFetch('getAdditionalIssues', fetchUrl, {
+    headers: await apiHeaders(ownerUid),
+  });
 
   if (!res.ok) {
-    throw new Error(`getAdditionalIssues failed: ${res.status}`);
+    await bookingsApiHttpError('getAdditionalIssues', res, fetchUrl);
   }
 
   return await res.json();
@@ -786,17 +1021,15 @@ export async function updateIssueDecision(
   issueId: string,
   customerResponse: 'accept' | 'reject',
 ): Promise<any> {
-  const res = await fetch(
-    `${BASE_URL}/bookings/${bookingId}/additional-issues/${issueId}`,
-    {
-      method: 'PATCH',
-      headers: await apiHeaders(ownerUid),
-      body: JSON.stringify({ customerResponse }),
-    },
-  );
+  const fetchUrl = `${BASE_URL}/bookings/${bookingId}/additional-issues/${issueId}`;
+  const res = await bookingsApiFetch('updateIssueDecision', fetchUrl, {
+    method: 'PATCH',
+    headers: await apiHeaders(ownerUid),
+    body: JSON.stringify({ customerResponse }),
+  });
 
   if (!res.ok) {
-    throw new Error(`updateIssueDecision failed: ${res.status}`);
+    await bookingsApiHttpError('updateIssueDecision', res, fetchUrl);
   }
 
   return await res.json();
@@ -969,14 +1202,15 @@ export async function createCallLog(data: {
   bookingId?: string;
   callCenterCallId?: string;
 }): Promise<{ callLogId: string }> {
-  const res = await fetch(`${BASE_URL}/call-logs`, {
+  const fetchUrl = `${BASE_URL}/call-logs`;
+  const res = await bookingsApiFetch('createCallLog', fetchUrl, {
     method: 'POST',
     headers: await apiHeaders(data.ownerUid),
     body: JSON.stringify(data),
   });
 
   if (!res.ok) {
-    throw new Error(`createCallLog failed: ${res.status}`);
+    await bookingsApiHttpError('createCallLog', res, fetchUrl);
   }
 
   return await res.json();
@@ -997,17 +1231,15 @@ export async function getCallLogs(
   ownerUid: string,
   limit: number = 10,
 ): Promise<CallLog[]> {
-  const res = await fetch(
-    `${BASE_URL}/call-logs?ownerUid=${ownerUid}&limit=${limit}`,
-    {
-      headers: {
-        'Content-Type': 'application/json',
-      },
+  const fetchUrl = `${BASE_URL}/call-logs?ownerUid=${ownerUid}&limit=${limit}`;
+  const res = await bookingsApiFetch('getCallLogs', fetchUrl, {
+    headers: {
+      'Content-Type': 'application/json',
     },
-  );
+  });
 
   if (!res.ok) {
-    throw new Error(`getCallLogs failed: ${res.status}`);
+    await bookingsApiHttpError('getCallLogs', res, fetchUrl);
   }
 
   const json = await res.json();
@@ -1017,14 +1249,15 @@ export async function getCallLogs(
 // ─── 7. Webhooks ─────────────────────────────────────────────────────────────
 
 export async function getWebhooks(): Promise<Record<string, unknown>[]> {
-  const res = await fetch(`${BASE_URL}/webhooks`, {
+  const fetchUrl = `${BASE_URL}/webhooks`;
+  const res = await bookingsApiFetch('getWebhooks', fetchUrl, {
     headers: {
       'Content-Type': 'application/json',
     },
   });
 
   if (!res.ok) {
-    throw new Error(`getWebhooks failed: ${res.status}`);
+    await bookingsApiHttpError('getWebhooks', res, fetchUrl);
   }
 
   const json = await res.json();

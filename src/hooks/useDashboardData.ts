@@ -75,13 +75,13 @@ export function useDashboardData({
   const [incomingCalls, setIncomingCalls] = useState<IncomingCall[]>(() => {
     try {
       const saved = sessionStorage.getItem(INCOMING_CALLS_STORAGE_KEY);
-      console.log("[useDashboardData] Init incomingCalls. Saved data:", saved);
+      // console.log("[useDashboardData] Init incomingCalls. Saved data:", saved);
       if (saved) return JSON.parse(saved) as IncomingCall[];
-    } catch (e) {
-      console.error(
-        "[useDashboardData] Failed to parse saved incoming calls:",
-        e,
-      );
+    } catch {
+      // console.error(
+      //   "[useDashboardData] Failed to parse saved incoming calls:",
+      //   e,
+      // );
     }
     return [];
   });
@@ -92,10 +92,10 @@ export function useDashboardData({
   // Keep sessionStorage in sync whenever incomingCalls changes
   useEffect(() => {
     try {
-      console.log(
-        "[useDashboardData] incomingCalls changed:",
-        incomingCalls.length,
-      );
+      // console.log(
+      //   "[useDashboardData] incomingCalls changed:",
+      //   incomingCalls.length,
+      // );
       if (incomingCalls.length > 0) {
         sessionStorage.setItem(
           INCOMING_CALLS_STORAGE_KEY,
@@ -202,10 +202,10 @@ export function useDashboardData({
 
         const directMatch = calls.find((c) => c.id === `yeastar-${callid}`);
         if (directMatch && cdrEndedAfter(directMatch.endTime)) {
-          console.log(
-            `[useDashboardData] Evicting ${ic.id} (direct callid match) — ` +
-              `CDR ended ${directMatch.endTime} (ring started ${new Date(ic.waitingSince).toISOString()})`,
-          );
+          // console.log(
+          //   `[useDashboardData] Evicting ${ic.id} (direct callid match) — ` +
+          //     `CDR ended ${directMatch.endTime} (ring started ${new Date(ic.waitingSince).toISOString()})`,
+          // );
           return false;
         }
 
@@ -231,11 +231,11 @@ export function useDashboardData({
             return Math.abs(startMs - ic.waitingSince) < RING_MATCH_WINDOW_MS;
           });
           if (fuzzyMatch && cdrEndedAfter(fuzzyMatch.endTime)) {
-            console.log(
-              `[useDashboardData] Evicting ${ic.id} (caller+time match) — ` +
-                `CDR ${fuzzyMatch.id} ended ${fuzzyMatch.endTime} ` +
-                `(caller ${ic.callerNumber}, ring started ${new Date(ic.waitingSince).toISOString()})`,
-            );
+            // console.log(
+            //   `[useDashboardData] Evicting ${ic.id} (caller+time match) — ` +
+            //     `CDR ${fuzzyMatch.id} ended ${fuzzyMatch.endTime} ` +
+            //     `(caller ${ic.callerNumber}, ring started ${new Date(ic.waitingSince).toISOString()})`,
+            // );
             return false;
           }
         }
@@ -256,16 +256,17 @@ export function useDashboardData({
       const fresh = prev.filter((c) => {
         const age = now - c.waitingSince;
         const keep = age < STALE_INCOMING_MS;
-        if (!keep)
-          console.log(
-            `[useDashboardData] Evicting stale call ${c.id}. Age: ${age}ms`,
-          );
+        if (!keep) {
+          // console.log(
+          //   `[useDashboardData] Evicting stale call ${c.id}. Age: ${age}ms`,
+          // );
+        }
         return keep;
       });
       if (fresh.length !== prev.length) {
-        console.log(
-          `[useDashboardData] Evicted ${prev.length - fresh.length} stale calls`,
-        );
+        // console.log(
+        //   `[useDashboardData] Evicted ${prev.length - fresh.length} stale calls`,
+        // );
       }
       return fresh.length === prev.length ? prev : fresh;
     });
@@ -283,9 +284,9 @@ export function useDashboardData({
         // Accept: +94/94 (Sri Lanka), +61/61 (Australia), or local 0… numbers.
         const effectiveNumber = call.callerNumber;
         if (!isValidCallerNumber(effectiveNumber)) {
-          console.log(
-            `[useDashboardData] Dropping call ${call.id} — unrecognised caller number: "${effectiveNumber}"`,
-          );
+          // console.log(
+          //   `[useDashboardData] Dropping call ${call.id} — unrecognised caller number: "${effectiveNumber}"`,
+          // );
           return;
         }
         setIncomingCalls((prev) => {

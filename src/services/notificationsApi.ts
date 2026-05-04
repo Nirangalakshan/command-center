@@ -226,11 +226,11 @@ export async function patchBookingAdditionalIssueCustomerResponse(
 
   if (!res.ok) {
     const detail = await readHttpErrorDetail(res);
-    console.warn(
-      "[patchBookingAdditionalIssueCustomerResponse] HTTP error",
-      res.status,
-      detail || "(no body)",
-    );
+    // console.warn(
+    //   "[patchBookingAdditionalIssueCustomerResponse] HTTP error",
+    //   res.status,
+    //   detail || "(no body)",
+    // );
     if (res.status === 409) {
       throw new Error(
         detail

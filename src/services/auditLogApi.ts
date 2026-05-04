@@ -13,6 +13,58 @@ export interface AuditLogEntry {
   details?: Record<string, any>;
 }
 
+/** Resource type recorded for support / BMS chat threads in {@link logSystemActivity}. */
+export const AUDIT_RESOURCE_BMS_CHAT = 'bms_chat';
+
+/** Emitted when an agent opens a BMS chat thread (read receipt posted). */
+export const AUDIT_ACTION_CHAT_VIEWED = 'chat_viewed';
+/** Emitted when an agent sends a message in a BMS chat. */
+export const AUDIT_ACTION_CHAT_REPLY = 'chat_reply';
+
+function parseAuditDetails(raw: unknown): Record<string, unknown> {
+  if (raw == null) return {};
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw) as unknown;
+      if (p && typeof p === 'object' && !Array.isArray(p)) {
+        return p as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+    return {};
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  return {};
+}
+
+/** Normalize DB / client variants so UI matching stays stable. */
+export function normalizeAuditLogEntry(row: AuditLogEntry): AuditLogEntry {
+  const details = parseAuditDetails(row.details) as Record<string, any>;
+  return {
+    ...row,
+    action: String(row.action ?? '').trim(),
+    resource_type: String(row.resource_type ?? '').trim(),
+    details,
+  };
+}
+
+function normKey(s: string | undefined | null): string {
+  return (s ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+}
+
+export function isAuditChatSupportEntry(log: AuditLogEntry): boolean {
+  const a = normKey(log.action);
+  const t = normKey(log.resource_type);
+  if (!['chat_viewed', 'chat_reply'].includes(a)) return false;
+  return t === 'bms_chat' || t === 'support_chat';
+}
+
 /**
  * Logs a system activity for auditing and role-based tracking purposes.
  * Saves the action along with the user's role and details to the Supabase database.
@@ -142,6 +194,7 @@ export async function fetchSystemAuditLogs(limit: number = 100): Promise<AuditLo
     // console.error('[AuditLog] Error fetching audit logs:', error);
     return [];
   }
-  
-  return data as AuditLogEntry[];
+
+  const rows = data as AuditLogEntry[];
+  return rows.map(normalizeAuditLogEntry);
 }

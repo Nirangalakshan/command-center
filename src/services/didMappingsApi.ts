@@ -89,8 +89,8 @@ export async function fetchBmsWorkshops(): Promise<
   const url = `${BASE_URL}/workshops`;
   const res = await fetch(url, { headers: await bmsHeaders() });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    console.error('[DID] fetchBmsWorkshops failed:', res.status, body);
+    await res.text().catch(() => '');
+    // console.error('[DID] fetchBmsWorkshops failed:', res.status);
     throw new Error(`Failed to load workshops (${res.status})`);
   }
   const json = await res.json();
@@ -118,15 +118,15 @@ export async function fetchBmsWorkshopBranches(
   ownerUid: string,
 ): Promise<BmsBranchOption[]> {
   const url = `${BASE_URL}/workshops/${encodeURIComponent(ownerUid)}`;
-  console.log('[DID] Fetching branches for workshop:', ownerUid, 'from:', url);
+  // console.log('[DID] Fetching branches for workshop:', ownerUid, 'from:', url);
   const res = await fetch(url, { headers: await bmsHeaders() });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    console.error('[DID] fetchBmsWorkshopBranches failed for', ownerUid, ':', res.status, body);
+    await res.text().catch(() => '');
+    // console.error('[DID] fetchBmsWorkshopBranches failed for', ownerUid, ':', res.status);
     throw new Error(`Failed to load branches (${res.status})`);
   }
   const json = await res.json();
-  console.log('[DID] fetchBmsWorkshopBranches raw response for', ownerUid, ':', json);
+  // console.log('[DID] fetchBmsWorkshopBranches raw response for', ownerUid, ':', json);
   const workshopName =
     extractWorkshopName(json?.workshop ?? {}) ||
     extractWorkshopName(json ?? {}) ||
@@ -136,7 +136,7 @@ export async function fetchBmsWorkshopBranches(
     : Array.isArray(json?.workshop?.branches)
       ? json.workshop.branches
       : [];
-  console.log('[DID] Parsed branches count for', ownerUid, ':', rawBranches.length);
+  // console.log('[DID] Parsed branches count for', ownerUid, ':', rawBranches.length);
   return rawBranches
     .map((b) => ({
       id: String(b.id ?? b.branchId ?? ''),
@@ -157,11 +157,11 @@ export async function fetchBmsWorkshopBranches(
  */
 export async function fetchBmsWorkshopOptions(): Promise<BmsWorkshopOption[]> {
   const url = `${BASE_URL}/workshops`;
-  console.log('[DID] fetchBmsWorkshopOptions — fetching from:', url);
+  // console.log('[DID] fetchBmsWorkshopOptions — fetching from:', url);
   const res = await fetch(url, { headers: await bmsHeaders() });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    console.error('[DID] fetchBmsWorkshopOptions failed:', res.status, body);
+    await res.text().catch(() => '');
+    // console.error('[DID] fetchBmsWorkshopOptions failed:', res.status);
     throw new Error(`Failed to load workshops (${res.status})`);
   }
   const json = await res.json();
@@ -173,7 +173,7 @@ export async function fetchBmsWorkshopOptions(): Promise<BmsWorkshopOption[]> {
       ? json.workshops
       : [];
 
-  console.log('[DID] Raw workshop entries:', rawList.length);
+  // console.log('[DID] Raw workshop entries:', rawList.length);
 
   const results: BmsWorkshopOption[] = rawList
     .map((entry) => {
@@ -202,12 +202,12 @@ export async function fetchBmsWorkshopOptions(): Promise<BmsWorkshopOption[]> {
     })
     .filter((w) => w.ownerUid);
 
-  console.log(
-    '[DID] Parsed workshops:',
-    results.length,
-    '— with branches:',
-    results.filter((w) => w.branches.length > 0).length,
-  );
+  // console.log(
+  //   '[DID] Parsed workshops:',
+  //   results.length,
+  //   '— with branches:',
+  //   results.filter((w) => w.branches.length > 0).length,
+  // );
 
   return results.sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -233,14 +233,14 @@ export async function fetchCallerNameByPhone(
 ): Promise<string | null> {
   const variants = buildPhoneLookupVariants(callerNumber);
   if (variants.length === 0) {
-    console.warn("[CallerName] Skipped — no phone variants", { callerNumber });
+    // console.warn("[CallerName] Skipped — no phone variants", { callerNumber });
     return null;
   }
 
-  console.log("[CallerName] Looking up", {
-    callerNumber,
-    variantCount: variants.length,
-  });
+  // console.log("[CallerName] Looking up", {
+  //   callerNumber,
+  //   variantCount: variants.length,
+  // });
   try {
     // For name-only lookups we query by phone number alone (no ownerUid filter).
     // The ownerUid passed from CallsTab is typically a Supabase tenant ID
@@ -249,7 +249,7 @@ export async function fetchCallerNameByPhone(
     // to identify the customer for display-name purposes.
     const bookings = await fetchBookingsByPhoneOnly(variants);
     if (bookings.length === 0) {
-      console.log("[CallerName] Result:", { callerNumber, name: "(no bookings)" });
+      // console.log("[CallerName] Result:", { callerNumber, name: "(no bookings)" });
       return null;
     }
 
@@ -270,10 +270,10 @@ export async function fetchCallerNameByPhone(
     });
 
     if (!bookingWithName) {
-      console.log("[CallerName] Result:", {
-        callerNumber,
-        name: "(not found)",
-      });
+      // console.log("[CallerName] Result:", {
+      //   callerNumber,
+      //   name: "(not found)",
+      // });
       return null;
     }
 
@@ -282,13 +282,13 @@ export async function fetchCallerNameByPhone(
       data.client ?? data.clientName ?? data.customerName ?? data.name ?? "",
     ).trim();
 
-    console.log("[CallerName] Result:", {
-      callerNumber,
-      name,
-    });
+    // console.log("[CallerName] Result:", {
+    //   callerNumber,
+    //   name,
+    // });
     return name;
-  } catch (err) {
-    console.error("[CallerName] Error:", err);
+  } catch {
+    // console.error("[CallerName] Error:", err);
     return null;
   }
 }

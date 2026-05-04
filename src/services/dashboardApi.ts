@@ -31,7 +31,7 @@ import {
   getGoLiveBlockers,
   getGoLiveWarnings,
 } from "@/utils/onboardingValidation";
-import { getBookings } from "./bookingsApi";
+import { getBookings, resolveBmsOwnerUidForTenant } from "./bookingsApi";
 import { logSystemActivity } from "./auditLogApi";
 import type { UserSession } from "./types";
 
@@ -798,7 +798,14 @@ export async function fetchLatestBookingByPhone(
 ): Promise<BookingRecord | null> {
   try {
     // Fetch latest bookings for this owner (and branch if provided) from Firebase
-    const bookings = await getBookings(tenantId, 50, branchId);
+    const ownerUid = await resolveBmsOwnerUidForTenant(tenantId);
+    if (!ownerUid) return null;
+    const bookings = await getBookings({
+      scope: "tenant",
+      ownerUid,
+      limit: 50,
+      branchId,
+    });
     const normalizedPhone = phone.replace(/\D/g, "");
 
     // Support Sri Lanka specific formatting cases for the local 10-digit number

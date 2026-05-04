@@ -96,11 +96,11 @@ export async function appendLinkusCallToSupabase(entry: Call): Promise<void> {
   const queueId = String(entry.queueId ?? '').trim();
   const callerNumber = String(entry.callerNumber ?? '').trim();
   if (!tenantId || !queueId || !callerNumber) {
-    console.warn('[linkusCallLog] Skipping Supabase insert (missing required fields)', {
-      tenantId,
-      queueId,
-      callerNumber,
-    });
+    // console.warn('[linkusCallLog] Skipping Supabase insert (missing required fields)', {
+    //   tenantId,
+    //   queueId,
+    //   callerNumber,
+    // });
     return;
   }
 
@@ -137,7 +137,7 @@ export async function appendLinkusCallToSupabase(entry: Call): Promise<void> {
       continue;
     }
 
-    console.error('[linkusCallLog] Failed to insert Linkus call in Supabase', error);
+    // console.error('[linkusCallLog] Failed to insert Linkus call in Supabase', error);
     return;
   }
 }

@@ -191,6 +191,8 @@ export interface UserSession {
   tenantId: string | null;
   allowedQueueIds: string[];
   displayName: string;
+  /** Sign-in email — used for Linkus before the agents roster is loaded. */
+  authEmail?: string | null;
 }
 
 export interface DashboardSummary {

@@ -706,12 +706,12 @@ export function SoftphoneWidget({
     // Keep digits and valid SIP dialing characters (+, *, #).
     const sanitized = dialInput.replace(/[^0-9+*#]/g, '');
     if (!sanitized) {
-      console.warn('[SoftphoneWidget] Dial input had no valid digits:', dialInput);
+      // console.warn('[SoftphoneWidget] Dial input had no valid digits:', dialInput);
       return;
     }
-    sdk.makeCall(sanitized).catch((err) =>
-      console.error('[SoftphoneWidget] Call failed:', err)
-    );
+    sdk.makeCall(sanitized).catch((_err) => {
+      // console.error('[SoftphoneWidget] Call failed:', _err);
+    });
     setDialInput('');
   }, [dialInput, sdk]);
 
@@ -720,9 +720,9 @@ export function SoftphoneWidget({
       if (!number) return;
       const sanitized = number.replace(/[^0-9+*#]/g, '');
       if (!sanitized) return;
-      sdk.makeCall(sanitized).catch((err) =>
-        console.error('[SoftphoneWidget] Directory call failed:', err)
-      );
+      sdk.makeCall(sanitized).catch((_err) => {
+        // console.error('[SoftphoneWidget] Directory call failed:', _err);
+      });
       // Jump back to the dialpad so the active-call card is visible.
       setTab('dialpad');
     },
@@ -737,9 +737,9 @@ export function SoftphoneWidget({
       if (!sanitized) return;
       setIsOpen(true);
       setTab('dialpad');
-      sdk.makeCall(sanitized).catch((err) =>
-        console.error('[SoftphoneWidget] External dial failed:', err)
-      );
+      sdk.makeCall(sanitized).catch((_err) => {
+        // console.error('[SoftphoneWidget] External dial failed:', _err);
+      });
     };
     window.addEventListener(
       SOFTPHONE_DIAL_REQUEST_EVENT,

@@ -23,6 +23,8 @@ interface DashboardSidebarProps {
   displayName: string;
   currentRole: UserRole;
   onSignOut: () => Promise<void>;
+  /** Unread BMS chat threads (agent inbox) — shows a green indicator on the Chat nav item. */
+  chatNavUnreadCount?: number;
 }
 
 const TAB_ITEMS = [
@@ -44,6 +46,7 @@ export default function DashboardSidebar({
   displayName,
   currentRole,
   onSignOut,
+  chatNavUnreadCount = 0,
 }: DashboardSidebarProps) {
   const [open, setOpen] = useState(true);
 
@@ -77,6 +80,7 @@ export default function DashboardSidebar({
           <div className="space-y-0.5">
             {visibleTabs.map(({ key, label, icon: Icon }) => {
               const active = selectedTab === key;
+              const chatUnread = key === 'chat' && chatNavUnreadCount > 0;
               return (
                 <button
                   key={key}
@@ -88,8 +92,25 @@ export default function DashboardSidebar({
                       : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
                   }`}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span>{label}</span>
+                  <span className="relative shrink-0">
+                    <Icon className="h-4 w-4" />
+                    {chatUnread && (
+                      <span
+                        className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.95)] ring-2 ring-neutral-900"
+                        title={`${chatNavUnreadCount} unread`}
+                        aria-hidden
+                      />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+                  {chatUnread && (
+                    <span
+                      className="shrink-0 rounded-full bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-bold leading-none text-neutral-950"
+                      aria-label={`${chatNavUnreadCount} unread chats`}
+                    >
+                      {chatNavUnreadCount > 99 ? '99+' : chatNavUnreadCount}
+                    </span>
+                  )}
                 </button>
               );
             })}

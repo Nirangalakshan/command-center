@@ -326,7 +326,7 @@ function NotificationModal({
     } catch (e) {
       const message =
         e instanceof Error ? e.message : "Could not save accept / reject.";
-      console.error("[handleAdditionalIssueDecision]", e);
+      // console.error("[handleAdditionalIssueDecision]", e);
       toast({
         variant: "destructive",
         title: "Could not update quote",
