@@ -27,7 +27,7 @@ export function AttendanceTab({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Attendance</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Command center agents only (workshop agents are not listed).
+            Command center agents only. Pick any day (up to today) to review attendance.
           </p>
         </div>
         <SuperAdminAttendanceBoard agents={agents} tenants={tenants} now={now} />

@@ -150,6 +150,98 @@ export function computeWorkedAndBreakMs(
   return { workedMs: worked, breakMs: onBreak };
 }
 
+/** One row per clock_in → clock_out (or open shift to `nowMs`). */
+export type AttendanceDaySegment = {
+  clockInMs: number;
+  clockOutMs: number | null;
+  breakMs: number;
+  workedMs: number;
+};
+
+/**
+ * Build shift segments for a single day from events. Each segment starts at `clock_in` and ends at
+ * `clock_out`, or is still open (clockOutMs null) until `nowMs`.
+ */
+export function buildAttendanceDaySegments(
+  events: Pick<AgentAttendanceEventRow, "event_type" | "occurred_at">[],
+  nowMs: number,
+): AttendanceDaySegment[] {
+  const sorted = [...events].sort(
+    (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
+  );
+  const segments: AttendanceDaySegment[] = [];
+  let shiftStart: number | null = null;
+  let breakAccum = 0;
+  let breakOpen: number | null = null;
+
+  const pushOpenShiftTo = (endT: number) => {
+    if (shiftStart === null) return;
+    let b = breakAccum;
+    if (breakOpen !== null) b += endT - breakOpen;
+    const span = endT - shiftStart;
+    const worked = Math.max(0, span - b);
+    segments.push({
+      clockInMs: shiftStart,
+      clockOutMs: null,
+      breakMs: b,
+      workedMs: worked,
+    });
+  };
+
+  const closeShiftAt = (endT: number) => {
+    if (shiftStart === null) return;
+    let b = breakAccum;
+    if (breakOpen !== null) {
+      b += endT - breakOpen;
+      breakOpen = null;
+    }
+    const span = endT - shiftStart;
+    const worked = Math.max(0, span - b);
+    segments.push({
+      clockInMs: shiftStart,
+      clockOutMs: endT,
+      breakMs: b,
+      workedMs: worked,
+    });
+    shiftStart = null;
+    breakAccum = 0;
+  };
+
+  for (const e of sorted) {
+    const t = new Date(e.occurred_at).getTime();
+    switch (e.event_type) {
+      case "clock_in":
+        if (shiftStart !== null) {
+          closeShiftAt(t);
+        }
+        shiftStart = t;
+        breakAccum = 0;
+        breakOpen = null;
+        break;
+      case "break_start":
+        if (shiftStart !== null && breakOpen === null) breakOpen = t;
+        break;
+      case "break_end":
+        if (breakOpen !== null) {
+          breakAccum += t - breakOpen;
+          breakOpen = null;
+        }
+        break;
+      case "clock_out":
+        closeShiftAt(t);
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (shiftStart !== null) {
+    pushOpenShiftTo(nowMs);
+  }
+
+  return segments;
+}
+
 export async function fetchAttendanceEventsForDay(
   userId: string,
   day: Date,

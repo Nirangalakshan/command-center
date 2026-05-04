@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Agent, Tenant } from "@/services/types";
 import { formatDuration } from "@/utils/formatters";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveDot } from "@/components/dashboard/LiveDot";
 import {
@@ -12,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  buildAttendanceDaySegments,
   computeWorkedAndBreakMs,
   deriveAttendanceShiftStatus,
   fetchAllAttendanceEventsForDay,
@@ -19,8 +21,8 @@ import {
   subscribeToAllAttendanceInserts,
   type AgentAttendanceEventRow,
 } from "@/services/attendanceApi";
-import { format } from "date-fns";
-import { Users } from "lucide-react";
+import { format, startOfDay, addDays, endOfDay, parse } from "date-fns";
+import { ChevronLeft, ChevronRight, Users } from "lucide-react";
 
 interface SuperAdminAttendanceBoardProps {
   agents: Agent[];
@@ -59,8 +61,12 @@ export function SuperAdminAttendanceBoard({
   const [events, setEvents] = useState<AgentAttendanceEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewDay, setViewDay] = useState(() => startOfDay(new Date()));
 
-  const dayKey = format(new Date(now), "yyyy-MM-dd");
+  const viewDayKey = format(viewDay, "yyyy-MM-dd");
+  const todayKey = format(new Date(now), "yyyy-MM-dd");
+  const isViewingToday = viewDayKey === todayKey;
+  const segmentNowMs = isViewingToday ? now : endOfDay(viewDay).getTime();
 
   const commandCentreAgents = useMemo(
     () => agents.filter(isCommandCentreAgent),
@@ -79,24 +85,24 @@ export function SuperAdminAttendanceBoard({
     setLoading(true);
     setError(null);
     try {
-      const rows = await fetchAllAttendanceEventsForDay(new Date());
+      const rows = await fetchAllAttendanceEventsForDay(viewDay);
       setEvents(rows);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not load attendance.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [viewDay]);
 
   useEffect(() => {
     void reload();
-  }, [reload, dayKey]);
+  }, [reload, viewDayKey]);
 
   useEffect(() => {
     return subscribeToAllAttendanceInserts((row) => {
       if (!commandCentreUserIds.has(row.user_id)) return;
       const rowDay = format(new Date(row.occurred_at), "yyyy-MM-dd");
-      if (rowDay !== dayKey) return;
+      if (rowDay !== viewDayKey) return;
       setEvents((prev) => {
         if (prev.some((p) => p.id === row.id)) return prev;
         return [...prev, row].sort(
@@ -104,9 +110,20 @@ export function SuperAdminAttendanceBoard({
         );
       });
     });
-  }, [dayKey, commandCentreUserIds]);
+  }, [viewDayKey, commandCentreUserIds]);
 
-  const rows = useMemo(() => {
+  type AgentAttendanceRow = {
+    userId: string;
+    name: string;
+    tenantId: string | null;
+    segments: ReturnType<typeof buildAttendanceDaySegments>;
+    status: string;
+    workedMs: number;
+    breakMs: number;
+    lastAt: number;
+  };
+
+  const rows: AgentAttendanceRow[] = useMemo(() => {
     const byUser = new Map<string, AgentAttendanceEventRow[]>();
     for (const e of events) {
       if (!commandCentreUserIds.has(e.user_id)) continue;
@@ -123,8 +140,9 @@ export function SuperAdminAttendanceBoard({
         const sorted = [...evs].sort(
           (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
         );
+        const segments = buildAttendanceDaySegments(sorted, segmentNowMs);
         const { status } = deriveAttendanceShiftStatus(sorted);
-        const { workedMs, breakMs } = computeWorkedAndBreakMs(sorted, now);
+        const { workedMs, breakMs } = computeWorkedAndBreakMs(sorted, segmentNowMs);
         const last = sorted[sorted.length - 1];
         const agentRow = commandCentreAgents.find((a) => a.userId === userId);
         const tenantId =
@@ -136,6 +154,7 @@ export function SuperAdminAttendanceBoard({
           userId,
           name: displayNameForUser(userId, sorted, commandCentreAgents),
           tenantId,
+          segments,
           status,
           workedMs,
           breakMs,
@@ -148,21 +167,75 @@ export function SuperAdminAttendanceBoard({
         if (d !== 0) return d;
         return b.lastAt - a.lastAt;
       });
-  }, [events, commandCentreAgents, commandCentreUserIds, now]);
+  }, [events, commandCentreAgents, commandCentreUserIds, segmentNowMs]);
 
   return (
     <Card className="border-violet-200/60 bg-gradient-to-br from-white via-violet-50/25 to-white shadow-sm">
-      <CardHeader className="border-b border-border/60 pb-4">
-        <CardTitle className="flex flex-wrap items-center gap-2 text-base font-semibold">
-          <Users className="h-5 w-5 text-violet-600" />
-          Agent attendance — Command center
-          <span className="font-mono text-xs font-normal uppercase tracking-[0.2em] text-muted-foreground">
-            {format(new Date(now), "EEE d MMM")}
+      <CardHeader className="border-b border-border/60 space-y-4 pb-4">
+        <div>
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base font-semibold">
+            <Users className="h-5 w-5 text-violet-600" />
+            Agent attendance — Command center
+          </CardTitle>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Workshop agents are excluded.
+            {isViewingToday
+              ? " Live updates when command center agents clock in, break, or clock out."
+              : " Showing the selected day (not live)."}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9"
+            aria-label="Previous day"
+            onClick={() => setViewDay((d) => startOfDay(addDays(d, -1)))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="font-mono text-sm font-semibold text-slate-900">
+            {format(viewDay, "EEE d MMM yyyy")}
           </span>
-        </CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Workshop agents are excluded. Updates in real time when command center agents clock in, break, or clock out.
-        </p>
+          <input
+            type="date"
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm"
+            value={viewDayKey}
+            max={todayKey}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) return;
+              setViewDay(startOfDay(parse(v, "yyyy-MM-dd", new Date())));
+            }}
+            aria-label="Pick a date"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9"
+            aria-label="Next day"
+            disabled={viewDayKey >= todayKey}
+            onClick={() => {
+              if (viewDayKey >= todayKey) return;
+              setViewDay((d) => startOfDay(addDays(d, 1)));
+            }}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          {!isViewingToday && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-9"
+              onClick={() => setViewDay(startOfDay(new Date(now)))}
+            >
+              Today
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="p-0 sm:p-4">
         {error && (
@@ -182,6 +255,8 @@ export function SuperAdminAttendanceBoard({
                 <TableRow>
                   <TableHead>Agent</TableHead>
                   <TableHead>Tenant</TableHead>
+                  <TableHead className="whitespace-nowrap">Clock in</TableHead>
+                  <TableHead className="whitespace-nowrap">Clock out</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Worked</TableHead>
                   <TableHead className="text-right">Break</TableHead>
@@ -194,17 +269,65 @@ export function SuperAdminAttendanceBoard({
                     <TableCell className="text-muted-foreground">
                       {tenantLabel(r.tenantId, tenants)}
                     </TableCell>
+                    <TableCell className="align-top text-xs tabular-nums">
+                      {r.segments.length === 0 ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {r.segments.map((s, i) => (
+                            <span key={i}>
+                              {format(new Date(s.clockInMs), "HH:mm")}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="align-top text-xs tabular-nums">
+                      {r.segments.length === 0 ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {r.segments.map((s, i) => (
+                            <span
+                              key={i}
+                              className={
+                                s.clockOutMs == null ? "text-amber-700" : ""
+                              }
+                            >
+                              {s.clockOutMs == null
+                                ? "Open"
+                                : format(new Date(s.clockOutMs), "HH:mm")}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <span className="inline-flex items-center gap-1.5 text-sm">
-                        <LiveDot
-                          color={
-                            r.status === "working"
-                              ? "var(--cc-color-green)"
-                              : r.status === "on_break"
-                                ? "var(--cc-color-amber)"
-                                : "#94a3b8"
-                          }
-                        />
+                        {isViewingToday ? (
+                          <LiveDot
+                            color={
+                              r.status === "working"
+                                ? "var(--cc-color-green)"
+                                : r.status === "on_break"
+                                  ? "var(--cc-color-amber)"
+                                  : "#94a3b8"
+                            }
+                          />
+                        ) : (
+                          <span
+                            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor:
+                                r.status === "working"
+                                  ? "var(--cc-color-green)"
+                                  : r.status === "on_break"
+                                    ? "var(--cc-color-amber)"
+                                    : "#94a3b8",
+                            }}
+                            aria-hidden
+                          />
+                        )}
                         {r.status === "working"
                           ? "Working"
                           : r.status === "on_break"

@@ -3,8 +3,17 @@ import type { UserSession } from "@/services/types";
 import { formatDuration } from "@/utils/formatters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { LiveDot } from "@/components/dashboard/LiveDot";
 import {
+  buildAttendanceDaySegments,
   computeWorkedAndBreakMs,
   deriveAttendanceShiftStatus,
   fetchAttendanceEventsForDay,
@@ -14,8 +23,8 @@ import {
   type AttendanceEventType,
 } from "@/services/attendanceApi";
 import { supabase } from "@/integrations/supabase/client";
-import { format } from "date-fns";
-import { Coffee, LogIn, LogOut, Timer } from "lucide-react";
+import { format, startOfDay, addDays, endOfDay, parse } from "date-fns";
+import { ChevronLeft, ChevronRight, Coffee, LogIn, LogOut, Timer } from "lucide-react";
 
 interface AgentAttendanceCardProps {
   session: UserSession;
@@ -50,8 +59,13 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [supabaseUserId, setSupabaseUserId] = useState<string | null | undefined>(undefined);
+  const [viewDay, setViewDay] = useState(() => startOfDay(new Date()));
 
-  const dayKey = format(new Date(now), "yyyy-MM-dd");
+  const viewDayKey = format(viewDay, "yyyy-MM-dd");
+  const todayKey = format(new Date(now), "yyyy-MM-dd");
+  const isViewingToday = viewDayKey === todayKey;
+  /** For past days, cap “open” shift math at end of that local day. */
+  const segmentNowMs = isViewingToday ? now : endOfDay(viewDay).getTime();
 
   useEffect(() => {
     void supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -74,22 +88,25 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
     setLoading(true);
     setError(null);
     try {
-      const rows = await fetchAttendanceEventsForDay(supabaseUserId, new Date());
+      const rows = await fetchAttendanceEventsForDay(supabaseUserId, viewDay);
       setEvents(rows);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not load attendance.");
     } finally {
       setLoading(false);
     }
-  }, [supabaseUserId]);
+  }, [supabaseUserId, viewDay]);
 
   useEffect(() => {
     void reload();
-  }, [reload, dayKey]);
+  }, [reload, viewDayKey]);
 
   useEffect(() => {
     if (!supabaseUserId) return;
+    const vk = viewDayKey;
     return subscribeToMyAttendanceEvents(supabaseUserId, (row) => {
+      const rowDay = format(new Date(row.occurred_at), "yyyy-MM-dd");
+      if (rowDay !== vk) return;
       setEvents((prev) => {
         if (prev.some((p) => p.id === row.id)) return prev;
         return [...prev, row].sort(
@@ -97,7 +114,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
         );
       });
     });
-  }, [supabaseUserId]);
+  }, [supabaseUserId, viewDayKey]);
 
   const { status, shiftStartedAt, breakStartedAt } = useMemo(
     () => deriveAttendanceShiftStatus(events),
@@ -105,8 +122,13 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
   );
 
   const { workedMs, breakMs } = useMemo(
-    () => computeWorkedAndBreakMs(events, now),
-    [events, now],
+    () => computeWorkedAndBreakMs(events, segmentNowMs),
+    [events, segmentNowMs],
+  );
+
+  const segments = useMemo(
+    () => buildAttendanceDaySegments(events, segmentNowMs),
+    [events, segmentNowMs],
   );
 
   if (supabaseUserId === undefined) {
@@ -190,25 +212,81 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
   return (
     <Card className="cc-fade-in border-border/80 bg-gradient-to-br from-white via-white to-emerald-50/30 shadow-sm">
       <CardHeader className="gap-3 border-b border-border/70 pb-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-emerald-700">
-              Attendance
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-emerald-700">
+                Attendance
+              </div>
+              <CardTitle className="mt-1 flex items-center gap-2 text-lg font-semibold tracking-tight text-slate-950">
+                <Timer className="h-5 w-5 shrink-0 text-emerald-600" />
+                Shifts by day
+              </CardTitle>
             </div>
-            <CardTitle className="mt-1 flex items-center gap-2 text-lg font-semibold tracking-tight text-slate-950">
-              <Timer className="h-5 w-5 text-emerald-600" />
-              Today · {format(new Date(now), "EEE d MMM")}
-            </CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                aria-label="Previous day"
+                onClick={() => setViewDay((d) => startOfDay(addDays(d, -1)))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="font-mono text-sm font-semibold text-slate-900">
+                  {format(viewDay, "EEE d MMM yyyy")}
+                </span>
+                <input
+                  type="date"
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm"
+                  value={viewDayKey}
+                  max={todayKey}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    setViewDay(startOfDay(parse(v, "yyyy-MM-dd", new Date())));
+                  }}
+                  aria-label="Pick a date"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                aria-label="Next day"
+                disabled={viewDayKey >= todayKey}
+                onClick={() => {
+                  if (viewDayKey >= todayKey) return;
+                  setViewDay((d) => startOfDay(addDays(d, 1)));
+                }}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              {!isViewingToday && (
+                <Button type="button" variant="secondary" size="sm" className="h-9" onClick={() => setViewDay(startOfDay(new Date(now)))}>
+                  Today
+                </Button>
+              )}
+            </div>
           </div>
-          <div
-            className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1.5 text-sm font-medium ring-1 ring-inset ring-border/60"
-            style={{ color: status === "off_clock" ? "#475569" : undefined }}
-          >
-            <LiveDot color={statusDotColor(status)} />
-            {statusLabel(status)}
-          </div>
+          {isViewingToday ? (
+            <div
+              className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1.5 text-sm font-medium ring-1 ring-inset ring-border/60"
+              style={{ color: status === "off_clock" ? "#475569" : undefined }}
+            >
+              <LiveDot color={statusDotColor(status)} />
+              {statusLabel(status)}
+            </div>
+          ) : (
+            <div className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border/60">
+              Viewing history
+            </div>
+          )}
         </div>
-        {(shiftStartedAt || breakStartedAt) && (
+        {isViewingToday && (shiftStartedAt || breakStartedAt) && (
           <div className="font-mono text-xs text-muted-foreground">
             {status === "on_break" && breakStartedAt
               ? `Break since ${format(new Date(breakStartedAt), "HH:mm")}`
@@ -245,13 +323,19 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
           </div>
         </div>
 
+        {!isViewingToday && (
+          <p className="text-xs text-muted-foreground">
+            Clock in / out and breaks are only available when today is selected.
+          </p>
+        )}
+
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
             className="gap-1.5"
             disabled={
-              submitting || loading || status === "working" || status === "on_break"
+              !isViewingToday || submitting || loading || status === "working" || status === "on_break"
             }
             onClick={onClockIn}
           >
@@ -263,7 +347,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
             size="sm"
             variant="secondary"
             className="gap-1.5"
-            disabled={submitting || loading || status !== "working"}
+            disabled={!isViewingToday || submitting || loading || status !== "working"}
             onClick={onTakeBreak}
           >
             <Coffee className="h-4 w-4" />
@@ -274,7 +358,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
             size="sm"
             variant="secondary"
             className="gap-1.5"
-            disabled={submitting || loading || status !== "on_break"}
+            disabled={!isViewingToday || submitting || loading || status !== "on_break"}
             onClick={onEndBreak}
           >
             End break
@@ -284,7 +368,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
             size="sm"
             variant="outline"
             className="gap-1.5"
-            disabled={submitting || loading || status === "off_clock"}
+            disabled={!isViewingToday || submitting || loading || status === "off_clock"}
             onClick={() => void onClockOut()}
           >
             <LogOut className="h-4 w-4" />
@@ -292,30 +376,80 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
           </Button>
         </div>
 
-        {events.length > 0 && (
-          <div className="rounded-xl border border-dashed border-border/80 bg-slate-50/50 p-3">
+        <div className="rounded-xl border border-border/80 bg-white shadow-sm">
+          <div className="border-b border-border/60 bg-slate-50/80 px-4 py-2.5">
             <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Log
+              Shifts · {format(viewDay, "d MMM yyyy")}
             </div>
-            <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto text-xs text-slate-700">
-              {[...events]
-                .sort(
-                  (a, b) =>
-                    new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
-                )
-                .map((e) => (
-                  <li key={e.id} className="flex justify-between gap-2 font-mono">
-                    <span className="text-muted-foreground">
-                      {format(new Date(e.occurred_at), "HH:mm:ss")}
-                    </span>
-                    <span className="font-medium capitalize">
-                      {e.event_type.replace(/_/g, " ")}
-                    </span>
-                  </li>
-                ))}
-            </ul>
           </div>
-        )}
+          {loading && events.length === 0 ? (
+            <p className="p-4 text-center text-sm text-muted-foreground">Loading…</p>
+          ) : segments.length === 0 ? (
+            <p className="p-4 text-center text-sm text-muted-foreground">
+              {isViewingToday
+                ? "Clock in to see clock in, clock out, breaks, and working hours in the table below."
+                : "No attendance recorded for this day."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-10 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      #
+                    </TableHead>
+                    <TableHead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Clock in
+                    </TableHead>
+                    <TableHead className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Clock out
+                    </TableHead>
+                    <TableHead className="text-right font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Break
+                    </TableHead>
+                    <TableHead className="text-right font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Working hours
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {segments.map((seg, i) => (
+                    <TableRow key={`${seg.clockInMs}-${i}`}>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{i + 1}</TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {format(new Date(seg.clockInMs), "HH:mm")}
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {seg.clockOutMs == null ? (
+                          <span className="text-amber-700">Open</span>
+                        ) : (
+                          format(new Date(seg.clockOutMs), "HH:mm")
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-amber-800/90">
+                        {seg.breakMs > 0 ? formatDuration(seg.breakMs) : "0:00"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm font-medium text-emerald-800">
+                        {seg.workedMs > 0 ? formatDuration(seg.workedMs) : "0:00"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="border-t-2 border-border/80 bg-slate-50/60 font-medium hover:bg-slate-50/60">
+                    <TableCell colSpan={3} className="text-right text-sm text-slate-700">
+                      Totals · {format(viewDay, "d MMM")}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-amber-800/90">
+                      {breakMs > 0 ? formatDuration(breakMs) : "0:00"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-emerald-800">
+                      {workedMs > 0 ? formatDuration(workedMs) : "0:00"}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
