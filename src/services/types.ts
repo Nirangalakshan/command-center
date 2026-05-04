@@ -442,6 +442,8 @@ export interface Permissions {
   canApproveGoLive: boolean;
   canRegressStage: boolean;
   canViewShiftPanel: boolean;
+  /** Clock in/out & breaks (agents); live roster (super-admin). */
+  canViewAttendanceTab: boolean;
   canOnboardAgents: boolean;
   canViewAgentOnboarding: boolean;
   canViewAgentOnboardingTab: boolean;

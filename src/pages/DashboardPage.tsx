@@ -16,6 +16,7 @@ import { CallsTab } from '@/tabs/CallsTab';
 import { SipLinesTab } from '@/tabs/SipLinesTab';
 import { ClientsTab } from '@/tabs/ClientsTab';
 import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
+import { AttendanceTab } from '@/tabs/AttendanceTab';
 import { AuditLogsTab } from '@/tabs/AuditLogsTab';
 import { ChatTab } from '@/tabs/ChatTab';
 import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
@@ -62,6 +63,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'clients') return permissions.canViewClientsTab;
       if (key === 'did-mappings') return permissions.canManageDIDMappings;
       if (key === 'audit-logs') return permissions.canViewAuditLogs;
+      if (key === 'attendance') return permissions.canViewAttendanceTab;
       return false;
     };
 
@@ -273,6 +275,15 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   session={session}
                   agentGroups={d.agentGroups}
                   incomingCalls={d.incomingCalls}
+                />
+              )}
+              {d.selectedTab === 'attendance' && (
+                <AttendanceTab
+                  session={session}
+                  permissions={permissions}
+                  agents={d.agents}
+                  tenants={d.tenants}
+                  now={d.now}
                 />
               )}
               {d.selectedTab === 'agents' && (

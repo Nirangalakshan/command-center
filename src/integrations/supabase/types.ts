@@ -14,6 +14,44 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_attendance_events: {
+        Row: {
+          agent_display_name: string | null
+          created_at: string
+          event_type: string
+          id: string
+          occurred_at: string
+          tenant_id: string | null
+          user_id: string
+        }
+        Insert: {
+          agent_display_name?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          occurred_at?: string
+          tenant_id?: string | null
+          user_id: string
+        }
+        Update: {
+          agent_display_name?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          occurred_at?: string
+          tenant_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_attendance_events_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_groups: {
         Row: {
           agent_ids: string[]

@@ -29,7 +29,6 @@ import { QueueSummaryCard } from "@/components/dashboard/QueueSummaryCard";
 import { LiveDot } from "@/components/dashboard/LiveDot";
 import { LoadingSkeleton } from "@/components/dashboard/LoadingSkeleton";
 import { EmptyState } from "@/components/dashboard/EmptyState";
-import { AgentShiftPanel } from "@/components/dashboard/AgentShiftPanel";
 import { NotificationsCard } from "@/tabs/NotificationsCard";
 import { ResultBadge } from "@/components/dashboard/ResultBadge";
 import { Badge } from "@/components/ui/badge";

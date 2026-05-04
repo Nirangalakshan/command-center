@@ -25,6 +25,7 @@ const EMPTY_PERMISSIONS: Permissions = {
   canViewOverviewTab: false, canViewSipTab: false, canViewClientsTab: false,
   canSignUpClients: false, canAdvanceOnboarding: false, canEditClientDetails: false,
   canApproveGoLive: false, canRegressStage: false, canViewShiftPanel: false,
+  canViewAttendanceTab: false,
   canOnboardAgents: false, canViewAgentOnboarding: false,   canViewAgentOnboardingTab: false,
   canViewAuditLogs: false,
   canManageAgents: false,
@@ -107,6 +108,20 @@ export function useAuth(): AuthState {
         try {
           const agentDoc = await getDoc(doc(db, 'call_center_agents', firebaseUser.uid));
           if (agentDoc.exists()) {
+            // Dual-login agents: Supabase drives dashboard identity (userId, agents row).
+            // Firebase is for workshop/BMS — do not replace session with Firebase UID.
+            let sb = (await supabase.auth.getSession()).data.session;
+            if (!sb?.user) {
+              await new Promise((r) => setTimeout(r, 120));
+              sb = (await supabase.auth.getSession()).data.session;
+            }
+            if (sb?.user) {
+              setUser(sb.user);
+              setTimeout(() => loadUserSession(sb.user), 0);
+              setLoading(false);
+              return;
+            }
+
             setUser(firebaseUser);
             const data = agentDoc.data();
             const userSession: UserSession = {

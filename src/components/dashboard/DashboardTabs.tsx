@@ -19,6 +19,7 @@ export function DashboardTabs({ tabs, selectedTab, onSelect, permissions }: Dash
     if (t.key === 'bookings') return permissions.canViewBookingsTab;
     if (t.key === 'sip') return permissions.canViewSipTab;
     if (t.key === 'clients') return permissions.canViewClientsTab;
+    if (t.key === 'attendance') return permissions.canViewAttendanceTab;
     return false;
   });
 

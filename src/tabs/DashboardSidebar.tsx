@@ -4,6 +4,7 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  Clock,
   LayoutDashboard,
   LogOut,
   Phone,
@@ -29,6 +30,7 @@ interface DashboardSidebarProps {
 
 const TAB_ITEMS = [
   { key: 'overview',          label: 'Overview',          icon: LayoutDashboard, perm: 'canViewOverviewTab' },
+  { key: 'attendance',        label: 'Attendance',        icon: Clock,            perm: 'canViewAttendanceTab' },
   { key: 'agents',            label: 'Agents',             icon: Users,           perm: 'canViewAgentsTab' },
   { key: 'agent-onboarding',  label: 'Agent Onboarding',   icon: UserPlus,        perm: 'canViewAgentOnboardingTab' },
   { key: 'chat',              label: 'Chat',               icon: MessageSquare,   perm: 'canViewChatTab' },

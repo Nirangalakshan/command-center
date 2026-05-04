@@ -31,6 +31,7 @@ export function derivePermissions(session: UserSession): Permissions {
     canApproveGoLive: isSuperAdmin,
     canRegressStage: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewShiftPanel: isAgent,
+    canViewAttendanceTab: isSuperAdmin || isAgent,
     canOnboardAgents: isSuperAdmin || isClientAdmin,
     canViewAgentOnboarding: isSuperAdmin || isClientAdmin || isSupervisor,
     canViewAgentOnboardingTab: isSuperAdmin || isClientAdmin || isSupervisor,

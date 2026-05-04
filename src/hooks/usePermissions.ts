@@ -24,6 +24,7 @@ export function usePermissions(session: UserSession | null): Permissions {
         canApproveGoLive: false,
         canRegressStage: false,
         canViewShiftPanel: false,
+        canViewAttendanceTab: false,
         canOnboardAgents: false,
         canViewAgentOnboarding: false,
         canViewAgentOnboardingTab: false,
