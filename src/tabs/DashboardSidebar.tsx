@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
   Activity,
   BookOpen,
+  CalendarClock,
+  CalendarOff,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -28,18 +31,41 @@ interface DashboardSidebarProps {
   chatNavUnreadCount?: number;
 }
 
-const TAB_ITEMS = [
-  { key: 'overview',          label: 'Overview',          icon: LayoutDashboard, perm: 'canViewOverviewTab' },
-  { key: 'attendance',        label: 'Attendance',        icon: Clock,            perm: 'canViewAttendanceTab' },
-  { key: 'agents',            label: 'Agents',             icon: Users,           perm: 'canViewAgentsTab' },
-  { key: 'agent-onboarding',  label: 'Agent Onboarding',   icon: UserPlus,        perm: 'canViewAgentOnboardingTab' },
-  { key: 'chat',              label: 'Chat',               icon: MessageSquare,   perm: 'canViewChatTab' },
-  { key: 'calls',             label: 'Calls',              icon: Phone,           perm: 'canViewCallsTab' },
-  { key: 'sip',               label: 'SIP Lines',          icon: Radio,           perm: 'canViewSipTab' },
-  { key: 'clients',           label: 'Clients',            icon: BookOpen,        perm: 'canViewClientsTab' },
-  { key: 'did-mappings',      label: 'DID Mappings',       icon: PhoneForwarded,  perm: 'canManageDIDMappings' },
-  { key: 'audit-logs',        label: 'Audit Logs',         icon: History,         perm: 'canViewAuditLogs' },
-] as const;
+type Perm = keyof Permissions;
+
+type SidebarLeaf = { kind: 'item'; key: string; label: string; icon: LucideIcon; perm: Perm };
+
+type SidebarGroup = {
+  kind: 'group';
+  label: string;
+  icon: LucideIcon;
+  perm: Perm;
+  items: { key: string; label: string; icon: LucideIcon }[];
+};
+
+type SidebarEntry = SidebarLeaf | SidebarGroup;
+
+const NAV_ITEMS: SidebarEntry[] = [
+  { kind: 'item', key: 'overview', label: 'Overview', icon: LayoutDashboard, perm: 'canViewOverviewTab' },
+  {
+    kind: 'group',
+    label: 'Attendance',
+    icon: Clock,
+    perm: 'canViewAttendanceTab',
+    items: [
+      { key: 'attendance', label: 'Time tracking', icon: CalendarClock },
+      { key: 'leave-requests', label: 'Leave requests', icon: CalendarOff },
+    ],
+  },
+  { kind: 'item', key: 'agents', label: 'Agents', icon: Users, perm: 'canViewAgentsTab' },
+  { kind: 'item', key: 'agent-onboarding', label: 'Agent Onboarding', icon: UserPlus, perm: 'canViewAgentOnboardingTab' },
+  { kind: 'item', key: 'chat', label: 'Chat', icon: MessageSquare, perm: 'canViewChatTab' },
+  { kind: 'item', key: 'calls', label: 'Calls', icon: Phone, perm: 'canViewCallsTab' },
+  { kind: 'item', key: 'sip', label: 'SIP Lines', icon: Radio, perm: 'canViewSipTab' },
+  { kind: 'item', key: 'clients', label: 'Clients', icon: BookOpen, perm: 'canViewClientsTab' },
+  { kind: 'item', key: 'did-mappings', label: 'DID Mappings', icon: PhoneForwarded, perm: 'canManageDIDMappings' },
+  { kind: 'item', key: 'audit-logs', label: 'Audit Logs', icon: History, perm: 'canViewAuditLogs' },
+];
 
 export default function DashboardSidebar({
   selectedTab,
@@ -51,11 +77,23 @@ export default function DashboardSidebar({
   chatNavUnreadCount = 0,
 }: DashboardSidebarProps) {
   const [open, setOpen] = useState(true);
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set<string>());
 
-  const visibleTabs = TAB_ITEMS.filter((t) => {
-    if (!t.perm) return true;
-    return permissions[t.perm as keyof Permissions];
-  });
+  useEffect(() => {
+    for (const entry of NAV_ITEMS) {
+      if (entry.kind === 'group' && entry.items.some((i) => i.key === selectedTab)) {
+        setExpandedGroups((prev) => {
+          if (prev.has(entry.label)) return prev;
+          const next = new Set(prev);
+          next.add(entry.label);
+          return next;
+        });
+        break;
+      }
+    }
+  }, [selectedTab]);
+
+  const visibleNav = NAV_ITEMS.filter((entry) => permissions[entry.perm]);
 
   return (
     <nav className="hidden md:flex md:w-64 md:h-full bg-neutral-900 flex-col flex-shrink-0">
@@ -80,40 +118,100 @@ export default function DashboardSidebar({
 
         {open && (
           <div className="space-y-0.5">
-            {visibleTabs.map(({ key, label, icon: Icon }) => {
-              const active = selectedTab === key;
-              const chatUnread = key === 'chat' && chatNavUnreadCount > 0;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => onSelect(key)}
-                  className={`ml-3 w-[calc(100%-0.75rem)] flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
-                    active
-                      ? 'bg-neutral-800 text-white'
-                      : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
-                  }`}
-                >
-                  <span className="relative shrink-0">
-                    <Icon className="h-4 w-4" />
+            {visibleNav.map((entry) => {
+              if (entry.kind === 'item') {
+                const { key, label, icon: Icon } = entry;
+                const active = selectedTab === key;
+                const chatUnread = key === 'chat' && chatNavUnreadCount > 0;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => onSelect(key)}
+                    className={`ml-3 w-[calc(100%-0.75rem)] flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                      active
+                        ? 'bg-neutral-800 text-white'
+                        : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
+                    }`}
+                  >
+                    <span className="relative shrink-0">
+                      <Icon className="h-4 w-4" />
+                      {chatUnread && (
+                        <span
+                          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.95)] ring-2 ring-neutral-900"
+                          title={`${chatNavUnreadCount} unread`}
+                          aria-hidden
+                        />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-left">{label}</span>
                     {chatUnread && (
                       <span
-                        className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.95)] ring-2 ring-neutral-900"
-                        title={`${chatNavUnreadCount} unread`}
-                        aria-hidden
-                      />
+                        className="shrink-0 rounded-full bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-bold leading-none text-neutral-950"
+                        aria-label={`${chatNavUnreadCount} unread chats`}
+                      >
+                        {chatNavUnreadCount > 99 ? '99+' : chatNavUnreadCount}
+                      </span>
                     )}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-                  {chatUnread && (
-                    <span
-                      className="shrink-0 rounded-full bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-bold leading-none text-neutral-950"
-                      aria-label={`${chatNavUnreadCount} unread chats`}
-                    >
-                      {chatNavUnreadCount > 99 ? '99+' : chatNavUnreadCount}
+                  </button>
+                );
+              }
+
+              const groupActive = entry.items.some((i) => i.key === selectedTab);
+              const GroupIcon = entry.icon;
+              return (
+                <div key={entry.label} className="ml-3 w-[calc(100%-0.75rem)] space-y-0.5">
+                  <button
+                    type="button"
+                    aria-expanded={expandedGroups.has(entry.label)}
+                    onClick={() =>
+                      setExpandedGroups((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(entry.label)) next.delete(entry.label);
+                        else next.add(entry.label);
+                        return next;
+                      })
+                    }
+                    className={`flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                      groupActive
+                        ? 'bg-neutral-800/90 text-white'
+                        : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
+                    }`}
+                  >
+                    <GroupIcon className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
+                    <span className="shrink-0 opacity-70">
+                      {expandedGroups.has(entry.label) ? (
+                        <ChevronDown className="h-4 w-4" aria-hidden />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" aria-hidden />
+                      )}
                     </span>
+                  </button>
+                  {expandedGroups.has(entry.label) && (
+                    <div className="ml-1 space-y-0.5 border-l border-neutral-700 pl-2">
+                      {entry.items.map((item) => {
+                        const SubIcon = item.icon;
+                        const active = selectedTab === item.key;
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => onSelect(item.key)}
+                            className={`flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                              active
+                                ? 'bg-neutral-800 text-white'
+                                : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
+                            }`}
+                          >
+                            <SubIcon className="h-4 w-4 shrink-0" />
+                            <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { UserSession } from "@/services/types";
-import { formatDuration, formatTime } from "@/utils/formatters";
+import { useAgentAttendanceToday } from "@/context/AgentAttendanceTodayContext";
+import { formatDuration } from "@/utils/formatters";
+import {
+  addAustralianCalendarDays,
+  endOfAustralianDayMs,
+  formatAustralianDayHeading,
+  formatAustralianDayShort,
+  formatTimeAu,
+  getAustralianDateKey,
+} from "@/utils/australianTime";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -22,8 +31,6 @@ import {
   type AgentAttendanceEventRow,
   type AttendanceEventType,
 } from "@/services/attendanceApi";
-import { supabase } from "@/integrations/supabase/client";
-import { format, startOfDay, addDays, endOfDay, parse } from "date-fns";
 import { ChevronLeft, ChevronRight, Coffee, LogIn, LogOut, Timer } from "lucide-react";
 
 interface AgentAttendanceCardProps {
@@ -54,67 +61,60 @@ function statusDotColor(status: string): string {
 }
 
 export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) {
-  const [events, setEvents] = useState<AgentAttendanceEventRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { supabaseUserId, todayKey, todayEvents, todayLoading, todayError, touchToday } =
+    useAgentAttendanceToday();
+  const [pastEvents, setPastEvents] = useState<AgentAttendanceEventRow[]>([]);
+  const [pastLoading, setPastLoading] = useState(false);
+  const [pastError, setPastError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [supabaseUserId, setSupabaseUserId] = useState<string | null | undefined>(undefined);
-  const [viewDay, setViewDay] = useState(() => startOfDay(new Date()));
+  const [viewDayKey, setViewDayKey] = useState(() => getAustralianDateKey(now));
 
-  const viewDayKey = format(viewDay, "yyyy-MM-dd");
-  const todayKey = format(new Date(now), "yyyy-MM-dd");
   const isViewingToday = viewDayKey === todayKey;
-  /** For past days, cap “open” shift math at end of that local day. */
-  const segmentNowMs = isViewingToday ? now : endOfDay(viewDay).getTime();
+  /** For past days, cap open-shift math at end of that Melbourne calendar day. */
+  const segmentNowMs = isViewingToday ? now : endOfAustralianDayMs(viewDayKey);
 
-  useEffect(() => {
-    void supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSupabaseUserId(s?.user?.id ?? null);
-    });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_evt, s) => {
-      setSupabaseUserId(s?.user?.id ?? null);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+  const events = isViewingToday ? todayEvents : pastEvents;
+  const loading = isViewingToday ? todayLoading : pastLoading;
+  const fetchError = isViewingToday ? todayError : pastError;
 
-  const reload = useCallback(async () => {
-    if (supabaseUserId === undefined) return;
-    if (supabaseUserId === null) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+  const reloadPast = useCallback(async () => {
+    if (supabaseUserId === undefined || supabaseUserId === null) return;
+    setPastLoading(true);
+    setPastError(null);
     try {
-      const rows = await fetchAttendanceEventsForDay(supabaseUserId, viewDay);
-      setEvents(rows);
+      const rows = await fetchAttendanceEventsForDay(supabaseUserId, viewDayKey);
+      setPastEvents(rows);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Could not load attendance.");
+      setPastError(e instanceof Error ? e.message : "Could not load attendance.");
     } finally {
-      setLoading(false);
+      setPastLoading(false);
     }
-  }, [supabaseUserId, viewDay]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload, viewDayKey]);
-
-  useEffect(() => {
-    if (!supabaseUserId) return;
-    const vk = viewDayKey;
-    return subscribeToMyAttendanceEvents(supabaseUserId, (row) => {
-      const rowDay = format(new Date(row.occurred_at), "yyyy-MM-dd");
-      if (rowDay !== vk) return;
-      setEvents((prev) => {
-        if (prev.some((p) => p.id === row.id)) return prev;
-        return [...prev, row].sort(
-          (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
-        );
-      });
-    });
   }, [supabaseUserId, viewDayKey]);
+
+  useEffect(() => {
+    if (isViewingToday) return;
+    void reloadPast();
+  }, [isViewingToday, reloadPast]);
+
+  useEffect(() => {
+    if (!supabaseUserId || isViewingToday) return;
+    const vk = viewDayKey;
+    return subscribeToMyAttendanceEvents(
+      supabaseUserId,
+      (row) => {
+        const rowDay = getAustralianDateKey(new Date(row.occurred_at).getTime());
+        if (rowDay !== vk) return;
+        setPastEvents((prev) => {
+          if (prev.some((p) => p.id === row.id)) return prev;
+          return [...prev, row].sort(
+            (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
+          );
+        });
+      },
+      `past-${vk}`,
+    );
+  }, [supabaseUserId, isViewingToday, viewDayKey]);
 
   const { status, shiftStartedAt, breakStartedAt } = useMemo(
     () => deriveAttendanceShiftStatus(events),
@@ -165,15 +165,16 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
 
   const fireEvent = async (eventType: AttendanceEventType) => {
     setSubmitting(true);
-    setError(null);
+    setMutationError(null);
     try {
       await insertAttendanceEvent(eventType, {
         userId: uid,
         tenantId: session.tenantId,
         displayName: session.displayName,
       });
+      await touchToday();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Could not save.");
+      setMutationError(e instanceof Error ? e.message : "Could not save.");
     } finally {
       setSubmitting(false);
     }
@@ -187,7 +188,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
 
   const onClockOut = async () => {
     setSubmitting(true);
-    setError(null);
+    setMutationError(null);
     try {
       const { status: s } = deriveAttendanceShiftStatus(events);
       if (s === "on_break") {
@@ -202,12 +203,15 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
         tenantId: session.tenantId,
         displayName: session.displayName,
       });
+      await touchToday();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Could not save.");
+      setMutationError(e instanceof Error ? e.message : "Could not save.");
     } finally {
       setSubmitting(false);
     }
   };
+
+  const displayError = mutationError ?? fetchError;
 
   return (
     <Card className="cc-fade-in border-border/80 bg-gradient-to-br from-white via-white to-emerald-50/30 shadow-sm">
@@ -230,13 +234,13 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
                 size="icon"
                 className="h-9 w-9 shrink-0"
                 aria-label="Previous day"
-                onClick={() => setViewDay((d) => startOfDay(addDays(d, -1)))}
+                onClick={() => setViewDayKey((k) => addAustralianCalendarDays(k, -1))}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className="font-mono text-sm font-semibold text-slate-900">
-                  {format(viewDay, "EEE d MMM yyyy")}
+                  {formatAustralianDayHeading(viewDayKey)}
                 </span>
                 <input
                   type="date"
@@ -246,7 +250,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
                   onChange={(e) => {
                     const v = e.target.value;
                     if (!v) return;
-                    setViewDay(startOfDay(parse(v, "yyyy-MM-dd", new Date())));
+                    setViewDayKey(v);
                   }}
                   aria-label="Pick a date"
                 />
@@ -260,13 +264,19 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
                 disabled={viewDayKey >= todayKey}
                 onClick={() => {
                   if (viewDayKey >= todayKey) return;
-                  setViewDay((d) => startOfDay(addDays(d, 1)));
+                  setViewDayKey((k) => addAustralianCalendarDays(k, 1));
                 }}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
               {!isViewingToday && (
-                <Button type="button" variant="secondary" size="sm" className="h-9" onClick={() => setViewDay(startOfDay(new Date(now)))}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => setViewDayKey(getAustralianDateKey(now))}
+                >
                   Today
                 </Button>
               )}
@@ -289,18 +299,18 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
         {isViewingToday && (shiftStartedAt || breakStartedAt) && (
           <div className="font-mono text-xs text-muted-foreground">
             {status === "on_break" && breakStartedAt
-              ? `Break since ${formatTime(new Date(breakStartedAt))}`
+              ? `Break since ${formatTimeAu(new Date(breakStartedAt))}`
               : shiftStartedAt
-                ? `Shift since ${formatTime(new Date(shiftStartedAt))}`
+                ? `Shift since ${formatTimeAu(new Date(shiftStartedAt))}`
                 : null}
           </div>
         )}
       </CardHeader>
 
       <CardContent className="space-y-5 p-6">
-        {error && (
+        {displayError && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
-            {error}
+            {displayError}
           </div>
         )}
 
@@ -396,7 +406,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
         <div className="rounded-xl border border-border/80 bg-white shadow-sm">
           <div className="border-b border-border/60 bg-slate-50/80 px-4 py-2.5">
             <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Shifts · {format(viewDay, "d MMM yyyy")}
+              Shifts · {formatAustralianDayShort(viewDayKey)}
             </div>
           </div>
           {loading && events.length === 0 ? (
@@ -434,13 +444,13 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
                     <TableRow key={`${seg.clockInMs}-${i}`}>
                       <TableCell className="font-mono text-xs text-muted-foreground">{i + 1}</TableCell>
                       <TableCell className="font-mono text-sm">
-                        {formatTime(new Date(seg.clockInMs))}
+                        {formatTimeAu(new Date(seg.clockInMs))}
                       </TableCell>
                       <TableCell className="font-mono text-sm">
                         {seg.clockOutMs == null ? (
                           <span className="text-amber-700">Open</span>
                         ) : (
-                          formatTime(new Date(seg.clockOutMs))
+                          formatTimeAu(new Date(seg.clockOutMs))
                         )}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm text-amber-800/90">
@@ -453,7 +463,7 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
                   ))}
                   <TableRow className="border-t-2 border-border/80 bg-slate-50/60 font-medium hover:bg-slate-50/60">
                     <TableCell colSpan={3} className="text-right text-sm text-slate-700">
-                      Totals · {format(viewDay, "d MMM")}
+                      Totals · {formatAustralianDayShort(viewDayKey)}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm text-amber-800/90">
                       {breakMs > 0 ? formatDuration(breakMs) : "0:00"}

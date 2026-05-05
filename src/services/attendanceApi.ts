@@ -1,4 +1,4 @@
-import { endOfDay, startOfDay } from "date-fns";
+import { attendanceDayRangeAustralianYmd } from "@/utils/australianTime";
 import { supabase } from "@/integrations/supabase/client";
 
 export const ATTENDANCE_EVENT_TYPES = [
@@ -30,11 +30,9 @@ export function isSupabaseAuthUserId(id: string | null | undefined): boolean {
   return UUID_RE.test(id);
 }
 
-export function attendanceDayRange(day: Date): { startIso: string; endIso: string } {
-  return {
-    startIso: startOfDay(day).toISOString(),
-    endIso: endOfDay(day).toISOString(),
-  };
+/** Melbourne calendar day yyyy-MM-dd → UTC range for Supabase `occurred_at` filters. */
+export function attendanceDayRangeAustralian(ymd: string): { startIso: string; endIso: string } {
+  return attendanceDayRangeAustralianYmd(ymd);
 }
 
 export function deriveAttendanceShiftStatus(
@@ -244,9 +242,10 @@ export function buildAttendanceDaySegments(
 
 export async function fetchAttendanceEventsForDay(
   userId: string,
-  day: Date,
+  /** Melbourne calendar date yyyy-MM-dd */
+  ymd: string,
 ): Promise<AgentAttendanceEventRow[]> {
-  const { startIso, endIso } = attendanceDayRange(day);
+  const { startIso, endIso } = attendanceDayRangeAustralian(ymd);
   const { data, error } = await supabase
     .from("agent_attendance_events")
     .select(
@@ -262,9 +261,10 @@ export async function fetchAttendanceEventsForDay(
 }
 
 export async function fetchAllAttendanceEventsForDay(
-  day: Date,
+  /** Melbourne calendar date yyyy-MM-dd */
+  ymd: string,
 ): Promise<AgentAttendanceEventRow[]> {
-  const { startIso, endIso } = attendanceDayRange(day);
+  const { startIso, endIso } = attendanceDayRangeAustralian(ymd);
   const { data, error } = await supabase
     .from("agent_attendance_events")
     .select(
@@ -304,9 +304,11 @@ export async function insertAttendanceEvent(
 export function subscribeToMyAttendanceEvents(
   userId: string,
   onEvent: (row: AgentAttendanceEventRow) => void,
+  /** Unique per subscriber so multiple listeners for the same user do not collide on one channel. */
+  listenerKey = "default",
 ): () => void {
   const channel = supabase
-    .channel(`attendance-self-${userId}`)
+    .channel(`attendance-self-${userId}-${listenerKey}`)
     .on(
       "postgres_changes",
       {

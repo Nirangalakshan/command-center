@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Agent, Tenant } from "@/services/types";
-import { formatDuration, formatTime } from "@/utils/formatters";
+import { formatDuration } from "@/utils/formatters";
+import {
+  addAustralianCalendarDays,
+  endOfAustralianDayMs,
+  formatAustralianDayHeading,
+  formatTimeAu,
+  getAustralianDateKey,
+} from "@/utils/australianTime";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveDot } from "@/components/dashboard/LiveDot";
@@ -21,7 +28,6 @@ import {
   subscribeToAllAttendanceInserts,
   type AgentAttendanceEventRow,
 } from "@/services/attendanceApi";
-import { format, startOfDay, addDays, endOfDay, parse } from "date-fns";
 import { ChevronLeft, ChevronRight, Users } from "lucide-react";
 
 interface SuperAdminAttendanceBoardProps {
@@ -61,12 +67,11 @@ export function SuperAdminAttendanceBoard({
   const [events, setEvents] = useState<AgentAttendanceEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [viewDay, setViewDay] = useState(() => startOfDay(new Date()));
+  const [viewDayKey, setViewDayKey] = useState(() => getAustralianDateKey(Date.now()));
 
-  const viewDayKey = format(viewDay, "yyyy-MM-dd");
-  const todayKey = format(new Date(now), "yyyy-MM-dd");
+  const todayKey = useMemo(() => getAustralianDateKey(now), [now]);
   const isViewingToday = viewDayKey === todayKey;
-  const segmentNowMs = isViewingToday ? now : endOfDay(viewDay).getTime();
+  const segmentNowMs = isViewingToday ? now : endOfAustralianDayMs(viewDayKey);
 
   const commandCentreAgents = useMemo(
     () => agents.filter(isCommandCentreAgent),
@@ -85,14 +90,14 @@ export function SuperAdminAttendanceBoard({
     setLoading(true);
     setError(null);
     try {
-      const rows = await fetchAllAttendanceEventsForDay(viewDay);
+      const rows = await fetchAllAttendanceEventsForDay(viewDayKey);
       setEvents(rows);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Could not load attendance.");
     } finally {
       setLoading(false);
     }
-  }, [viewDay]);
+  }, [viewDayKey]);
 
   useEffect(() => {
     void reload();
@@ -101,7 +106,7 @@ export function SuperAdminAttendanceBoard({
   useEffect(() => {
     return subscribeToAllAttendanceInserts((row) => {
       if (!commandCentreUserIds.has(row.user_id)) return;
-      const rowDay = format(new Date(row.occurred_at), "yyyy-MM-dd");
+      const rowDay = getAustralianDateKey(new Date(row.occurred_at).getTime());
       if (rowDay !== viewDayKey) return;
       setEvents((prev) => {
         if (prev.some((p) => p.id === row.id)) return prev;
@@ -178,7 +183,7 @@ export function SuperAdminAttendanceBoard({
             Agent attendance — Command center
           </CardTitle>
           <p className="mt-2 text-sm text-muted-foreground">
-            Workshop agents are excluded.
+            Times and dates are Australia/Melbourne. Workshop agents are excluded.
             {isViewingToday
               ? " Live updates when command center agents clock in, break, or clock out."
               : " Showing the selected day (not live)."}
@@ -191,12 +196,12 @@ export function SuperAdminAttendanceBoard({
             size="icon"
             className="h-9 w-9"
             aria-label="Previous day"
-            onClick={() => setViewDay((d) => startOfDay(addDays(d, -1)))}
+            onClick={() => setViewDayKey((k) => addAustralianCalendarDays(k, -1))}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="font-mono text-sm font-semibold text-slate-900">
-            {format(viewDay, "EEE d MMM yyyy")}
+            {formatAustralianDayHeading(viewDayKey)}
           </span>
           <input
             type="date"
@@ -206,7 +211,7 @@ export function SuperAdminAttendanceBoard({
             onChange={(e) => {
               const v = e.target.value;
               if (!v) return;
-              setViewDay(startOfDay(parse(v, "yyyy-MM-dd", new Date())));
+              setViewDayKey(v);
             }}
             aria-label="Pick a date"
           />
@@ -219,7 +224,7 @@ export function SuperAdminAttendanceBoard({
             disabled={viewDayKey >= todayKey}
             onClick={() => {
               if (viewDayKey >= todayKey) return;
-              setViewDay((d) => startOfDay(addDays(d, 1)));
+              setViewDayKey((k) => addAustralianCalendarDays(k, 1));
             }}
           >
             <ChevronRight className="h-4 w-4" />
@@ -230,7 +235,7 @@ export function SuperAdminAttendanceBoard({
               variant="secondary"
               size="sm"
               className="h-9"
-              onClick={() => setViewDay(startOfDay(new Date(now)))}
+              onClick={() => setViewDayKey(getAustralianDateKey(now))}
             >
               Today
             </Button>
@@ -276,7 +281,7 @@ export function SuperAdminAttendanceBoard({
                         <div className="flex flex-col gap-1">
                           {r.segments.map((s, i) => (
                             <span key={i}>
-                              {formatTime(new Date(s.clockInMs))}
+                              {formatTimeAu(new Date(s.clockInMs))}
                             </span>
                           ))}
                         </div>
@@ -296,7 +301,7 @@ export function SuperAdminAttendanceBoard({
                             >
                               {s.clockOutMs == null
                                 ? "Open"
-                                : formatTime(new Date(s.clockOutMs))}
+                                : formatTimeAu(new Date(s.clockOutMs))}
                             </span>
                           ))}
                         </div>

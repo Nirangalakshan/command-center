@@ -1,12 +1,14 @@
 import '@/styles/dashboard.css';
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '@/services/types';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { useLiveClock } from '@/hooks/useLiveClock';
 import { useFirebaseAuth } from '@/integrations/firebase/useFirebaseAuth';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { AgentNavAttendanceActions } from '@/components/dashboard/AgentNavAttendanceActions';
+import { AgentAttendanceTodayProvider } from '@/context/AgentAttendanceTodayContext';
 import { SoftphoneWidget } from '@/components/dashboard/SoftphoneWidget';
 import DashboardSidebar from '@/tabs/DashboardSidebar';
 import { LoadingSkeleton } from '@/components/dashboard/LoadingSkeleton';
@@ -33,9 +35,24 @@ interface DashboardPageProps {
   onSignOut: () => Promise<void>;
 }
 
+function AgentAttendanceShell({
+  enabled,
+  now,
+  children,
+}: {
+  enabled: boolean;
+  now: number;
+  children: ReactNode;
+}) {
+  if (enabled) {
+    return <AgentAttendanceTodayProvider now={now}>{children}</AgentAttendanceTodayProvider>;
+  }
+  return <>{children}</>;
+}
+
 export default function DashboardPage({ session, permissions, onSignOut }: DashboardPageProps) {
   const d = useDashboardData({ session });
-  const { formatted: clockStr } = useLiveClock();
+  const { formattedDate: clockDate, formattedTime: clockTime } = useLiveClock();
   const { firebaseUser } = useFirebaseAuth();
   const [clients, setClients] = useState<TenantOnboarding[]>([]);
   const navigate = useNavigate();
@@ -63,7 +80,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'clients') return permissions.canViewClientsTab;
       if (key === 'did-mappings') return permissions.canManageDIDMappings;
       if (key === 'audit-logs') return permissions.canViewAuditLogs;
-      if (key === 'attendance') return permissions.canViewAttendanceTab;
+      if (key === 'attendance' || key === 'leave-requests') return permissions.canViewAttendanceTab;
       return false;
     };
 
@@ -235,9 +252,19 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       />
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Top header */}
-        <DashboardHeader connectionStatus={d.connectionStatus} clockStr={clockStr} />
+      <AgentAttendanceShell enabled={session.role === 'agent' && permissions.canViewShiftPanel} now={d.now}>
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Top header */}
+          <DashboardHeader
+            connectionStatus={d.connectionStatus}
+            clockDate={clockDate}
+            clockTime={clockTime}
+            attendanceSlot={
+              permissions.canViewShiftPanel && session.role === 'agent' ? (
+                <AgentNavAttendanceActions session={session} />
+              ) : undefined
+            }
+          />
 
         {/* Tab content: chat fills height and scrolls internally; other tabs scroll the main area */}
         <main
@@ -277,13 +304,14 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   incomingCalls={d.incomingCalls}
                 />
               )}
-              {d.selectedTab === 'attendance' && (
+              {(d.selectedTab === 'attendance' || d.selectedTab === 'leave-requests') && (
                 <AttendanceTab
                   session={session}
                   permissions={permissions}
                   agents={d.agents}
                   tenants={d.tenants}
                   now={d.now}
+                  section={d.selectedTab === 'leave-requests' ? 'leave' : 'shifts'}
                 />
               )}
               {d.selectedTab === 'agents' && (
@@ -356,7 +384,8 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
             </>
           )}
         </main>
-      </div>
+        </div>
+      </AgentAttendanceShell>
     </div>
   );
 }

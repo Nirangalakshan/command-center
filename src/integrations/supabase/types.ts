@@ -97,6 +97,68 @@ export type Database = {
           },
         ]
       }
+      agent_leave_requests: {
+        Row: {
+          id: string
+          user_id: string
+          tenant_id: string | null
+          agent_display_name: string | null
+          start_date: string
+          end_date: string
+          duration_type: string
+          half_day_part: string | null
+          reason: string | null
+          status: string
+          reviewed_by: string | null
+          reviewed_at: string | null
+          review_comment: string | null
+          attachment_storage_path: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          tenant_id?: string | null
+          agent_display_name?: string | null
+          start_date: string
+          end_date: string
+          duration_type: string
+          half_day_part?: string | null
+          reason?: string | null
+          status?: string
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          review_comment?: string | null
+          attachment_storage_path?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          tenant_id?: string | null
+          agent_display_name?: string | null
+          start_date?: string
+          end_date?: string
+          duration_type?: string
+          half_day_part?: string | null
+          reason?: string | null
+          status?: string
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          review_comment?: string | null
+          attachment_storage_path?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_leave_requests_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_onboarding: {
         Row: {
           agent_id: string

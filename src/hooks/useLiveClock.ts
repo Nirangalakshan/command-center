@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { formatAustralianNavDate, formatAustralianNavTime } from '@/utils/australianTime';
 
-/** Returns a live Date that ticks every second (Melbourne timezone display-ready). */
+/** Live clock for the dashboard header (Australia/Melbourne; shows AEST/AEDT in the time string). */
 export function useLiveClock() {
   const [clock, setClock] = useState(new Date());
 
@@ -9,13 +10,9 @@ export function useLiveClock() {
     return () => clearInterval(interval);
   }, []);
 
-  const formatted = clock.toLocaleTimeString('en-AU', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-    timeZone: 'Australia/Melbourne',
-  });
-
-  return { clock, formatted };
+  return {
+    clock,
+    formattedDate: formatAustralianNavDate(clock),
+    formattedTime: formatAustralianNavTime(clock),
+  };
 }
