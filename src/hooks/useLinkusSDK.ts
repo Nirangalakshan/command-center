@@ -7,9 +7,12 @@ import {
   IpForbiddenError,
   clearCachedSdkSign,
 } from '@/services/linkusSdkService';
-import type { LinkusSessionEndPayload } from '@/services/linkusCallLog';
+import type {
+  LinkusCallDispositionPayload,
+  LinkusSessionEndPayload,
+} from '@/services/linkusCallLog';
 
-export type { LinkusSessionEndPayload };
+export type { LinkusCallDispositionPayload, LinkusSessionEndPayload };
 
 export type MicPermission = 'unknown' | 'granted' | 'denied';
 
@@ -83,6 +86,8 @@ interface UseLinkusSdkOptions {
   agentEmail: string | null | undefined;
   /** Fired once per call when the SDK session ends. Keep reference stable (use ref in parent) so bootstrap is not re-run on every render. */
   onCallSessionEnd?: (info: LinkusSessionEndPayload) => void;
+  /** Fired when the user taps Answer or Reject on an incoming call (sync to Supabase `calls`). */
+  onCallDisposition?: (info: LinkusCallDispositionPayload) => void;
 }
 
 // ─── Audio helpers ─────────────────────────────────────────
@@ -146,9 +151,19 @@ function stopRingtone() {
 
 // ─── Hook ──────────────────────────────────────────────────
 
-export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptions) {
+export function useLinkusSDK({
+  agentEmail,
+  onCallSessionEnd,
+  onCallDisposition,
+}: UseLinkusSdkOptions) {
   const onCallSessionEndRef = useRef(onCallSessionEnd);
   onCallSessionEndRef.current = onCallSessionEnd;
+  const onCallDispositionRef = useRef(onCallDisposition);
+  onCallDispositionRef.current = onCallDisposition;
+
+  const emitDisposition = useCallback((info: LinkusCallDispositionPayload) => {
+    onCallDispositionRef.current?.(info);
+  }, []);
 
   const [status, setStatus] = useState<SoftphoneStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -541,6 +556,8 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
 
   const answer = useCallback(
     async (callId: string) => {
+      const preSnap =
+        lastSdkStatusRef.current.get(callId) ?? phoneRef.current?.sessions.get(callId)?.status;
       // Optimistically dismiss the incoming-call UI immediately so the widget
       // transitions from "Incoming" → "On Call" without waiting for
       // startSession / accepted events (which can race).
@@ -552,12 +569,29 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
         // If answer failed, the session will be torn down by the SDK and
         // deleteSession will clean up activeCalls.
       }
+      const post =
+        lastSdkStatusRef.current.get(callId) ??
+        phoneRef.current?.sessions.get(callId)?.status ??
+        preSnap;
+      if (post) {
+        const snap = mapLinkusCallStatus(post);
+        emitDisposition({
+          callId,
+          action: 'answered',
+          number: snap.number,
+          name: snap.name,
+          direction: snap.direction,
+        });
+      }
     },
-    [dismissIncoming]
+    [dismissIncoming, emitDisposition]
   );
 
   const reject = useCallback(
     (callId: string) => {
+      const pre =
+        lastSdkStatusRef.current.get(callId) ??
+        phoneRef.current?.sessions.get(callId)?.status;
       // Call the SDK FIRST (while the session is still in a valid state),
       // THEN optimistically update local state. Doing it the other way around
       // can leave the session referenced but already-torn-down, which causes
@@ -571,10 +605,20 @@ export function useLinkusSDK({ agentEmail, onCallSessionEnd }: UseLinkusSdkOptio
           // console.warn('[useLinkusSDK] reject ignored:', _err);
         }
       }
+      if (pre) {
+        const snap = mapLinkusCallStatus(pre);
+        emitDisposition({
+          callId,
+          action: 'rejected',
+          number: snap.number,
+          name: snap.name,
+          direction: snap.direction,
+        });
+      }
       dismissIncoming(callId);
       removeCall(callId);
     },
-    [dismissIncoming, removeCall]
+    [dismissIncoming, removeCall, emitDisposition]
   );
 
   const hangup = useCallback(

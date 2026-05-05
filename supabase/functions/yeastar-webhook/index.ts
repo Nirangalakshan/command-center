@@ -141,6 +141,154 @@ async function findAgentByPartyRaw(rawParty: string): Promise<{ id: string; tena
   return rows[0];
 }
 
+/** Fields that usually mean “extension that actually answered” (try before `call_to`). */
+function cdrAnswerPartyRawsFirst(body: Record<string, unknown>, direction: 'inbound' | 'outbound'): string[] {
+  const inboundKeys = [
+    'answered_extension',
+    'answered_ext',
+    'answer_extension',
+    'answer_ext',
+    'answered_exten',
+    'receiver',
+    'callee_ext',
+    'callee_extension',
+    'dstexten',
+    'dst_exten',
+    'dstextension',
+    'dst_extension',
+    'process_ext',
+    'process_extension',
+    'operator_ext',
+    'member_extension',
+    'member_ext',
+  ];
+  const outboundKeys = [
+    'srcext',
+    'src_ext',
+    'src_extension',
+    'caller_ext',
+    'caller_extension',
+    'callfrom_ext',
+  ];
+  const keys = direction === 'inbound' ? inboundKeys : outboundKeys;
+  return collectStringFields(body, keys);
+}
+
+/** Weaker hints — often queue, trunk channel, or ambiguous `dst` (try after `call_to`). */
+function cdrAnswerPartyRawsRest(body: Record<string, unknown>, direction: 'inbound' | 'outbound'): string[] {
+  if (direction === 'outbound') return [];
+  const keys = ['dst', 'dst_num', 'dstnum', 'dstchannel', 'dst_chan'];
+  return collectStringFields(body, keys);
+}
+
+function collectStringFields(body: Record<string, unknown>, keys: string[]): string[] {
+  const out: string[] = [];
+  for (const k of keys) {
+    const v = body[k];
+    if (v === undefined || v === null) continue;
+    const s = String(v).trim();
+    if (s) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Recording names often end with `-…-<ext>-<ext>-Inbound.wav` (see Yeastar CDR examples).
+ * Pull digit runs that look like PBX extensions from the tail before the call-type token.
+ */
+function recordingFilenameExtensionCandidates(recording: string | null | undefined): string[] {
+  if (!recording) return [];
+  const base = recording.replace(/\.[^.]+$/i, '').trim();
+  if (!base) return [];
+  const parts = base.split('-');
+  if (parts.length < 2) return [];
+  const typeTok = parts[parts.length - 1]?.toUpperCase() ?? '';
+  const knownTypes = new Set(['INTERNAL', 'INBOUND', 'OUTBOUND', 'QUEUE', 'FAX', 'VOICEMAIL']);
+  const end = knownTypes.has(typeTok) ? parts.length - 1 : parts.length;
+  const tail = parts.slice(Math.max(0, end - 5), end);
+  const out: string[] = [];
+  for (const p of tail) {
+    const t = p.trim();
+    if (!t) continue;
+    const digitsOnly = t.replace(/\D/g, '');
+    if (digitsOnly.length >= 2 && digitsOnly.length <= 7) out.push(digitsOnly);
+  }
+  return [...new Set(out)];
+}
+
+async function firstMatchingAgentFromRaws(
+  raws: string[],
+): Promise<{ id: string; tenant_id: string; queue_ids: unknown } | null> {
+  const seen = new Set<string>();
+  for (const raw of raws) {
+    const key = String(raw ?? '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const hit = await findAgentByPartyRaw(key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** For recording tail tokens, the last matching extension is often the agent who picked up. */
+async function lastMatchingAgentFromRaws(
+  raws: string[],
+): Promise<{ id: string; tenant_id: string; queue_ids: unknown } | null> {
+  const seen = new Set<string>();
+  let last: { id: string; tenant_id: string; queue_ids: unknown } | null = null;
+  for (const raw of raws) {
+    const key = String(raw ?? '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const hit = await findAgentByPartyRaw(key);
+    if (hit) last = hit;
+  }
+  return last;
+}
+
+/**
+ * For answered calls, ensure `calls.agent_id` is the agent leg — inbound queue/DID CDRs
+ * often put queue or DID in `call_to` so `findAgentByPartyRaw(call_to)` misses.
+ */
+async function resolveAnsweredAgentFromCdr(
+  body: Record<string, unknown>,
+  direction: 'inbound' | 'outbound',
+  rawFrom: string,
+  rawTo: string,
+  recording: string | null,
+  agentTo: { id: string; tenant_id: string; queue_ids: unknown } | null,
+  agentFrom: { id: string; tenant_id: string; queue_ids: unknown } | null,
+): Promise<{ id: string; tenant_id: string; queue_ids: unknown } | null> {
+  const talkDur = Number(body.talkduraction ?? body.talk_duration ?? 0);
+  const statusU = String(body.status ?? '').toUpperCase();
+  const looksAnswered =
+    talkDur > 0 || statusU === 'ANSWERED' || statusU === 'VOICEMAIL';
+
+  const fallbackLeg = direction === 'inbound' ? agentTo : agentFrom;
+
+  if (!looksAnswered) return fallbackLeg;
+
+  const firstTier = cdrAnswerPartyRawsFirst(body, direction);
+  const restTier = cdrAnswerPartyRawsRest(body, direction);
+  const recCands = recordingFilenameExtensionCandidates(recording);
+  const recRev = [...recCands].reverse();
+
+  if (direction === 'inbound') {
+    let hit = await firstMatchingAgentFromRaws(firstTier);
+    if (!hit) {
+      hit = await firstMatchingAgentFromRaws([rawTo, ...restTier, ...recRev]);
+    }
+    if (!hit) {
+      hit = await lastMatchingAgentFromRaws(recCands);
+    }
+    return hit ?? fallbackLeg;
+  }
+
+  const seq = [rawFrom, ...firstTier, ...restTier, ...recRev];
+  const hit = await firstMatchingAgentFromRaws(seq);
+  return hit ?? fallbackLeg;
+}
+
 async function resolveTenantIdFromOutboundTrunk(body: Record<string, unknown>): Promise<string | null> {
   const trunk = String(body.dst_trunk_name ?? body.desttrunkname ?? body.dst_trunk ?? '').trim();
   if (!trunk || trunk === ' ') return null;
@@ -160,7 +308,9 @@ async function handleNewCdr(body: Record<string, unknown>) {
   const callduraction = Number(body.callduraction ?? body.call_duration ?? 0);
   const talkduraction = Number(body.talkduraction ?? body.talk_duration ?? 0);
   const status = String(body.status ?? '');
-  const didFromPayload = String(body.did ?? body.did_number ?? body.didnumber ?? '').trim();
+  const didFromPayload = String(
+    body.did ?? body.did_number ?? body.didnumber ?? body.didNumber ?? '',
+  ).trim();
   const recording = body.recording ? String(body.recording) : null;
 
   const cdrKind = readYeastarCdrCallType(body);
@@ -184,11 +334,24 @@ async function handleNewCdr(body: Record<string, unknown>) {
     direction = agentTo ? 'inbound' : agentFrom ? 'outbound' : 'inbound';
   }
 
-  const agentRow = direction === 'inbound' ? agentTo : agentFrom;
+  const agentRow = await resolveAnsweredAgentFromCdr(
+    body,
+    direction,
+    rawFrom,
+    rawTo,
+    recording,
+    agentTo,
+    agentFrom,
+  );
   const customerRaw = direction === 'inbound' ? rawFrom : rawTo;
   const customerNumber = extractYeastarPartyNumber(customerRaw) || customerRaw.replace(/\s+/g, '').trim();
 
-  const didForMapping = didFromPayload;
+  // Some NewCdr payloads omit `did_number` but still provide the called number in `callto`.
+  // For inbound calls we treat that as a DID fallback so routing + persistence keep working.
+  const callToNumber =
+    extractYeastarPartyNumber(rawTo) || rawTo.replace(/\s+/g, '').trim();
+  const inboundDid = didFromPayload || callToNumber || null;
+  const didForMapping = direction === 'inbound' ? inboundDid : didFromPayload;
   const { data: mapping } = didForMapping
     ? await supabase
       .from('did_mappings')
@@ -217,15 +380,29 @@ async function handleNewCdr(body: Record<string, unknown>) {
 
   const dialedNumber =
     direction === 'inbound'
-      ? (didFromPayload || null)
+      ? inboundDid
       : (extractYeastarPartyNumber(rawFrom) || rawFrom.replace(/\s+/g, '').trim() || null);
+
+  const cdrRowId = `yeastar-${callid}`;
+  const { data: existingCall } = await supabase
+    .from('calls')
+    .select('agent_id')
+    .eq('id', cdrRowId)
+    .maybeSingle();
+  const preLinkedAgentId =
+    existingCall?.agent_id && String(existingCall.agent_id).trim()
+      ? String(existingCall.agent_id)
+      : null;
+
+  const resolvedAgentId = agentRow?.id ?? null;
+  const finalAgentId = preLinkedAgentId ?? resolvedAgentId;
 
   // Upsert call record (idempotent on callid)
   const { error } = await supabase.from('calls').upsert({
-    id: `yeastar-${callid}`,
+    id: cdrRowId,
     tenant_id: tenantId,
     queue_id: queueId,
-    agent_id: agentRow?.id ?? null,
+    agent_id: finalAgentId,
     caller_number: customerNumber,
     caller_name: callerName,
     dialed_number: dialedNumber,
@@ -243,12 +420,12 @@ async function handleNewCdr(body: Record<string, unknown>) {
   if (error) throw new Error(`calls upsert failed: ${error.message}`);
 
   // Reset agent status to available after call ends
-  if (agentRow?.id) {
+  if (finalAgentId) {
     await supabase.from('agents').update({
       status: 'available',
       current_caller: null,
       call_start_time: null,
-    }).eq('id', agentRow.id);
+    }).eq('id', finalAgentId);
   }
 
   // Remove the call from the live dashboard — CDR is the definitive end-of-call
@@ -423,9 +600,57 @@ async function handleIncomingCall(body: Record<string, unknown>) {
 // Utilities
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * Yeastar sends local PBX wall time with no offset, e.g. "2024-03-19 10:05:34".
+ * Appending "Z" wrongly treats that as UTC and shifts every stored instant.
+ *
+ * Prefer `YEASTAR_CDR_TIMEZONE` (IANA, e.g. Asia/Colombo, Australia/Melbourne) on
+ * runtimes with Temporal. Else `YEASTAR_CDR_UTC_OFFSET_MINUTES` east-of-UTC (+330 = +05:30).
+ * Else fall back to legacy UTC interpretation.
+ */
 function parseYeastarDate(dateStr: string): Date {
-  // Yeastar format: "2024-03-19 10:05:34"
-  return new Date(dateStr.replace(' ', 'T') + 'Z');
+  const trimmed = dateStr.trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(trimmed);
+  if (!m) return new Date(trimmed.replace(' ', 'T') + 'Z');
+
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const h = Number(m[4]);
+  const mi = Number(m[5]);
+  const s = Number(m[6]);
+
+  const iana = Deno.env.get('YEASTAR_CDR_TIMEZONE')?.trim();
+  const TemporalCtor = (globalThis as unknown as { Temporal?: { PlainDateTime: { from: (v: unknown) => { toZonedDateTime: (tz: string) => { epochMilliseconds: bigint | number } } } } }).Temporal;
+
+  if (iana && TemporalCtor?.PlainDateTime) {
+    try {
+      const plain = TemporalCtor.PlainDateTime.from({
+        year: y,
+        month: mo,
+        day: d,
+        hour: h,
+        minute: mi,
+        second: s,
+      });
+      const zdt = plain.toZonedDateTime(iana);
+      const ms = zdt.epochMilliseconds;
+      return new Date(typeof ms === 'bigint' ? Number(ms) : ms);
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const offRaw = Deno.env.get('YEASTAR_CDR_UTC_OFFSET_MINUTES')?.trim();
+  if (offRaw !== undefined && offRaw !== '') {
+    const offsetMin = Number(offRaw);
+    if (Number.isFinite(offsetMin)) {
+      const asUtcMs = Date.UTC(y, mo - 1, d, h, mi, s);
+      return new Date(asUtcMs - offsetMin * 60_000);
+    }
+  }
+
+  return new Date(trimmed.replace(' ', 'T') + 'Z');
 }
 
 async function lookupCustomerName(tenantId: string, callerNumber: string): Promise<string | null> {

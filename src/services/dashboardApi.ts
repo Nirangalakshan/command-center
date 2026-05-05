@@ -232,19 +232,47 @@ function resolveCallDirectionFromRow(c: {
   return "inbound";
 }
 
-export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
+/** Yeastar CDR primary key is `yeastar-<pbx_call_id>`; Linkus SDK uses the same id when they align. */
+function pbxCallIdFromCallsRowId(id: string): string | null {
+  if (!id.startsWith("yeastar-")) return null;
+  return id.slice("yeastar-".length) || null;
+}
+
+export async function fetchCalls(
+  tenantId?: string | null,
+  limit: number = 100,
+): Promise<Call[]> {
   let query = supabase.from("calls").select("*");
   if (tenantId) query = query.eq("tenant_id", tenantId);
   const { data, error } = await query
     .order("start_time", { ascending: false })
-    .limit(100);
+    .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(error.message);
   const rows = data || [];
   if (rows.length === 0) return [];
 
+  const dispositionByLinkusId = await fetchSoftphoneDispositionAgentMap(tenantId);
+
+  const mergedAgentIds = rows.map((c) => {
+    const pbId = pbxCallIdFromCallsRowId(c.id);
+    const fromDisp =
+      pbId && dispositionByLinkusId.size > 0
+        ? dispositionByLinkusId.get(pbId) ??
+          dispositionByLinkusId.get(pbId.split("@")[0] ?? "") ??
+          [...dispositionByLinkusId.entries()].find(
+            ([k]) =>
+              k === pbId ||
+              k.endsWith(pbId) ||
+              pbId.endsWith(k) ||
+              k.replace(/\D/g, "") === pbId.replace(/\D/g, ""),
+          )?.[1]
+        : undefined;
+    return (fromDisp ?? c.agent_id) as string | null;
+  });
+
   const agentIds = [
     ...new Set(
-      rows.map((c) => c.agent_id).filter((id): id is string => Boolean(id)),
+      mergedAgentIds.filter((id): id is string => Boolean(id)),
     ),
   ];
   const queueIds = [...new Set(rows.map((c) => c.queue_id))];
@@ -279,27 +307,33 @@ export async function fetchCalls(tenantId?: string | null): Promise<Call[]> {
   const queueMap = new Map((queuesRes.data ?? []).map((q) => [q.id, q.name]));
   const tenantMap = new Map((tenantsRes.data ?? []).map((t) => [t.id, t.name]));
 
-  return rows.map((c) => ({
-    id: c.id,
-    tenantId: c.tenant_id,
-    queueId: c.queue_id,
-    agentId: c.agent_id,
-    direction: resolveCallDirectionFromRow(c),
-    callerNumber: c.caller_number,
-    callerName: c.caller_name,
-    dialedNumber: c.dialed_number ?? null,
-    startTime: c.start_time,
-    answerTime: c.answer_time,
-    endTime: c.end_time,
-    durationSeconds: c.duration_seconds,
-    result: c.result as CallResult,
-    recordingUrl: c.recording_url,
-    transcriptStatus: c.transcript_status as TranscriptStatus,
-    summaryStatus: c.summary_status as "pending" | "ready" | "none",
-    agentName: c.agent_id ? (agentMap.get(c.agent_id) ?? "Unknown agent") : "—",
-    queueName: queueMap.get(c.queue_id) ?? c.queue_id,
-    tenantName: tenantMap.get(c.tenant_id) ?? c.tenant_id,
-  }));
+  return rows.map((c, i) => {
+    const effectiveAgentId = mergedAgentIds[i] ?? c.agent_id;
+    const rowForDirection = { ...c, agent_id: effectiveAgentId };
+    return {
+      id: c.id,
+      tenantId: c.tenant_id,
+      queueId: c.queue_id,
+      agentId: effectiveAgentId,
+      direction: resolveCallDirectionFromRow(rowForDirection),
+      callerNumber: c.caller_number,
+      callerName: c.caller_name,
+      dialedNumber: c.dialed_number ?? null,
+      startTime: c.start_time,
+      answerTime: c.answer_time,
+      endTime: c.end_time,
+      durationSeconds: c.duration_seconds,
+      result: c.result as CallResult,
+      recordingUrl: c.recording_url,
+      transcriptStatus: c.transcript_status as TranscriptStatus,
+      summaryStatus: c.summary_status as "pending" | "ready" | "none",
+      agentName: effectiveAgentId
+        ? (agentMap.get(effectiveAgentId) ?? "Unknown agent")
+        : "—",
+      queueName: queueMap.get(c.queue_id) ?? c.queue_id,
+      tenantName: tenantMap.get(c.tenant_id) ?? c.tenant_id,
+    };
+  });
 }
 
 /* ─── SIP Lines ─── */
@@ -368,10 +402,120 @@ type UntypedSupabase = {
     insert: (...args: unknown[]) => any;
     update: (...args: unknown[]) => any;
     delete: (...args: unknown[]) => any;
+    upsert: (...args: unknown[]) => any;
   };
 };
 
 const dynamicSupabase = supabase as unknown as UntypedSupabase;
+
+/**
+ * Agent chosen on Linkus answer/reject (durable; merged into fetchCalls).
+ */
+async function fetchSoftphoneDispositionAgentMap(
+  tenantId: string | null | undefined,
+): Promise<Map<string, string>> {
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  let q = dynamicSupabase
+    .from("softphone_call_dispositions")
+    .select("linkus_call_id, agent_id")
+    .gte("created_at", since)
+    .limit(2000);
+  if (tenantId) q = q.eq("tenant_id", tenantId);
+  const { data, error } = await q;
+  if (error || !data?.length) return new Map();
+  const m = new Map<string, string>();
+  for (const row of data as { linkus_call_id: string; agent_id: string }[]) {
+    if (row.linkus_call_id && row.agent_id) {
+      m.set(row.linkus_call_id, row.agent_id);
+    }
+  }
+  return m;
+}
+
+/** Linkus answer/reject row for Audit Logs (`softphone_call_dispositions`). */
+export type SoftphoneCallDispositionAuditRow = {
+  linkusCallId: string;
+  agentId: string;
+  tenantId: string;
+  agentName: string;
+  tenantName: string;
+  action: "answered" | "rejected";
+  callerNumber: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function fetchSoftphoneCallDispositionsForAudit(
+  limit: number = 200,
+): Promise<SoftphoneCallDispositionAuditRow[]> {
+  const lim = Math.min(Math.max(limit, 1), 500);
+  const { data, error } = await dynamicSupabase
+    .from("softphone_call_dispositions")
+    .select(
+      "linkus_call_id, agent_id, tenant_id, action, caller_number, created_at, updated_at",
+    )
+    .order("updated_at", { ascending: false })
+    .limit(lim);
+
+  if (error) {
+    throw new Error(
+      (error as { message?: string }).message ??
+        "softphone_call_dispositions fetch failed",
+    );
+  }
+
+  const rows = (data ?? []) as Array<{
+    linkus_call_id: string;
+    agent_id: string;
+    tenant_id: string;
+    action: string;
+    caller_number: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+  if (rows.length === 0) return [];
+
+  const agentIds = [...new Set(rows.map((r) => r.agent_id).filter(Boolean))];
+  const tenantIds = [...new Set(rows.map((r) => r.tenant_id).filter(Boolean))];
+
+  const [agentsRes, tenantsRes] = await Promise.all([
+    agentIds.length > 0
+      ? supabase.from("agents").select("id, name").in("id", agentIds)
+      : Promise.resolve({
+          data: [] as { id: string; name: string }[],
+          error: null,
+        }),
+    tenantIds.length > 0
+      ? supabase.from("tenants").select("id, name").in("id", tenantIds)
+      : Promise.resolve({
+          data: [] as { id: string; name: string }[],
+          error: null,
+        }),
+  ]);
+
+  if (agentsRes.error) throw new Error(agentsRes.error.message);
+  if (tenantsRes.error) throw new Error(tenantsRes.error.message);
+
+  const agentMap = new Map((agentsRes.data ?? []).map((a) => [a.id, a.name]));
+  const tenantMap = new Map((tenantsRes.data ?? []).map((t) => [t.id, t.name]));
+
+  return rows.map((r) => {
+    const act = String(r.action ?? "").toLowerCase();
+    const action: "answered" | "rejected" =
+      act === "rejected" ? "rejected" : "answered";
+    return {
+      linkusCallId: r.linkus_call_id,
+      agentId: r.agent_id,
+      tenantId: r.tenant_id,
+      agentName: agentMap.get(r.agent_id) ?? "Unknown agent",
+      tenantName: tenantMap.get(r.tenant_id) ?? r.tenant_id,
+      action,
+      callerNumber: String(r.caller_number ?? ""),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  });
+}
 
 export function normalizePhoneNumber(phone: string | null | undefined): string {
   return String(phone ?? "").replace(/\D/g, "");
@@ -568,6 +712,11 @@ export function subscribeToCalls(
   tenantId: string | null,
   onChange: () => void,
 ): () => void {
+  const callsFilter = tenantId ? { filter: `tenant_id=eq.${tenantId}` } : {};
+  const dispFilter = tenantId
+    ? { filter: `tenant_id=eq.${tenantId}` }
+    : {};
+
   const channel = supabase
     .channel("yeastar-calls-cdc")
     .on(
@@ -576,7 +725,37 @@ export function subscribeToCalls(
         event: "INSERT",
         schema: "public",
         table: "calls",
-        ...(tenantId ? { filter: `tenant_id=eq.${tenantId}` } : {}),
+        ...callsFilter,
+      },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "calls",
+        ...callsFilter,
+      },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "softphone_call_dispositions",
+        ...dispFilter,
+      },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "softphone_call_dispositions",
+        ...dispFilter,
       },
       () => onChange(),
     )

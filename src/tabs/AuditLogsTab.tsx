@@ -7,12 +7,18 @@ import {
   Activity,
   Eye,
   MessageCircleReply,
+  PhoneCall,
 } from 'lucide-react';
 import {
   fetchSystemAuditLogs,
   type AuditLogEntry,
   isAuditChatSupportEntry,
 } from '@/services/auditLogApi';
+import {
+  fetchSoftphoneCallDispositionsForAudit,
+  type SoftphoneCallDispositionAuditRow,
+} from '@/services/dashboardApi';
+import { yeastarCallRowId } from '@/services/linkusCallLog';
 import { cn } from '@/lib/utils';
 
 function normAction(log: AuditLogEntry): string {
@@ -191,10 +197,103 @@ function detailsSearchBlob(log: AuditLogEntry): string {
   }
 }
 
-type FilterMode = 'all' | 'support_chat';
+function matchesAuditLog(log: AuditLogEntry, searchTerm: string): boolean {
+  if (!searchTerm) return true;
+  const s = searchTerm.toLowerCase();
+  const userName = (log.user_name ?? '').toLowerCase();
+  const userRole = (log.user_role ?? '').toLowerCase();
+  const resourceType = (log.resource_type ?? '').toLowerCase();
+  const resourceId = (log.resource_id ?? '').toLowerCase();
+  return (
+    (log.action ?? '').toLowerCase().includes(s) ||
+    userName.includes(s) ||
+    userRole.includes(s) ||
+    resourceType.includes(s) ||
+    resourceTypeLabel(log).toLowerCase().includes(s) ||
+    actionLabel(log).toLowerCase().includes(s) ||
+    resourceId.includes(s) ||
+    detailsSearchBlob(log).includes(s)
+  );
+}
+
+function dispositionSearchBlob(d: SoftphoneCallDispositionAuditRow): string {
+  return [
+    d.linkusCallId,
+    d.agentName,
+    d.tenantName,
+    d.callerNumber,
+    d.action,
+    yeastarCallRowId(d.linkusCallId),
+    d.agentId,
+    d.tenantId,
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function dispositionActionLabel(action: SoftphoneCallDispositionAuditRow['action']): string {
+  return action === 'rejected' ? 'Rejected' : 'Answered';
+}
+
+function dispositionBadgeClass(
+  action: SoftphoneCallDispositionAuditRow['action'],
+): string {
+  return action === 'rejected'
+    ? 'bg-rose-100 text-rose-800'
+    : 'bg-emerald-100 text-emerald-800';
+}
+
+function dispositionDetailsCell(d: SoftphoneCallDispositionAuditRow): ReactNode {
+  const pbxId = yeastarCallRowId(d.linkusCallId);
+  return (
+    <div className="space-y-1.5 text-xs leading-snug text-slate-700">
+      <div className="flex items-center gap-1.5 font-semibold text-teal-800">
+        <PhoneCall className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Linkus {dispositionActionLabel(d.action).toLowerCase()}
+      </div>
+      <p>
+        <span className="text-slate-400">Caller</span>{' '}
+        <span className="font-medium text-slate-800">{d.callerNumber || '—'}</span>
+      </p>
+      <p>
+        <span className="text-slate-400">Tenant</span>{' '}
+        <span className="font-medium text-slate-800">{d.tenantName}</span>
+      </p>
+      <p className="break-all font-mono text-[10px] text-slate-400">
+        Linkus ID {d.linkusCallId}
+      </p>
+      <p className="break-all font-mono text-[10px] text-slate-400">
+        PBX row {pbxId}
+      </p>
+      <p className="text-[10px] text-slate-500">
+        First seen {d.createdAt ? new Date(d.createdAt).toLocaleString() : '—'}
+        {d.updatedAt !== d.createdAt ? (
+          <>
+            <br />
+            Updated {new Date(d.updatedAt).toLocaleString()}
+          </>
+        ) : null}
+      </p>
+    </div>
+  );
+}
+
+function rowTimeMs(ts: string): number {
+  const t = new Date(ts).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+type UnifiedRow =
+  | { kind: 'audit'; log: AuditLogEntry; ts: string }
+  | { kind: 'softphone'; disposition: SoftphoneCallDispositionAuditRow; ts: string };
+
+type FilterMode = 'all' | 'support_chat' | 'softphone';
 
 export function AuditLogsTab() {
-  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [dispositionLogs, setDispositionLogs] = useState<
+    SoftphoneCallDispositionAuditRow[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
@@ -204,8 +303,12 @@ export function AuditLogsTab() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchSystemAuditLogs(200);
-      setLogs(data || []);
+      const [data, dispositions] = await Promise.all([
+        fetchSystemAuditLogs(200),
+        fetchSoftphoneCallDispositionsForAudit(200),
+      ]);
+      setAuditLogs(data || []);
+      setDispositionLogs(dispositions || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load audit logs');
     } finally {
@@ -217,29 +320,36 @@ export function AuditLogsTab() {
     void loadLogs();
   }, []);
 
-  const filteredLogs = useMemo(() => {
-    return logs.filter((log) => {
-      if (filterMode === 'support_chat' && !isAuditChatSupportEntry(log)) return false;
+  const unifiedRows = useMemo(() => {
+    const rows: UnifiedRow[] = [];
 
-      if (!searchTerm) return true;
-      const s = searchTerm.toLowerCase();
-      const userName = (log.user_name ?? '').toLowerCase();
-      const userRole = (log.user_role ?? '').toLowerCase();
-      const resourceType = (log.resource_type ?? '').toLowerCase();
-      const resourceId = (log.resource_id ?? '').toLowerCase();
+    if (filterMode === 'all' || filterMode === 'support_chat') {
+      for (const log of auditLogs) {
+        if (filterMode === 'support_chat' && !isAuditChatSupportEntry(log)) continue;
+        if (!matchesAuditLog(log, searchTerm)) continue;
+        rows.push({ kind: 'audit', log, ts: log.created_at ?? '' });
+      }
+    }
 
-      return (
-        (log.action ?? '').toLowerCase().includes(s) ||
-        userName.includes(s) ||
-        userRole.includes(s) ||
-        resourceType.includes(s) ||
-        resourceTypeLabel(log).toLowerCase().includes(s) ||
-        actionLabel(log).toLowerCase().includes(s) ||
-        resourceId.includes(s) ||
-        detailsSearchBlob(log).includes(s)
-      );
-    });
-  }, [logs, searchTerm, filterMode]);
+    if (filterMode === 'all' || filterMode === 'softphone') {
+      for (const d of dispositionLogs) {
+        if (
+          searchTerm &&
+          !dispositionSearchBlob(d).includes(searchTerm.toLowerCase())
+        ) {
+          continue;
+        }
+        rows.push({
+          kind: 'softphone',
+          disposition: d,
+          ts: d.updatedAt,
+        });
+      }
+    }
+
+    rows.sort((a, b) => rowTimeMs(b.ts) - rowTimeMs(a.ts));
+    return rows;
+  }, [auditLogs, dispositionLogs, searchTerm, filterMode]);
 
   return (
     <div className="animate-in fade-in space-y-6 duration-500 slide-in-from-bottom-4">
@@ -250,8 +360,8 @@ export function AuditLogsTab() {
             System Audit Logs
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Track activity across the command centre, including support chat (open thread, send reply)
-            and other audited actions.
+            Track activity across the command centre: support chat (open thread, send reply), Linkus
+            softphone answer and reject events, and other audited actions.
           </p>
         </div>
 
@@ -280,6 +390,18 @@ export function AuditLogsTab() {
               )}
             >
               Support chat
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterMode('softphone')}
+              className={cn(
+                'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                filterMode === 'softphone'
+                  ? 'border border-slate-300 bg-white text-slate-900 shadow-sm'
+                  : 'border border-transparent text-slate-600 hover:bg-white/80',
+              )}
+            >
+              Softphone
             </button>
           </div>
           <div className="relative">
@@ -324,26 +446,81 @@ export function AuditLogsTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {loading && logs.length === 0 ? (
+              {loading && auditLogs.length === 0 && dispositionLogs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-slate-400">
                     <Activity className="mx-auto mb-2 h-6 w-6 animate-pulse opacity-50" />
                     Loading audit trail…
                   </td>
                 </tr>
-              ) : filteredLogs.length === 0 ? (
+              ) : unifiedRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-slate-500">
                     No logs found matching your criteria.
                   </td>
                 </tr>
               ) : (
-                filteredLogs.map((log) => {
+                unifiedRows.map((row) => {
+                  if (row.kind === 'softphone') {
+                    const d = row.disposition;
+                    return (
+                      <tr
+                        key={`softphone-${d.linkusCallId}`}
+                        className="transition-colors hover:bg-slate-50/50 bg-teal-50/20"
+                      >
+                        <td className="whitespace-nowrap px-6 py-3 text-slate-500">
+                          <div className="flex items-center gap-2">
+                            <Calendar className="h-3 w-3 opacity-70" />
+                            {d.updatedAt
+                              ? new Date(d.updatedAt).toLocaleString()
+                              : 'N/A'}
+                          </div>
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3 font-medium text-slate-800">
+                          {d.agentName?.trim() || '—'}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3">
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-slate-600">
+                            —
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3">
+                          <span
+                            className={`rounded-md px-2 py-1 text-[11px] font-semibold uppercase tracking-wider ${dispositionBadgeClass(
+                              d.action,
+                            )}`}
+                          >
+                            Softphone · {dispositionActionLabel(d.action)}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3">
+                          <div className="flex flex-col">
+                            <span className="font-medium text-slate-700">
+                              Softphone disposition
+                            </span>
+                            <span
+                              className="mt-0.5 font-mono text-[10px] text-slate-400"
+                              title={d.linkusCallId}
+                            >
+                              {d.linkusCallId.length > 22
+                                ? `${d.linkusCallId.slice(0, 22)}…`
+                                : d.linkusCallId}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="max-w-md px-6 py-3 align-top text-slate-600 lg:max-w-lg">
+                          {dispositionDetailsCell(d)}
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  const log = row.log;
                   const chatRow = isAuditChatSupportEntry(log);
                   const na = normAction(log);
                   return (
                     <tr
-                      key={log.id ?? `${log.created_at}-${log.action}-${log.resource_id}`}
+                      key={log.id ?? `audit-${log.created_at}-${log.action}-${log.resource_id}`}
                       className={`transition-colors hover:bg-slate-50/50 ${chatRow ? 'bg-slate-50/30' : ''}`}
                     >
                       <td className="whitespace-nowrap px-6 py-3 text-slate-500">

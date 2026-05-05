@@ -37,7 +37,9 @@ import {
   appendLinkusCallLog,
   appendLinkusCallToSupabase,
   buildCallFromLinkusSessionEnd,
+  type LinkusCallDispositionPayload,
   type LinkusSessionEndPayload,
+  syncLinkusCallDispositionToSupabase,
   type SoftphoneCallLogContext,
 } from '@/services/linkusCallLog';
 import { useExtensions } from '@/hooks/useExtensions';
@@ -671,9 +673,16 @@ export function SoftphoneWidget({
     void appendLinkusCallToSupabase(call);
   }, []);
 
+  const onCallDispositionStable = useCallback((info: LinkusCallDispositionPayload) => {
+    const ctx = callLogContextRef.current;
+    if (!ctx?.tenantId) return;
+    void syncLinkusCallDispositionToSupabase(ctx, info);
+  }, []);
+
   const sdk = useLinkusSDK({
     agentEmail,
     onCallSessionEnd: onCallSessionEndStable,
+    onCallDisposition: onCallDispositionStable,
   });
   const meta = STATUS_META[sdk.status];
 

@@ -27,6 +27,7 @@ import {
   subscribeToCalls,
 } from "@/services/dashboardApi";
 import { fetchAgentOnboarding } from "@/services/agentOnboardingApi";
+import { DASHBOARD_REFRESH_REQUEST_EVENT } from "@/services/linkusCallLog";
 
 const POLL_INTERVAL = 8000;
 const INCOMING_CALLS_STORAGE_KEY = "cc_incoming_calls";
@@ -168,6 +169,16 @@ export function useDashboardData({
       loadData();
     }
   }, [loadData, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    const onRefresh = () => {
+      void loadData();
+    };
+    window.addEventListener(DASHBOARD_REFRESH_REQUEST_EVENT, onRefresh);
+    return () =>
+      window.removeEventListener(DASHBOARD_REFRESH_REQUEST_EVENT, onRefresh);
+  }, [session, loadData]);
 
   // Reconcile incoming calls against the CDR table. CDRs are the definitive
   // end-of-call signal — once `handleNewCdr` writes a row, the call is over

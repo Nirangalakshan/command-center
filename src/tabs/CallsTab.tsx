@@ -50,6 +50,8 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
   const cacheRef = useRef<Map<string, string | null>>(new Map());
   // DID → ownerId from did_mappings table
   const [didOwnerMap, setDidOwnerMap] = useState<Map<string, string>>(new Map());
+  // DID → "Workshop - Branch" display label from did_mappings
+  const [didTenantLabelMap, setDidTenantLabelMap] = useState<Map<string, string>>(new Map());
   const [didMapLoaded, setDidMapLoaded] = useState(false);
   const didMapLoadedRef = useRef(false);
 
@@ -69,11 +71,20 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
 
     fetchDIDMappings()
       .then((mappings) => {
-        const m = new Map<string, string>();
+        const ownerMap = new Map<string, string>();
+        const tenantLabelMap = new Map<string, string>();
         for (const d of mappings) {
-          if (d.ownerId) m.set(d.did, d.ownerId);
+          if (d.ownerId) ownerMap.set(d.did, d.ownerId);
+          const workshop = d.mappingWorkshopName?.trim();
+          const branch = d.branchName?.trim();
+          const tenantLabel =
+            workshop && branch
+              ? `${workshop} - ${branch}`
+              : workshop || branch || '';
+          if (tenantLabel) tenantLabelMap.set(d.did, tenantLabel);
         }
-        setDidOwnerMap(m);
+        setDidOwnerMap(ownerMap);
+        setDidTenantLabelMap(tenantLabelMap);
         // Clear any names cached with the wrong ownerUid (fallback tenantId)
         cacheRef.current.clear();
         setDidMapLoaded(true);
@@ -156,7 +167,7 @@ function useCallerNames(calls: Call[], tenants: Tenant[]) {
     };
   }, [calls, ownerByTenant, didOwnerMap, didMapLoaded]);
 
-  return { nameMap, loading };
+  return { nameMap, loading, didTenantLabelMap };
 }
 
 function CallStatusBadge({ result }: { result: CallResult }) {
@@ -193,7 +204,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
     [calls, linkusLog],
   );
 
-  const { nameMap, loading: namesLoading } = useCallerNames(allCalls, tenants);
+  const { nameMap, loading: namesLoading, didTenantLabelMap } = useCallerNames(allCalls, tenants);
 
   const availableQueues = useMemo(() => {
     const qids = new Set(allCalls.map((c) => c.queueId));
@@ -211,9 +222,14 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
       const s = searchTerm.toLowerCase();
       list = list.filter((c) => {
         const resolvedName = nameMap.get(c.callerNumber);
+        const mappedTenantLabel = c.dialedNumber
+          ? didTenantLabelMap.get(c.dialedNumber)
+          : undefined;
         const dirLabel = c.direction === 'outbound' ? 'outbound' : 'inbound';
         return (
           c.callerNumber.includes(s) ||
+          (c.dialedNumber && c.dialedNumber.includes(s)) ||
+          (mappedTenantLabel && mappedTenantLabel.toLowerCase().includes(s)) ||
           c.agentName.toLowerCase().includes(s) ||
           c.queueName.toLowerCase().includes(s) ||
           c.tenantName.toLowerCase().includes(s) ||
@@ -224,7 +240,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
       });
     }
     return list;
-  }, [allCalls, filterDirection, filterResult, filterQueue, searchTerm, nameMap]);
+  }, [allCalls, filterDirection, filterResult, filterQueue, searchTerm, nameMap, didTenantLabelMap]);
 
   return (
     <div className="cc-fade-in space-y-6">
@@ -236,7 +252,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
           <Input
             className="max-w-md bg-white"
             type="text"
-            placeholder="Search by customer name, phone, agent, queue, tenant, inbound / outbound…"
+            placeholder="Search by customer name, phone, DID, agent, queue, tenant, inbound / outbound…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -361,6 +377,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                   <TableHead>Direction</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Phone</TableHead>
+                  <TableHead>DID</TableHead>
                   {permissions.canViewTenantNames && (
                     <TableHead>Tenant</TableHead>
                   )}
@@ -374,6 +391,10 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                   const tenant = tenants.find((t) => t.id === c.tenantId);
                   const brandColor = tenant?.brandColor || 'var(--cc-color-cyan)';
                   const resolvedName = nameMap.get(c.callerNumber) || c.callerName;
+                  const mappedTenantLabel = c.dialedNumber
+                    ? didTenantLabelMap.get(c.dialedNumber)
+                    : undefined;
+                  const tenantDisplayName = mappedTenantLabel || c.tenantName;
 
                   return (
                     <TableRow key={c.id}>
@@ -411,6 +432,9 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                       <TableCell className="font-mono text-xs tabular-nums">
                         {formatPhone(c.callerNumber)}
                       </TableCell>
+                      <TableCell className="font-mono text-xs tabular-nums">
+                        {c.dialedNumber ? formatPhone(c.dialedNumber) : '—'}
+                      </TableCell>
                       {permissions.canViewTenantNames && (
                         <TableCell>
                           <span
@@ -422,7 +446,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                             }}
                           >
                             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: brandColor }} />
-                            {c.tenantName}
+                            {tenantDisplayName}
                           </span>
                         </TableCell>
                       )}

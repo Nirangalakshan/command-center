@@ -6,6 +6,9 @@ const MAX_ENTRIES = 80;
 
 export const LINKUS_CALL_LOG_EVENT = 'cc:linkus-call-log-updated';
 
+/** Ask `useDashboardData` to refetch (after softphone disposition write). */
+export const DASHBOARD_REFRESH_REQUEST_EVENT = 'cc:dashboard-refresh-request';
+
 export type LinkusSessionEndPayload = {
   callId: string;
   direction: 'inbound' | 'outbound';
@@ -24,6 +27,110 @@ export type SoftphoneCallLogContext = {
   queueId: string;
   queueName: string;
 };
+
+/** Fired when the user taps Answer or Reject on an incoming Linkus call (best-effort sync to `calls`). */
+export type LinkusCallDispositionPayload = {
+  callId: string;
+  action: 'answered' | 'rejected';
+  number: string;
+  name: string;
+  direction: 'inbound' | 'outbound';
+};
+
+/** PBX CDR rows use `yeastar-<pbx_call_id>`; Linkus `callId` usually matches that `pbx_call_id`. */
+export function yeastarCallRowId(linkusCallId: string): string {
+  const base = linkusCallId.split('@')[0]?.trim() || linkusCallId;
+  return `yeastar-${base}`;
+}
+
+type UntypedSb = {
+  from: (table: string) => {
+    upsert: (
+      rows: Record<string, unknown>,
+      opts?: { onConflict?: string },
+    ) => Promise<{ error: { message: string; code?: string } | null }>;
+  };
+};
+
+/**
+ * 1) Upsert `softphone_call_dispositions` (always works if RLS + agents.user_id are set).
+ * 2) Best-effort patch `calls` (same as PBX row id when ids align).
+ */
+export async function syncLinkusCallDispositionToSupabase(
+  ctx: SoftphoneCallLogContext,
+  p: LinkusCallDispositionPayload,
+): Promise<void> {
+  const agentId = ctx.agentId?.trim();
+  if (!agentId || !ctx.tenantId || !ctx.queueId) return;
+
+  const linkusKey = p.callId.split('@')[0]?.trim() || p.callId;
+  const callerDigits =
+    digitsOnly(p.number) || String(p.number ?? '').trim();
+  if (p.direction === 'inbound' && !callerDigits) return;
+
+  const sb = supabase as unknown as UntypedSb;
+  const { error: dispErr } = await sb.from('softphone_call_dispositions').upsert(
+    {
+      linkus_call_id: linkusKey,
+      agent_id: agentId,
+      tenant_id: ctx.tenantId,
+      action: p.action,
+      caller_number: callerDigits,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'linkus_call_id' },
+  );
+
+  if (dispErr) {
+    console.warn('[linkusCallLog] softphone_call_dispositions upsert failed', dispErr.message);
+  }
+
+  const rowId = yeastarCallRowId(linkusKey);
+  const { data: updatedRows, error: updErr } = await supabase
+    .from('calls')
+    .update({ agent_id: agentId })
+    .eq('id', rowId)
+    .select('id');
+
+  if (updErr) {
+    console.warn('[linkusCallLog] calls disposition update failed', updErr.message);
+  } else if (updatedRows && updatedRows.length > 0) {
+    window.dispatchEvent(new CustomEvent(DASHBOARD_REFRESH_REQUEST_EVENT));
+    return;
+  }
+
+  if (p.direction !== 'inbound') {
+    window.dispatchEvent(new CustomEvent(DASHBOARD_REFRESH_REQUEST_EVENT));
+    return;
+  }
+
+  const { error: insErr } = await supabase.from('calls').insert({
+    id: rowId,
+    tenant_id: ctx.tenantId,
+    queue_id: ctx.queueId,
+    agent_id: agentId,
+    caller_number: callerDigits,
+    caller_name: p.name?.trim() || null,
+    direction: 'inbound',
+    start_time: new Date().toISOString(),
+    duration_seconds: 0,
+    result: 'missed',
+    transcript_status: 'none',
+    summary_status: 'none',
+  });
+
+  if (insErr && insErr.code === '23505') {
+    await supabase.from('calls').update({ agent_id: agentId }).eq('id', rowId);
+  } else if (insErr) {
+    console.warn('[linkusCallLog] calls stub insert failed', insErr.message);
+  }
+
+  window.dispatchEvent(new CustomEvent(DASHBOARD_REFRESH_REQUEST_EVENT));
+}
+
+function digitsOnly(num: string): string {
+  return String(num ?? '').replace(/\D/g, '');
+}
 
 function endResult(last: LinkusSessionEndPayload['lastCallStatus']): CallResult {
   if (last === 'talking') return 'answered';
@@ -142,25 +249,66 @@ export async function appendLinkusCallToSupabase(entry: Call): Promise<void> {
   }
 }
 
-/** Merge PBX `calls` rows with browser-logged Linkus sessions; drop local rows duplicated by recent server CDR. */
+/** Same caller across +country / 0-local / raw formats. */
+function callerNumbersLikelySame(a: string, b: string): boolean {
+  const na = digitsOnly(a);
+  const nb = digitsOnly(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return na.endsWith(nb) || nb.endsWith(na);
+}
+
+/**
+ * Prefer PBX for most fields; for agent, trust the softphone row when it identifies
+ * an agent — CDR often attributes `call_to` to queue / first-rung extension, not who answered.
+ */
+function mergeLinkusIntoServer(s: Call, l: Call): Call {
+  const linkusAgentKnown = l.agentId != null && l.agentName && l.agentName !== '—';
+  return {
+    ...s,
+    agentId: linkusAgentKnown ? l.agentId : (s.agentId ?? l.agentId),
+    agentName: linkusAgentKnown ? l.agentName : (s.agentName && s.agentName !== '—' ? s.agentName : l.agentName),
+    dialedNumber: s.dialedNumber ?? l.dialedNumber,
+    callerName: s.callerName ?? l.callerName,
+  };
+}
+
+function isServerRowForLinkusSession(s: Call, l: Call, windowMs: number): boolean {
+  if (s.direction !== l.direction) return false;
+  if (!callerNumbersLikelySame(s.callerNumber, l.callerNumber)) return false;
+  const a = new Date(s.startTime).getTime();
+  const b = new Date(l.startTime).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(a - b) < windowMs;
+}
+
+/** Merge PBX `calls` with browser Linkus log: one row per call when CDR + softphone match; enrich agent from softphone when PBX row is missing it. */
 export function mergeCallsWithLinkusLog(server: Call[], local: Call[]): Call[] {
-  const out: Call[] = [...server];
   const windowMs = 3 * 60_000;
+  const linkusLocals = local.filter((l) => l.id.startsWith('linkus-'));
+  const consumedLinkus = new Set<string>();
 
-  for (const l of local) {
-    if (!l.id.startsWith('linkus-')) continue;
+  const mergedServer = server.map((s) => {
+    let best: Call | null = null;
+    let bestDelta = Infinity;
+    for (const l of linkusLocals) {
+      if (consumedLinkus.has(l.id)) continue;
+      if (!isServerRowForLinkusSession(s, l, windowMs)) continue;
+      const delta = Math.abs(
+        new Date(s.startTime).getTime() - new Date(l.startTime).getTime(),
+      );
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        best = l;
+      }
+    }
+    if (!best) return s;
+    consumedLinkus.add(best.id);
+    return mergeLinkusIntoServer(s, best);
+  });
 
-    const dup = server.some((s) => {
-      if (s.direction !== l.direction || l.direction !== 'outbound') return false;
-      if (s.callerNumber !== l.callerNumber) return false;
-      const a = new Date(s.startTime).getTime();
-      const b = new Date(l.startTime).getTime();
-      if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
-      return Math.abs(a - b) < windowMs;
-    });
-
-    if (!dup) out.push(l);
-  }
+  const leftover = linkusLocals.filter((l) => !consumedLinkus.has(l.id));
+  const out = [...mergedServer, ...leftover];
 
   return out.sort(
     (a, b) =>

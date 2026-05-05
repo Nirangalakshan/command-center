@@ -19,16 +19,15 @@ export function formatSeconds(sec: number): string {
   return sec > 0 ? formatDuration(sec * 1000) : '—';
 }
 
-/** Format ISO date or Date to HH:MM:SS (Melbourne time) */
+/** Format ISO date or Date to HH:MM:SS (browser local timezone). */
 export function formatTime(date: string | Date | null): string {
   if (!date) return '—';
   const d = date instanceof Date ? date : new Date(date);
-  return d.toLocaleTimeString('en-AU', {
+  return d.toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-    timeZone: 'Australia/Melbourne',
   });
 }
 
