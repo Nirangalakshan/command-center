@@ -23,7 +23,7 @@ export function AttendanceTab({
 
   if (session.role === "super-admin") {
     return (
-      <div className="cc-fade-in mx-auto max-w-5xl space-y-6">
+      <div className="cc-fade-in mx-auto max-w-7xl space-y-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Attendance</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -37,7 +37,7 @@ export function AttendanceTab({
 
   if (session.role === "agent" && permissions.canViewShiftPanel) {
     return (
-      <div className="cc-fade-in mx-auto max-w-3xl space-y-6">
+      <div className="cc-fade-in mx-auto max-w-6xl space-y-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Attendance</h1>
           <p className="mt-1 text-sm text-muted-foreground">

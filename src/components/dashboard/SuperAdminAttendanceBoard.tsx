@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Agent, Tenant } from "@/services/types";
-import { formatDuration } from "@/utils/formatters";
+import { formatDuration, formatTime } from "@/utils/formatters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveDot } from "@/components/dashboard/LiveDot";
@@ -276,7 +276,7 @@ export function SuperAdminAttendanceBoard({
                         <div className="flex flex-col gap-1">
                           {r.segments.map((s, i) => (
                             <span key={i}>
-                              {format(new Date(s.clockInMs), "HH:mm")}
+                              {formatTime(new Date(s.clockInMs))}
                             </span>
                           ))}
                         </div>
@@ -296,7 +296,7 @@ export function SuperAdminAttendanceBoard({
                             >
                               {s.clockOutMs == null
                                 ? "Open"
-                                : format(new Date(s.clockOutMs), "HH:mm")}
+                                : formatTime(new Date(s.clockOutMs))}
                             </span>
                           ))}
                         </div>

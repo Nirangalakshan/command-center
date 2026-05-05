@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { UserSession } from "@/services/types";
-import { formatDuration } from "@/utils/formatters";
+import { formatDuration, formatTime } from "@/utils/formatters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -289,9 +289,9 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
         {isViewingToday && (shiftStartedAt || breakStartedAt) && (
           <div className="font-mono text-xs text-muted-foreground">
             {status === "on_break" && breakStartedAt
-              ? `Break since ${format(new Date(breakStartedAt), "HH:mm")}`
+              ? `Break since ${formatTime(new Date(breakStartedAt))}`
               : shiftStartedAt
-                ? `Shift since ${format(new Date(shiftStartedAt), "HH:mm")}`
+                ? `Shift since ${formatTime(new Date(shiftStartedAt))}`
                 : null}
           </div>
         )}
@@ -329,51 +329,68 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
           </p>
         )}
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            className="gap-1.5"
-            disabled={
-              !isViewingToday || submitting || loading || status === "working" || status === "on_break"
-            }
-            onClick={onClockIn}
-          >
-            <LogIn className="h-4 w-4" />
-            Clock in
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="gap-1.5"
-            disabled={!isViewingToday || submitting || loading || status !== "working"}
-            onClick={onTakeBreak}
-          >
-            <Coffee className="h-4 w-4" />
-            Take break
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="gap-1.5"
-            disabled={!isViewingToday || submitting || loading || status !== "on_break"}
-            onClick={onEndBreak}
-          >
-            End break
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="gap-1.5"
-            disabled={!isViewingToday || submitting || loading || status === "off_clock"}
-            onClick={() => void onClockOut()}
-          >
-            <LogOut className="h-4 w-4" />
-            Clock out
-          </Button>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {!isViewingToday ? (
+            <>
+              <Button type="button" size="sm" className="gap-1.5" disabled>
+                <LogIn className="h-4 w-4" />
+                Clock in
+              </Button>
+              <Button type="button" size="sm" variant="outline" className="gap-1.5" disabled>
+                <LogOut className="h-4 w-4" />
+                Clock out
+              </Button>
+            </>
+          ) : (
+            <>
+              {status === "off_clock" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={submitting || loading}
+                  onClick={onClockIn}
+                >
+                  <LogIn className="h-4 w-4" />
+                  Clock in
+                </Button>
+              ) : status === "working" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="gap-1.5"
+                  disabled={submitting || loading}
+                  onClick={onTakeBreak}
+                >
+                  <Coffee className="h-4 w-4" />
+                  Take break
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={submitting || loading}
+                  onClick={onEndBreak}
+                >
+                  <LogIn className="h-4 w-4" />
+                  Clock in
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                disabled={submitting || loading || status === "off_clock"}
+                onClick={() => void onClockOut()}
+              >
+                <LogOut className="h-4 w-4" />
+                Clock out
+              </Button>
+            </>
+          )}
         </div>
 
         <div className="rounded-xl border border-border/80 bg-white shadow-sm">
@@ -417,13 +434,13 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
                     <TableRow key={`${seg.clockInMs}-${i}`}>
                       <TableCell className="font-mono text-xs text-muted-foreground">{i + 1}</TableCell>
                       <TableCell className="font-mono text-sm">
-                        {format(new Date(seg.clockInMs), "HH:mm")}
+                        {formatTime(new Date(seg.clockInMs))}
                       </TableCell>
                       <TableCell className="font-mono text-sm">
                         {seg.clockOutMs == null ? (
                           <span className="text-amber-700">Open</span>
                         ) : (
-                          format(new Date(seg.clockOutMs), "HH:mm")
+                          formatTime(new Date(seg.clockOutMs))
                         )}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm text-amber-800/90">
