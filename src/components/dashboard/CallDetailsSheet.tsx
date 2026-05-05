@@ -2,15 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
-  ArrowRightLeft,
   CalendarPlus2,
   CarFront,
-  ClipboardPenLine,
   History,
   Mail,
   MapPin,
   MessageSquareText,
-  Route,
   UserRound,
   Wrench,
 } from "lucide-react";
@@ -31,7 +28,6 @@ import {
   getServicesByBranch,
   type WorkshopService,
 } from "@/services/servicesApi";
-import { useToast } from "@/hooks/use-toast";
 import { formatDuration, formatPhone } from "@/utils/formatters";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -161,7 +157,6 @@ export function CallDetailsSheet({
   open,
   onOpenChange,
 }: CallDetailsSheetProps) {
-  const { toast } = useToast();
   const navigate = useNavigate();
   const [callerContext, setCallerContext] = useState<CallerContext | null>(
     null,
@@ -176,11 +171,7 @@ export function CallDetailsSheet({
   const commandButtons = useMemo(
     () => [
       { label: "Book Now", icon: CalendarPlus2 },
-      { label: "Log Note", icon: ClipboardPenLine },
-      { label: "Profile", icon: UserRound },
       { label: "Booking Details", icon: CalendarCheck },
-      { label: "Reroute Call", icon: Route },
-      { label: "Call Dispatch", icon: ArrowRightLeft },
     ],
     [],
   );
@@ -444,10 +435,6 @@ export function CallDetailsSheet({
                             });
                             return;
                           }
-                          toast({
-                            title: command.label,
-                            description: `${command.label} selected for ${resolvedCustomerName}.`,
-                          });
                         }}
                       >
                         <Icon className="h-4 w-4" />
