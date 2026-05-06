@@ -812,6 +812,7 @@ export type Database = {
           agent_id: string
           created_at: string
           first_called_at: string | null
+          follow_up_at: string | null
           id: string
           remarks: string
           tenant_id: string
@@ -822,6 +823,7 @@ export type Database = {
           agent_id: string
           created_at?: string
           first_called_at?: string | null
+          follow_up_at?: string | null
           id?: string
           remarks?: string
           tenant_id: string
@@ -832,6 +834,7 @@ export type Database = {
           agent_id?: string
           created_at?: string
           first_called_at?: string | null
+          follow_up_at?: string | null
           id?: string
           remarks?: string
           tenant_id?: string
@@ -1037,6 +1040,10 @@ export type Database = {
       }
       update_sales_suburb_workshop_remarks: {
         Args: { p_workshop_id: string; p_remarks: string }
+        Returns: Json
+      }
+      set_sales_suburb_workshop_follow_up: {
+        Args: { p_follow_up_at: string | null; p_workshop_id: string }
         Returns: Json
       }
     }

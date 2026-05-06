@@ -18,6 +18,7 @@ import {
   workshopsMatchingSuburb,
   updateSalesLeadDeskNotes,
   updateSalesSuburbWorkshopAgentRemarks,
+  setSalesSuburbWorkshopFollowUp,
   type SalesLeadRow,
   type SalesSuburbRow,
   type SalesSuburbWorkshopWithAgentContact,
@@ -28,7 +29,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -47,6 +48,22 @@ import {
 } from "@/components/ui/table";
 
 const PROGRESS_EXPAND_AT = 20;
+
+function toDatetimeLocalValue(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDatetimeLocalValue(local: string): string | null {
+  const s = local.trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString();
+}
 
 export interface SalesAgentTabProps {
   agents: Agent[];
@@ -73,8 +90,10 @@ function SuburbWorkshopsTable({
   onRefresh?: () => void | Promise<void>;
 }) {
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [followUpDrafts, setFollowUpDrafts] = useState<Record<string, string>>({});
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [savingNotesId, setSavingNotesId] = useState<string | null>(null);
+  const [savingFollowUpId, setSavingFollowUpId] = useState<string | null>(null);
 
   const rows = useMemo(
     () =>
@@ -92,6 +111,11 @@ function SuburbWorkshopsTable({
 
   useEffect(() => {
     setNoteDrafts(Object.fromEntries(workshops.map((w) => [w.id, w.agent_remarks ?? ""])));
+    setFollowUpDrafts(
+      Object.fromEntries(
+        workshops.map((w) => [w.id, toDatetimeLocalValue(w.agent_follow_up_at)]),
+      ),
+    );
   }, [workshops]);
 
   return (
@@ -99,7 +123,7 @@ function SuburbWorkshopsTable({
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Suburb workshops</CardTitle>
         <p className="text-sm font-normal text-muted-foreground">
-          Rows come from Sales → Suburb workshops. Your &quot;Mark as called&quot; and remarks are saved for you only (other agents have their own).
+          Rows come from Sales → Suburb workshops. Mark called, remarks, and optional callback time are yours only (per agent).
         </p>
       </CardHeader>
       <CardContent>
@@ -119,6 +143,7 @@ function SuburbWorkshopsTable({
                   <TableHead>Email</TableHead>
                   <TableHead className="min-w-[10rem]">Mark as called</TableHead>
                   <TableHead className="min-w-[220px]">Remarks</TableHead>
+                  <TableHead className="min-w-[13rem]">Follow-up</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -126,6 +151,11 @@ function SuburbWorkshopsTable({
                   const called = Boolean(w.agent_first_called_at);
                   const draft = noteDrafts[w.id] ?? w.agent_remarks ?? "";
                   const dirty = draft.trim() !== (w.agent_remarks ?? "").trim();
+                  const followDraft =
+                    followUpDrafts[w.id] ?? toDatetimeLocalValue(w.agent_follow_up_at);
+                  const followDraftIso = fromDatetimeLocalValue(followDraft);
+                  const serverFollowIso = w.agent_follow_up_at ?? null;
+                  const followDirty = followDraftIso !== serverFollowIso;
                   return (
                     <TableRow key={w.id}>
                       <TableCell className="text-sm">{w.suburb?.trim() || "—"}</TableCell>
@@ -197,6 +227,74 @@ function SuburbWorkshopsTable({
                           >
                             {savingNotesId === w.id && dirty ? "Saving…" : "Save remarks"}
                           </Button>
+                        </div>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <div className="flex flex-col gap-2 min-w-[12rem]">
+                          <Input
+                            type="datetime-local"
+                            value={followDraft}
+                            onChange={(e) =>
+                              setFollowUpDrafts((prev) => ({
+                                ...prev,
+                                [w.id]: e.target.value,
+                              }))
+                            }
+                            className="text-sm min-w-[12rem]"
+                          />
+                          <div className="flex flex-wrap gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!followDirty || savingFollowUpId === w.id}
+                              onClick={() => {
+                                setSavingFollowUpId(w.id);
+                                void setSalesSuburbWorkshopFollowUp(
+                                  w.id,
+                                  fromDatetimeLocalValue(followDraft),
+                                )
+                                  .then(async () => {
+                                    toast.success("Follow-up saved");
+                                    await onRefresh?.();
+                                  })
+                                  .catch((e) =>
+                                    toast.error(e instanceof Error ? e.message : "Could not save"),
+                                  )
+                                  .finally(() => setSavingFollowUpId(null));
+                              }}
+                            >
+                              {savingFollowUpId === w.id && followDirty ? "Saving…" : "Save"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={
+                                savingFollowUpId === w.id ||
+                                (!serverFollowIso && !followDraft.trim())
+                              }
+                              onClick={() => {
+                                setSavingFollowUpId(w.id);
+                                setFollowUpDrafts((prev) => ({ ...prev, [w.id]: "" }));
+                                void setSalesSuburbWorkshopFollowUp(w.id, null)
+                                  .then(async () => {
+                                    toast.success("Follow-up cleared");
+                                    await onRefresh?.();
+                                  })
+                                  .catch((e) => {
+                                    setFollowUpDrafts((prev) => ({
+                                      ...prev,
+                                      [w.id]: toDatetimeLocalValue(w.agent_follow_up_at),
+                                    }));
+                                    toast.error(e instanceof Error ? e.message : "Could not clear");
+                                  })
+                                  .finally(() => setSavingFollowUpId(null));
+                              }}
+                            >
+                              Clear
+                            </Button>
+                          </div>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -803,41 +901,122 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
 }
 
 export function AgentFollowUpsTab() {
-  const [rows, setRows] = useState<SalesLeadRow[]>([]);
-  useEffect(() => {
-    void fetchSalesLeadsMine().then((l) =>
-      setRows(
-        l
+  const [leadRows, setLeadRows] = useState<SalesLeadRow[]>([]);
+  const [workshopRows, setWorkshopRows] = useState<SalesSuburbWorkshopWithAgentContact[]>([]);
+
+  const reload = useCallback(() => {
+    void Promise.all([
+      fetchSalesLeadsMine(),
+      fetchSalesSuburbWorkshopsWithAgentContact().catch(() => [] as SalesSuburbWorkshopWithAgentContact[]),
+    ]).then(([leads, ws]) => {
+      setLeadRows(
+        leads
           .filter((x) => x.follow_up_at)
+          .slice()
           .sort((a, b) =>
             String(a.follow_up_at!).localeCompare(String(b.follow_up_at!)),
           ),
-      ),
-    );
+      );
+      setWorkshopRows(
+        ws
+          .filter((w) => Boolean(w.agent_follow_up_at))
+          .slice()
+          .sort((a, b) =>
+            String(a.agent_follow_up_at!).localeCompare(String(b.agent_follow_up_at!)),
+          ),
+      );
+    });
   }, []);
 
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">My follow-ups</h2>
-          <p className="text-sm text-muted-foreground">Rows created when disposition = call back later.</p>
+    <div className="space-y-8">
+      <div className="space-y-4">
+        <div className="flex justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">My follow-ups</h2>
+            <p className="text-sm text-muted-foreground">
+              Lead callbacks from <span className="font-medium text-foreground">Call back later</span> outcomes plus
+              workshop callback times from My call list.
+            </p>
+          </div>
+          <Button type="button" variant="outline" onClick={reload}>
+            Reload
+          </Button>
         </div>
-        <Button type="button" variant="outline" onClick={() => void fetchSalesLeadsMine().then(setRows)}>Reload</Button>
+
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Leads</h3>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>When</TableHead>
+                <TableHead>Notes</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {leadRows.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell>
+                    {r.display_name}
+                    <div className="font-mono text-[11px] text-muted-foreground">{r.phone}</div>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {r.follow_up_at ? new Date(r.follow_up_at).toLocaleString() : "—"}
+                  </TableCell>
+                  <TableCell className="text-sm">{r.notes || "—"}</TableCell>
+                </TableRow>
+              ))}
+              {leadRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={3}>
+                    <EmptyState message='No lead follow-ups — use Log outcome → "Call back later" when dialling assigned leads.' />
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
+
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Suburb workshops</h3>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Suburb</TableHead>
+                <TableHead>Workshop</TableHead>
+                <TableHead>When</TableHead>
+                <TableHead>Remarks</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {workshopRows.map((w) => (
+                <TableRow key={w.id}>
+                  <TableCell className="text-sm">{w.suburb?.trim() || "—"}</TableCell>
+                  <TableCell className="font-medium text-sm">{w.workshop_name?.trim() || "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {w.agent_follow_up_at
+                      ? new Date(w.agent_follow_up_at).toLocaleString()
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-sm">{w.agent_remarks?.trim() || "—"}</TableCell>
+                </TableRow>
+              ))}
+              {workshopRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4}>
+                    <EmptyState message="No workshop callbacks — set a follow-up on My call list → Suburb workshops." />
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
       </div>
-      <Table>
-        <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>When</TableHead><TableHead>Notes</TableHead></TableRow></TableHeader>
-        <TableBody>
-          {rows.map((r) => (
-            <TableRow key={r.id}>
-              <TableCell>{r.display_name}<div className="font-mono text-[11px] text-muted-foreground">{r.phone}</div></TableCell>
-              <TableCell className="whitespace-nowrap text-sm">{r.follow_up_at ? new Date(r.follow_up_at).toLocaleString() : "—"}</TableCell>
-              <TableCell className="text-sm">{r.notes || "—"}</TableCell>
-            </TableRow>
-          ))}
-          {rows.length === 0 ? <TableRow><TableCell colSpan={3}><EmptyState message="No scheduled retries — outcomes will queue them automatically." /></TableCell></TableRow> : null}
-        </TableBody>
-      </Table>
     </div>
   );
 }

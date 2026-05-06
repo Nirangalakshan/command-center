@@ -10,6 +10,7 @@ import {
   fetchSalesLeadsTenant,
   fetchSalesSiteVisitsTenant,
   fetchSalesSuburbs,
+  fetchSalesSuburbWorkshopAgentContactTenant,
   fetchSalesSuburbWorkshopsTenant,
   fetchSalesTrialsTenant,
   insertSalesLead,
@@ -23,6 +24,7 @@ import {
   updateSalesSuburbWorkshop,
   type SalesCampaignRow,
   type SalesLeadRow,
+  type SalesSuburbWorkshopContactRow,
   type SalesSuburbWorkshopRow,
 } from "@/services/salesWorkspaceApi";
 import { fetchAllAgents } from "@/services/dashboardApi";
@@ -57,6 +59,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 
 const PROGRESS_EXPAND_AT = 20;
@@ -1360,15 +1363,21 @@ export function SalesCallAssignmentBoardTab({
 export function SalesCallProgressTab({
   tenantId,
   agents,
-  onRefreshDashboard,
+  onRefreshDashboard: _onRefreshDashboard,
 }: SalesAdminTabProps) {
-  const [leads, setLeads] = useState<SalesLeadRow[]>([]);
+  const [contacts, setContacts] = useState<SalesSuburbWorkshopContactRow[]>([]);
+  const [workshops, setWorkshops] = useState<SalesSuburbWorkshopRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (tid: string) => {
     setLoading(true);
     try {
-      setLeads(await fetchSalesLeadsTenant(tid));
+      const [c, w] = await Promise.all([
+        fetchSalesSuburbWorkshopAgentContactTenant(tid),
+        fetchSalesSuburbWorkshopsTenant(tid),
+      ]);
+      setContacts(c);
+      setWorkshops(w);
     } finally {
       setLoading(false);
     }
@@ -1379,15 +1388,24 @@ export function SalesCallProgressTab({
     void load(tenantId);
   }, [tenantId, load]);
 
-  const stats = useMemo(() => salesProgressFromLeads(leads), [leads]);
-  const expanded = stats.assignedTotal >= PROGRESS_EXPAND_AT;
+  const workshopById = useMemo(() => new Map(workshops.map((w) => [w.id, w] as const)), [workshops]);
 
-  const assignedDetailRows = useMemo(() => {
-    return leads
-      .filter((l) => l.assigned_agent_id && !l.do_not_call)
-      .slice()
-      .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
-  }, [leads]);
+  const stats = useMemo(() => {
+    const total = contacts.length;
+    const markedCalled = contacts.filter((r) => Boolean(r.first_called_at)).length;
+    const withRemarks = contacts.filter((r) => (r.remarks ?? "").trim().length > 0).length;
+    const withFollowUp = contacts.filter((r) => Boolean(r.follow_up_at)).length;
+    return { total, markedCalled, withRemarks, withFollowUp };
+  }, [contacts]);
+
+  const followUpRows = useMemo(
+    () =>
+      contacts
+        .filter((r) => Boolean(r.follow_up_at))
+        .slice()
+        .sort((a, b) => String(a.follow_up_at!).localeCompare(String(b.follow_up_at!))),
+    [contacts],
+  );
 
   return (
     <SalesTenantScope tenantId={tenantId}>
@@ -1397,115 +1415,154 @@ export function SalesCallProgressTab({
             <div>
               <h2 className="text-lg font-semibold">Call progress tracker</h2>
               <p className="text-sm text-muted-foreground">
-                Funnel counts and the detail grid use live CRM fields: agents update call status and remarks from{" "}
-                <span className="font-medium text-foreground">My call list</span>. With {stats.assignedTotal}{" "}
-                assigned leads,{" "}
-                {expanded
-                  ? "full funnel telemetry is unlocked."
-                  : "the extended strip appears at 20+ assigned leads."}
+                Workshop contact activity for this tenant. Switch between <span className="font-medium text-foreground">All activity</span> and{" "}
+                <span className="font-medium text-foreground">Follow-ups</span> (callbacks only). Agents update records on{" "}
+                <span className="font-medium text-foreground">My call list</span>.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                void load(tid);
-                onRefreshDashboard();
-              }}
-            >
+            <Button type="button" variant="outline" onClick={() => void load(tid)}>
               Refresh
             </Button>
           </div>
           {loading ? (
-            <EmptyState message="Calculating funnel…" />
+            <EmptyState message="Loading workshop contact activity…" />
           ) : (
             <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Badge className="justify-center py-4 text-sm font-medium">
-                Assigned · {stats.assignedTotal}
-              </Badge>
-              <Badge variant="outline" className="justify-center py-4 text-sm">
-                Called · {stats.called}
-              </Badge>
-              <Badge variant="outline" className="justify-center py-4 text-sm">
-                Not called · {stats.notCalled}
-              </Badge>
-              <Badge variant="outline" className="justify-center py-4 text-sm">
-                Converted · {stats.converted}
-              </Badge>
-              {(expanded || stats.assignedTotal > 0) && (
-                <>
-                  <Badge variant="secondary" className="justify-center py-4 text-sm">
-                    Interested+ · {stats.interested}
-                  </Badge>
-                  <Badge variant="secondary" className="justify-center py-4 text-sm">
-                    Trial started · {stats.trialStarted}
-                  </Badge>
-                  <Badge variant="secondary" className="justify-center py-4 text-sm">
-                    Site visits · {stats.siteVisitsBooked}
-                  </Badge>
-                  <Badge variant="secondary" className="justify-center py-4 text-sm">
-                    Converted · {stats.converted}
-                  </Badge>
-                </>
-              )}
-            </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Badge className="justify-center py-4 text-sm font-medium">
+                  Rows logged · {stats.total}
+                </Badge>
+                <Badge variant="outline" className="justify-center py-4 text-sm">
+                  Marked called · {stats.markedCalled}
+                </Badge>
+                <Badge variant="outline" className="justify-center py-4 text-sm">
+                  With remarks · {stats.withRemarks}
+                </Badge>
+                <Badge variant="outline" className="justify-center py-4 text-sm">
+                  With follow-up · {stats.withFollowUp}
+                </Badge>
+              </div>
 
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold">Assigned leads — remarks &amp; call status</h3>
-              <p className="text-xs text-muted-foreground">
-                Same CRM rows agents edit from My call list (first call time + notes).
-              </p>
-              <ScrollArea className="h-[min(60vh,520px)] rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Lead</TableHead>
-                      <TableHead>Phone</TableHead>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Stage</TableHead>
-                      <TableHead>First called</TableHead>
-                      <TableHead className="min-w-[200px]">Remarks</TableHead>
-                      <TableHead>Updated</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {assignedDetailRows.map((l) => {
-                      const agentName =
-                        agents.find((a) => a.id === l.assigned_agent_id)?.name ?? "—";
-                      return (
-                        <TableRow key={l.id}>
-                          <TableCell className="font-medium">{l.display_name}</TableCell>
-                          <TableCell className="font-mono text-xs whitespace-nowrap">{l.phone}</TableCell>
-                          <TableCell className="text-sm">{agentName}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{l.journey_stage}</Badge>
-                          </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                            {l.first_called_at
-                              ? new Date(l.first_called_at).toLocaleString()
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-sm max-w-md align-top whitespace-pre-wrap break-words">
-                            {(l.notes ?? "").trim() || "—"}
-                          </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                            {l.updated_at ? new Date(l.updated_at).toLocaleString() : "—"}
-                          </TableCell>
+              <Tabs defaultValue="all" className="space-y-4">
+                <TabsList>
+                  <TabsTrigger value="all">All activity</TabsTrigger>
+                  <TabsTrigger value="followups">Follow-ups ({stats.withFollowUp})</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="all" className="space-y-2 mt-0">
+                  <h3 className="text-sm font-semibold">Suburb workshops — agent status</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Every saved workshop contact row (mark called + remarks); use Follow-ups tab for callbacks only.
+                  </p>
+                  <ScrollArea className="h-[min(60vh,520px)] rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Suburb</TableHead>
+                          <TableHead>Workshop</TableHead>
+                          <TableHead>Agent</TableHead>
+                          <TableHead>First called</TableHead>
+                          <TableHead className="min-w-[200px]">Remarks</TableHead>
+                          <TableHead>Updated</TableHead>
                         </TableRow>
-                      );
-                    })}
-                    {assignedDetailRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7}>
-                          <EmptyState message="No assigned leads in this tenant yet." />
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            </div>
+                      </TableHeader>
+                      <TableBody>
+                        {contacts.map((r) => {
+                          const w = workshopById.get(r.workshop_id);
+                          const agentName = agents.find((a) => a.id === r.agent_id)?.name ?? "—";
+                          return (
+                            <TableRow key={r.id}>
+                              <TableCell className="text-sm">{w?.suburb?.trim() || "—"}</TableCell>
+                              <TableCell className="font-medium text-sm">
+                                {w?.workshop_name?.trim() || "—"}
+                              </TableCell>
+                              <TableCell className="text-sm">{agentName}</TableCell>
+                              <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                                {r.first_called_at
+                                  ? new Date(r.first_called_at).toLocaleString()
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className="text-sm max-w-md align-top whitespace-pre-wrap break-words">
+                                {(r.remarks ?? "").trim() || "—"}
+                              </TableCell>
+                              <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "—"}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {contacts.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={6}>
+                              <EmptyState message="No workshop contact rows yet — agents use Mark as called and remarks on My call list." />
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value="followups" className="space-y-2 mt-0">
+                  <h3 className="text-sm font-semibold">Scheduled workshop callbacks</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Rows with a follow-up time set by agents on My call list suburb workshops — sorted earliest first.
+                  </p>
+                  <ScrollArea className="h-[min(60vh,520px)] rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Follow-up</TableHead>
+                          <TableHead>Suburb</TableHead>
+                          <TableHead>Workshop</TableHead>
+                          <TableHead>Agent</TableHead>
+                          <TableHead className="min-w-[200px]">Remarks</TableHead>
+                          <TableHead>First called</TableHead>
+                          <TableHead>Updated</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {followUpRows.map((r) => {
+                          const w = workshopById.get(r.workshop_id);
+                          const agentName = agents.find((a) => a.id === r.agent_id)?.name ?? "—";
+                          return (
+                            <TableRow key={r.id}>
+                              <TableCell className="text-xs whitespace-nowrap font-medium">
+                                {r.follow_up_at
+                                  ? new Date(r.follow_up_at).toLocaleString()
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className="text-sm">{w?.suburb?.trim() || "—"}</TableCell>
+                              <TableCell className="font-medium text-sm">
+                                {w?.workshop_name?.trim() || "—"}
+                              </TableCell>
+                              <TableCell className="text-sm">{agentName}</TableCell>
+                              <TableCell className="text-sm max-w-md align-top whitespace-pre-wrap break-words">
+                                {(r.remarks ?? "").trim() || "—"}
+                              </TableCell>
+                              <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                                {r.first_called_at
+                                  ? new Date(r.first_called_at).toLocaleString()
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "—"}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {followUpRows.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={7}>
+                              <EmptyState message="No scheduled workshop follow-ups yet." />
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
+                </TabsContent>
+              </Tabs>
             </>
           )}
         </div>

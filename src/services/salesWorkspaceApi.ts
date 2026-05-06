@@ -21,6 +21,7 @@ export type SalesSuburbWorkshopContactRow =
 export type SalesSuburbWorkshopWithAgentContact = SalesSuburbWorkshopRow & {
   agent_first_called_at: string | null;
   agent_remarks: string;
+  agent_follow_up_at: string | null;
 };
 
 /** Match workshop rows to suburb strings on leads and assignments */
@@ -294,6 +295,19 @@ export async function fetchSalesSuburbWorkshopContactMine(): Promise<SalesSuburb
   return data ?? [];
 }
 
+/** Super admin / tenant staff: every agent workshop touch row for CRM reporting (RLS). */
+export async function fetchSalesSuburbWorkshopAgentContactTenant(
+  tenantId: string,
+): Promise<SalesSuburbWorkshopContactRow[]> {
+  const { data, error } = await supabase
+    .from("sales_suburb_workshop_agent_contact")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .order("updated_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 /** Workshops visible to the agent plus per-agent first call time and remarks. */
 export async function fetchSalesSuburbWorkshopsWithAgentContact(): Promise<SalesSuburbWorkshopWithAgentContact[]> {
   const [workshops, contacts] = await Promise.all([
@@ -307,6 +321,7 @@ export async function fetchSalesSuburbWorkshopsWithAgentContact(): Promise<Sales
       ...w,
       agent_first_called_at: c?.first_called_at ?? null,
       agent_remarks: c?.remarks ?? "",
+      agent_follow_up_at: c?.follow_up_at ?? null,
     };
   });
 }
@@ -402,6 +417,17 @@ export async function updateSalesSuburbWorkshopAgentRemarks(
   const { error } = await supabase.rpc("update_sales_suburb_workshop_remarks", {
     p_workshop_id: workshopId,
     p_remarks: remarks,
+  });
+  if (error) throw new Error(formatSupabaseError(error));
+}
+
+export async function setSalesSuburbWorkshopFollowUp(
+  workshopId: string,
+  followUpAtIso: string | null,
+): Promise<void> {
+  const { error } = await supabase.rpc("set_sales_suburb_workshop_follow_up", {
+    p_workshop_id: workshopId,
+    p_follow_up_at: followUpAtIso,
   });
   if (error) throw new Error(formatSupabaseError(error));
 }
