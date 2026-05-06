@@ -38,6 +38,9 @@ export function derivePermissions(session: UserSession): Permissions {
     canViewAuditLogs: isSuperAdmin,
     canManageAgents: isSuperAdmin,
     canManageDIDMappings: isSuperAdmin,
+    canViewSalesAdminSuite:
+      isSuperAdmin || isClientAdmin || isSupervisor,
+    canViewSalesAgentSuite: isAgent,
     allowedTenantId: tenantId,
     allowedQueueIds: allowedQueueIds,
   };

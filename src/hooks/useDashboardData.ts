@@ -30,6 +30,8 @@ import { fetchAgentOnboarding } from "@/services/agentOnboardingApi";
 import { DASHBOARD_REFRESH_REQUEST_EVENT } from "@/services/linkusCallLog";
 
 const POLL_INTERVAL = 8000;
+/** Full `loadData` on this schedule keeps supervisor boards fresh. Agents in CRM tabs rarely need it that often. */
+const POLL_INTERVAL_AGENT_MS = 120_000;
 const INCOMING_CALLS_STORAGE_KEY = "cc_incoming_calls";
 
 export interface DashboardData {
@@ -285,7 +287,8 @@ export function useDashboardData({
 
   useEffect(() => {
     if (!session) return;
-    const interval = setInterval(loadData, POLL_INTERVAL);
+    const pollMs = session.role === "agent" ? POLL_INTERVAL_AGENT_MS : POLL_INTERVAL;
+    const interval = setInterval(loadData, pollMs);
 
     // Real-time subscriptions
     const unsubCalls = subscribeToIncomingCalls(

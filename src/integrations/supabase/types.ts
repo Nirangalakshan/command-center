@@ -517,6 +517,367 @@ export type Database = {
           },
         ]
       }
+      sales_agent_suburb_assignments: {
+        Row: {
+          agent_id: string
+          created_at: string
+          id: string
+          suburb: string
+          tenant_id: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          id?: string
+          suburb: string
+          tenant_id: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          id?: string
+          suburb?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_agent_suburb_assignments_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_agent_suburb_assignments_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_campaigns: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_campaigns_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_commission_events: {
+        Row: {
+          agent_id: string | null
+          created_at: string
+          id: string
+          lead_id: string
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          lead_id: string
+          status?: string
+          tenant_id: string
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          lead_id?: string
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_commission_events_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "sales_leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_commission_events_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_lead_interactions: {
+        Row: {
+          agent_id: string | null
+          created_at: string
+          customer_response: string
+          id: string
+          lead_id: string
+          notes: string
+          outcome: Database["public"]["Enums"]["lead_call_outcome"]
+          tenant_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string
+          customer_response?: string
+          id?: string
+          lead_id: string
+          notes?: string
+          outcome: Database["public"]["Enums"]["lead_call_outcome"]
+          tenant_id: string
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string
+          customer_response?: string
+          id?: string
+          lead_id?: string
+          notes?: string
+          outcome?: Database["public"]["Enums"]["lead_call_outcome"]
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      sales_leads: {
+        Row: {
+          assigned_agent_id: string | null
+          campaign_id: string | null
+          created_at: string
+          customer_response_summary: string
+          display_name: string
+          do_not_call: boolean
+          email: string | null
+          first_called_at: string | null
+          follow_up_at: string | null
+          id: string
+          journey_stage: Database["public"]["Enums"]["lead_journey_stage"]
+          last_contacted_at: string | null
+          notes: string
+          phone: string
+          suburb: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_agent_id?: string | null
+          campaign_id?: string | null
+          created_at?: string
+          customer_response_summary?: string
+          display_name?: string
+          do_not_call?: boolean
+          email?: string | null
+          first_called_at?: string | null
+          follow_up_at?: string | null
+          id?: string
+          journey_stage?: Database["public"]["Enums"]["lead_journey_stage"]
+          last_contacted_at?: string | null
+          notes?: string
+          phone?: string
+          suburb?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_agent_id?: string | null
+          campaign_id?: string | null
+          created_at?: string
+          customer_response_summary?: string
+          display_name?: string
+          do_not_call?: boolean
+          email?: string | null
+          first_called_at?: string | null
+          follow_up_at?: string | null
+          id?: string
+          journey_stage?: Database["public"]["Enums"]["lead_journey_stage"]
+          last_contacted_at?: string | null
+          notes?: string
+          phone?: string
+          suburb?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      sales_site_visits: {
+        Row: {
+          agent_id: string | null
+          booked_at: string
+          created_at: string
+          id: string
+          lead_id: string
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          booked_at?: string
+          created_at?: string
+          id?: string
+          lead_id: string
+          status?: string
+          tenant_id: string
+        }
+        Update: {
+          agent_id?: string | null
+          booked_at?: string
+          created_at?: string
+          id?: string
+          lead_id?: string
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      sales_suburb_workshops: {
+        Row: {
+          created_at: string
+          id: string
+          location: string
+          owner_email: string
+          owner_name: string
+          phone_number: string
+          suburb: string
+          suburb_normalized: string
+          tenant_id: string
+          updated_at: string
+          website: string
+          workshop_name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          location?: string
+          owner_email?: string
+          owner_name?: string
+          phone_number?: string
+          suburb: string
+          tenant_id: string
+          updated_at?: string
+          website?: string
+          workshop_name?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          location?: string
+          owner_email?: string
+          owner_name?: string
+          phone_number?: string
+          suburb?: string
+          tenant_id?: string
+          updated_at?: string
+          website?: string
+          workshop_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_suburb_workshops_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_suburb_workshop_agent_contact: {
+        Row: {
+          agent_id: string
+          created_at: string
+          first_called_at: string | null
+          id: string
+          remarks: string
+          tenant_id: string
+          updated_at: string
+          workshop_id: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          first_called_at?: string | null
+          id?: string
+          remarks?: string
+          tenant_id: string
+          updated_at?: string
+          workshop_id: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          first_called_at?: string | null
+          id?: string
+          remarks?: string
+          tenant_id?: string
+          updated_at?: string
+          workshop_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_suburb_workshop_agent_contact_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_trials: {
+        Row: {
+          agent_id: string | null
+          created_at: string
+          id: string
+          lead_id: string
+          started_at: string
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          lead_id: string
+          started_at?: string
+          status?: string
+          tenant_id?: string
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          lead_id?: string
+          started_at?: string
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: []
+      }
       tenant_onboarding: {
         Row: {
           activity_log: Json
@@ -656,6 +1017,28 @@ export type Database = {
         }
         Returns: boolean
       }
+      apply_sales_lead_outcome: {
+        Args: {
+          p_customer_response?: string
+          p_follow_up_at?: string | null
+          p_lead_id: string
+          p_notes?: string
+          p_outcome: Database["public"]["Enums"]["lead_call_outcome"]
+        }
+        Returns: Json
+      }
+      mark_sales_lead_called: {
+        Args: { p_lead_id: string }
+        Returns: Json
+      }
+      mark_sales_suburb_workshop_called: {
+        Args: { p_workshop_id: string }
+        Returns: Json
+      }
+      update_sales_suburb_workshop_remarks: {
+        Args: { p_workshop_id: string; p_remarks: string }
+        Returns: Json
+      }
     }
     Enums: {
       agent_onboarding_stage:
@@ -668,6 +1051,25 @@ export type Database = {
       agent_status: "on-call" | "available" | "wrap-up" | "break" | "offline"
       app_role: "super-admin" | "client-admin" | "supervisor" | "agent"
       call_result: "answered" | "abandoned" | "missed" | "voicemail"
+      lead_call_outcome:
+        | "no_answer"
+        | "answered_short"
+        | "not_interested"
+        | "interested"
+        | "trial_offered"
+        | "trial_started"
+        | "site_visit_booked"
+        | "call_back_later"
+        | "converted"
+      lead_journey_stage:
+        | "assigned"
+        | "called"
+        | "answered"
+        | "interested"
+        | "trial_offered"
+        | "trial_started"
+        | "site_visit_booked"
+        | "converted"
       onboarding_stage:
         | "new"
         | "contacted"
@@ -831,6 +1233,27 @@ export const Constants = {
         "awaiting-approval",
         "live",
         "needs-revision",
+      ],
+      lead_call_outcome: [
+        "no_answer",
+        "answered_short",
+        "not_interested",
+        "interested",
+        "trial_offered",
+        "trial_started",
+        "site_visit_booked",
+        "call_back_later",
+        "converted",
+      ],
+      lead_journey_stage: [
+        "assigned",
+        "called",
+        "answered",
+        "interested",
+        "trial_offered",
+        "trial_started",
+        "site_visit_booked",
+        "converted",
       ],
       ring_strategy: ["ring-all", "round-robin", "longest-idle"],
       sip_line_status: ["active", "idle", "error"],

@@ -2,21 +2,28 @@ import { useEffect, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   Activity,
+  AlarmClock,
+  Building2,
   BookOpen,
   CalendarClock,
   CalendarOff,
   ChevronDown,
   ChevronRight,
   Clock,
+  FolderKanban,
+  Home,
   LayoutDashboard,
+  ListTodo,
   LogOut,
+  MapPin,
+  MessageSquare,
   Phone,
   PhoneForwarded,
   Radio,
+  Target,
   Users,
   UserPlus,
   History,
-  MessageSquare,
 } from 'lucide-react';
 import type { Permissions, UserRole } from '@/services/types';
 
@@ -63,6 +70,28 @@ const NAV_ITEMS: SidebarEntry[] = [
   { kind: 'item', key: 'calls', label: 'Calls', icon: Phone, perm: 'canViewCallsTab' },
   { kind: 'item', key: 'sip', label: 'SIP Lines', icon: Radio, perm: 'canViewSipTab' },
   { kind: 'item', key: 'clients', label: 'Clients', icon: BookOpen, perm: 'canViewClientsTab' },
+  {
+    kind: 'group',
+    label: 'Sales (admin)',
+    icon: Target,
+    perm: 'canViewSalesAdminSuite',
+    items: [
+      { key: 'sales-suburbs', label: 'Agent suburb assignment', icon: MapPin },
+      { key: 'sales-workshops', label: 'Suburb workshops', icon: Building2 },
+      { key: 'sales-progress', label: 'Call progress tracker', icon: Activity },
+    ],
+  },
+  {
+    kind: 'group',
+    label: 'My sales workspace',
+    icon: FolderKanban,
+    perm: 'canViewSalesAgentSuite',
+    items: [
+      { key: 'agent-sales-home', label: 'Agent home', icon: Home },
+      { key: 'agent-my-calls', label: 'My call list', icon: ListTodo },
+      { key: 'agent-followups', label: 'My follow-ups', icon: AlarmClock },
+    ],
+  },
   { kind: 'item', key: 'did-mappings', label: 'DID Mappings', icon: PhoneForwarded, perm: 'canManageDIDMappings' },
   { kind: 'item', key: 'audit-logs', label: 'Audit Logs', icon: History, perm: 'canViewAuditLogs' },
 ];

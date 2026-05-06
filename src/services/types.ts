@@ -452,6 +452,10 @@ export interface Permissions {
   canManageAgents: boolean;
   /** Super-admin only: view & manage DID ↔ workshop/branch mappings. */
   canManageDIDMappings: boolean;
+  /** CRM-style sales workspace (tenant-scoped) for super-admin, client-admin, supervisor. */
+  canViewSalesAdminSuite: boolean;
+  /** Assigned-lead workflows: call list, follow-ups, pipeline, performance (agents). */
+  canViewSalesAgentSuite: boolean;
   allowedTenantId: string | null;
   allowedQueueIds: string[];
 }

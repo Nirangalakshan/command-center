@@ -22,6 +22,16 @@ import { AttendanceTab } from '@/tabs/AttendanceTab';
 import { AuditLogsTab } from '@/tabs/AuditLogsTab';
 import { ChatTab } from '@/tabs/ChatTab';
 import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
+import {
+  SalesAgentSuburbAssignmentTab,
+  SalesCallProgressTab,
+  SalesSuburbWorkshopsTab,
+} from '@/tabs/sales-workspace/SalesWorkspaceAdminTabs';
+import {
+  AgentFollowUpsTab,
+  AgentMyCallListTab,
+  AgentSalesHomeTab,
+} from '@/tabs/sales-workspace/SalesWorkspaceAgentTabs';
 // import { BookingsTab } from '@/tabs/BookingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { fetchChats } from '@/services/chatApi';
@@ -81,6 +91,20 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'did-mappings') return permissions.canManageDIDMappings;
       if (key === 'audit-logs') return permissions.canViewAuditLogs;
       if (key === 'attendance' || key === 'leave-requests') return permissions.canViewAttendanceTab;
+      if (
+        key === 'sales-suburbs' ||
+        key === 'sales-workshops' ||
+        key === 'sales-progress'
+      ) {
+        return permissions.canViewSalesAdminSuite;
+      }
+      if (
+        key === 'agent-sales-home' ||
+        key === 'agent-my-calls' ||
+        key === 'agent-followups'
+      ) {
+        return permissions.canViewSalesAgentSuite;
+      }
       return false;
     };
 
@@ -195,6 +219,18 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     const ou = d.tenants.find((t) => t.id === tid)?.bmsOwnerUid?.trim();
     return ou || null;
   }, [effectiveChatTenantId, d.tenants]);
+
+  /**
+   * Match `useDashboardData` tenant (`session.tenantId || selectedTenant`) so CRM
+   * pickers align with agents already fetched. Fallback: first tenant (super-admin).
+   */
+  const effectiveSalesTenantId =
+    session.tenantId || d.selectedTenant || d.tenants[0]?.id || null;
+
+  const currentAgentDbId = useMemo(
+    () => d.agents.find((a) => a.userId === session.userId)?.id ?? null,
+    [d.agents, session.userId],
+  );
 
   const [chatNavUnreadCount, setChatNavUnreadCount] = useState(0);
 
@@ -380,6 +416,62 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
               )}
               {d.selectedTab === 'audit-logs' && (
                 <AuditLogsTab />
+              )}
+              {d.selectedTab === 'sales-suburbs' && (
+                <SalesAgentSuburbAssignmentTab
+                  tenantId={effectiveSalesTenantId}
+                  tenants={d.tenants}
+                  agents={d.agents}
+                  queues={d.queues}
+                  permissions={permissions}
+                  session={session}
+                  onRefreshDashboard={d.refresh}
+                />
+              )}
+              {d.selectedTab === 'sales-workshops' && (
+                <SalesSuburbWorkshopsTab
+                  tenantId={effectiveSalesTenantId}
+                  tenants={d.tenants}
+                  agents={d.agents}
+                  queues={d.queues}
+                  permissions={permissions}
+                  session={session}
+                  onRefreshDashboard={d.refresh}
+                />
+              )}
+              {d.selectedTab === 'sales-progress' && (
+                <SalesCallProgressTab
+                  tenantId={effectiveSalesTenantId}
+                  tenants={d.tenants}
+                  agents={d.agents}
+                  queues={d.queues}
+                  permissions={permissions}
+                  session={session}
+                  onRefreshDashboard={d.refresh}
+                />
+              )}
+              {d.selectedTab === 'agent-sales-home' && (
+                <AgentSalesHomeTab
+                  tenants={d.tenants}
+                  agents={d.agents}
+                  permissions={permissions}
+                  session={session}
+                  currentAgentDbId={currentAgentDbId}
+                  onRefreshDashboard={d.refresh}
+                />
+              )}
+              {d.selectedTab === 'agent-my-calls' && (
+                <AgentMyCallListTab
+                  tenants={d.tenants}
+                  agents={d.agents}
+                  permissions={permissions}
+                  session={session}
+                  currentAgentDbId={currentAgentDbId}
+                  onRefreshDashboard={d.refresh}
+                />
+              )}
+              {d.selectedTab === 'agent-followups' && (
+                <AgentFollowUpsTab />
               )}
             </>
           )}

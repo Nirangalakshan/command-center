@@ -147,6 +147,14 @@ export async function fetchAgents(tenantId?: string | null): Promise<Agent[]> {
   return (data || []).map(mapAgent);
 }
 
+/**
+ * Agents subject to Supabase RLS — no tenant filter (`fetchAgents(undefined)`).
+ * Use roster pickers when dashboard data was loaded with `fetchAgents(scopeTenant)` and excludes agents tied only via queues or secondary tenants.
+ */
+export async function fetchAllAgents(): Promise<Agent[]> {
+  return fetchAgents(undefined);
+}
+
 function parseWorkshopUserRole(raw: unknown): WorkshopUserRole | null {
   const v = String(raw ?? "").trim();
   if (v === "owner" || v === "branch_admin" || v === "staff") return v;
