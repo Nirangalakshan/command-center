@@ -19,6 +19,7 @@ import {
   updateSalesLeadDeskNotes,
   updateSalesSuburbWorkshopAgentRemarks,
   setSalesSuburbWorkshopFollowUp,
+  setSalesSuburbWorkshopCallStatus,
   type SalesLeadRow,
   type SalesSuburbRow,
   type SalesSuburbWorkshopWithAgentContact,
@@ -30,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -94,6 +96,7 @@ function SuburbWorkshopsTable({
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [savingNotesId, setSavingNotesId] = useState<string | null>(null);
   const [savingFollowUpId, setSavingFollowUpId] = useState<string | null>(null);
+  const [savingStatusId, setSavingStatusId] = useState<string | null>(null);
 
   const rows = useMemo(
     () =>
@@ -141,7 +144,7 @@ function SuburbWorkshopsTable({
                   <TableHead>Owner</TableHead>
                   <TableHead>Number</TableHead>
                   <TableHead>Email</TableHead>
-                  <TableHead className="min-w-[10rem]">Mark as called</TableHead>
+                  <TableHead className="min-w-[12rem]">Mark as called</TableHead>
                   <TableHead className="min-w-[220px]">Remarks</TableHead>
                   <TableHead className="min-w-[13rem]">Follow-up</TableHead>
                 </TableRow>
@@ -167,11 +170,51 @@ function SuburbWorkshopsTable({
                       <TableCell className="text-sm break-all">{w.owner_email?.trim() || "—"}</TableCell>
                       <TableCell className="align-top">
                         {called ? (
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">
-                            {w.agent_first_called_at
-                              ? new Date(w.agent_first_called_at).toLocaleString()
-                              : "Marked"}
-                          </span>
+                          <div className="flex flex-col gap-1.5 min-w-[11rem]">
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {w.agent_first_called_at
+                                ? new Date(w.agent_first_called_at).toLocaleString()
+                                : "Marked"}
+                            </span>
+                            <Select
+                              value={w.agent_call_status ?? ""}
+                              disabled={savingStatusId === w.id}
+                              onValueChange={(val) => {
+                                if (val === "confirmed" || val === "rejected") {
+                                  setSavingStatusId(w.id);
+                                  void setSalesSuburbWorkshopCallStatus(w.id, val)
+                                    .then(async () => {
+                                      toast.success(
+                                        val === "confirmed" ? "Marked as confirmed" : "Marked as rejected",
+                                      );
+                                      await onRefresh?.();
+                                    })
+                                    .catch((e) =>
+                                      toast.error(e instanceof Error ? e.message : "Could not save outcome"),
+                                    )
+                                    .finally(() => setSavingStatusId(null));
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="h-7 text-xs" disabled={savingStatusId === w.id}>
+                                <SelectValue placeholder={savingStatusId === w.id ? "Saving…" : "Set outcome…"} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="confirmed">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block" />
+                                    Confirmed
+                                  </span>
+                                </SelectItem>
+                                <SelectItem value="rejected">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-rose-500 inline-block" />
+                                    Rejected
+                                  </span>
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         ) : (
                           <Button
                             type="button"
@@ -514,6 +557,13 @@ export function AgentMyCallListTab({
 
   const agentLabel = agents.find((a) => (currentAgentDbId ?? resolveAgentId({ agents, session })) === a.id)?.name;
 
+  // Workshops that have an outcome (confirmed/rejected) move to Completed tab
+  // Workshops with a follow-up time set move to Follow-ups tab
+  const pendingWorkshops = useMemo(
+    () => workshops.filter((w) => !w.agent_call_status && !w.agent_follow_up_at),
+    [workshops],
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap justify-between gap-3">
@@ -522,6 +572,9 @@ export function AgentMyCallListTab({
           <p className="text-sm text-muted-foreground">
             Suburb workshops from Sales — mark called, save remarks, and set follow-ups below (scroll horizontally on
             narrow screens). Use <strong className="font-medium text-foreground">Reload</strong> to refresh.
+            Workshops you set a <em>Follow-up</em> time for move to the <strong className="font-medium text-foreground">My follow-ups</strong> tab.
+            Workshops you mark <em>Confirmed</em> or <em>Rejected</em> move to the{" "}
+            <strong className="font-medium text-foreground">Completed</strong> tab automatically.
             {agentLabel ? ` · ${agentLabel}` : ""}
           </p>
         </div>
@@ -538,7 +591,7 @@ export function AgentMyCallListTab({
       ) : null}
 
       <SuburbWorkshopsTable
-        workshops={workshops}
+        workshops={pendingWorkshops}
         loading={loading}
         onRefresh={() => {
           void load({ silent: true });
@@ -718,78 +771,62 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
 }
 
 export function AgentFollowUpsTab() {
-  const [workshopRows, setWorkshopRows] = useState<SalesSuburbWorkshopWithAgentContact[]>([]);
+  const [workshops, setWorkshops] = useState<SalesSuburbWorkshopWithAgentContact[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const reload = useCallback(() => {
-    void fetchSalesSuburbWorkshopsWithAgentContact()
-      .catch(() => [] as SalesSuburbWorkshopWithAgentContact[])
-      .then((ws) => {
-        setWorkshopRows(
-          ws
-            .filter((w) => Boolean(w.agent_follow_up_at))
-            .slice()
-            .sort((a, b) =>
-              String(a.agent_follow_up_at!).localeCompare(String(b.agent_follow_up_at!)),
-            ),
-        );
-      });
+  const reload = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) {
+      setLoading(true);
+    }
+    try {
+      const ws = await fetchSalesSuburbWorkshopsWithAgentContact().catch(
+        () => [] as SalesSuburbWorkshopWithAgentContact[],
+      );
+      setWorkshops(ws);
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
   }, []);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [reload]);
 
-  return (
-    <div className="space-y-8">
-      <div className="space-y-4">
-        <div className="flex justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">My follow-ups</h2>
-            <p className="text-sm text-muted-foreground">
-              Workshop callback times you set under <span className="font-medium text-foreground">My call list</span>{" "}
-              → Suburb workshops.
-            </p>
-          </div>
-          <Button type="button" variant="outline" onClick={reload}>
-            Reload
-          </Button>
-        </div>
+  const followUpWorkshops = useMemo(
+    () =>
+      workshops
+        .filter((w) => Boolean(w.agent_follow_up_at) && !w.agent_call_status)
+        .slice()
+        .sort((a, b) => String(a.agent_follow_up_at!).localeCompare(String(b.agent_follow_up_at!))),
+    [workshops],
+  );
 
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold">Suburb workshops</h3>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Suburb</TableHead>
-                <TableHead>Workshop</TableHead>
-                <TableHead>When</TableHead>
-                <TableHead>Remarks</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {workshopRows.map((w) => (
-                <TableRow key={w.id}>
-                  <TableCell className="text-sm">{w.suburb?.trim() || "—"}</TableCell>
-                  <TableCell className="font-medium text-sm">{w.workshop_name?.trim() || "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap text-sm">
-                    {w.agent_follow_up_at
-                      ? new Date(w.agent_follow_up_at).toLocaleString()
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-sm">{w.agent_remarks?.trim() || "—"}</TableCell>
-                </TableRow>
-              ))}
-              {workshopRows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4}>
-                    <EmptyState message="No workshop callbacks — set a follow-up on My call list → Suburb workshops." />
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">My follow-ups</h2>
+          <p className="text-sm text-muted-foreground">
+            Workshop callback times you set under <span className="font-medium text-foreground">My call list</span>.{" "}
+            Mark an outcome (<em>Confirmed</em> or <em>Rejected</em>) to move them to the <strong className="font-medium text-foreground">Completed</strong> tab.
+            Clearing the follow-up time moves them back to the call list.
+          </p>
         </div>
+        <Button type="button" variant="outline" onClick={() => void reload()}>
+          Reload
+        </Button>
       </div>
+
+      <SuburbWorkshopsTable
+        workshops={followUpWorkshops}
+        loading={loading}
+        onRefresh={() => {
+          void reload({ silent: true });
+        }}
+      />
     </div>
   );
 }
@@ -887,6 +924,142 @@ export function AgentPerformanceRewardsTab(props: SalesAgentTabProps) {
           </TableBody>
         </Table>
       </div>
+    </div>
+  );
+}
+
+/** Shows workshops that have been marked as called AND the agent set a Confirmed or Rejected outcome. */
+export function AgentCompletedTab(_props: SalesAgentTabProps) {
+  const [workshops, setWorkshops] = useState<SalesSuburbWorkshopWithAgentContact[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [clearingId, setClearingId] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const ws = await fetchSalesSuburbWorkshopsWithAgentContact().catch(
+        () => [] as SalesSuburbWorkshopWithAgentContact[],
+      );
+      setWorkshops(ws);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const completedRows = useMemo(
+    () =>
+      workshops
+        .filter((w) => Boolean(w.agent_first_called_at) && Boolean(w.agent_call_status))
+        .slice()
+        .sort((a, b) => (b.agent_first_called_at ?? "").localeCompare(a.agent_first_called_at ?? "")),
+    [workshops],
+  );
+
+  const clearStatus = (workshopId: string) => {
+    setClearingId(workshopId);
+    void setSalesSuburbWorkshopCallStatus(workshopId, null)
+      .then(async () => {
+        toast.success("Moved back to call list");
+        await reload();
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : "Could not clear outcome"))
+      .finally(() => setClearingId(null));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Completed</h2>
+          <p className="text-sm text-muted-foreground">
+            Workshops you marked <em>Confirmed</em> or <em>Rejected</em> from My call list. Use{" "}
+            <strong className="font-medium text-foreground">Reload</strong> to refresh data. You can
+            clear an outcome to move a workshop back to My call list.
+          </p>
+        </div>
+        <Button type="button" variant="outline" onClick={() => void reload()}>
+          Reload
+        </Button>
+      </div>
+
+      {loading ? (
+        <EmptyState message="Loading…" />
+      ) : completedRows.length === 0 ? (
+        <div className="rounded-xl border border-dashed px-6 py-10 text-center">
+          <p className="text-sm text-muted-foreground">
+            No completed workshops yet — mark a workshop as{" "}
+            <strong className="font-medium text-foreground">Confirmed</strong> or{" "}
+            <strong className="font-medium text-foreground">Rejected</strong> in My call list to see it here.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-md border">
+          <Table className="w-max min-w-full">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Suburb</TableHead>
+                <TableHead>Workshop name</TableHead>
+                <TableHead>Owner</TableHead>
+                <TableHead>Number</TableHead>
+                <TableHead>Called at</TableHead>
+                <TableHead>Outcome</TableHead>
+                <TableHead>Remarks</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {completedRows.map((w) => {
+                const status = w.agent_call_status;
+                return (
+                  <TableRow key={w.id}>
+                    <TableCell className="text-sm">{w.suburb?.trim() || "—"}</TableCell>
+                    <TableCell className="font-medium">{w.workshop_name?.trim() || "—"}</TableCell>
+                    <TableCell className="text-sm">{w.owner_name?.trim() || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs whitespace-nowrap">
+                      {w.phone_number?.trim() || "—"}
+                    </TableCell>
+                    <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                      {w.agent_first_called_at
+                        ? new Date(w.agent_first_called_at).toLocaleString()
+                        : "—"}
+                    </TableCell>
+                    <TableCell>
+                      {status === "confirmed" ? (
+                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-100">
+                          ✓ Confirmed
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-rose-100 text-rose-800 border-rose-200 hover:bg-rose-100">
+                          ✗ Rejected
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm max-w-xs">
+                      {w.agent_remarks?.trim() || "—"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs"
+                        disabled={clearingId === w.id}
+                        onClick={() => clearStatus(w.id)}
+                      >
+                        {clearingId === w.id ? "Clearing…" : "Move back to call list"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }

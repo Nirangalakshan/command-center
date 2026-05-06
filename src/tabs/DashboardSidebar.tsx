@@ -7,6 +7,7 @@ import {
   BookOpen,
   CalendarClock,
   CalendarOff,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -36,6 +37,8 @@ interface DashboardSidebarProps {
   onSignOut: () => Promise<void>;
   /** Unread BMS chat threads (agent inbox) — shows a green indicator on the Chat nav item. */
   chatNavUnreadCount?: number;
+  /** Pending leave requests count for super admins — shows an indicator on the Leave requests nav item. */
+  pendingLeaveCount?: number;
 }
 
 type Perm = keyof Permissions;
@@ -90,6 +93,7 @@ const NAV_ITEMS: SidebarEntry[] = [
       { key: 'agent-sales-home', label: 'Agent home', icon: Home },
       { key: 'agent-my-calls', label: 'My call list', icon: ListTodo },
       { key: 'agent-followups', label: 'My follow-ups', icon: AlarmClock },
+      { key: 'agent-completed', label: 'Completed', icon: CheckCheck },
     ],
   },
   { kind: 'item', key: 'did-mappings', label: 'DID Mappings', icon: PhoneForwarded, perm: 'canManageDIDMappings' },
@@ -104,6 +108,7 @@ export default function DashboardSidebar({
   currentRole,
   onSignOut,
   chatNavUnreadCount = 0,
+  pendingLeaveCount = 0,
 }: DashboardSidebarProps) {
   const [open, setOpen] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState(() => new Set<string>());
@@ -222,6 +227,8 @@ export default function DashboardSidebar({
                       {entry.items.map((item) => {
                         const SubIcon = item.icon;
                         const active = selectedTab === item.key;
+                        const isLeaveItem = item.key === 'leave-requests';
+                        const showLeaveBadge = isLeaveItem && pendingLeaveCount > 0;
                         return (
                           <button
                             key={item.key}
@@ -233,8 +240,25 @@ export default function DashboardSidebar({
                                 : 'text-neutral-400 hover:bg-neutral-800 hover:text-white'
                             }`}
                           >
-                            <SubIcon className="h-4 w-4 shrink-0" />
+                            <span className="relative shrink-0">
+                              <SubIcon className="h-4 w-4 shrink-0" />
+                              {showLeaveBadge && (
+                                <span
+                                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.95)] ring-2 ring-neutral-900"
+                                  title={`${pendingLeaveCount} pending`}
+                                  aria-hidden
+                                />
+                              )}
+                            </span>
                             <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                            {showLeaveBadge && (
+                              <span
+                                className="shrink-0 rounded-full bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-bold leading-none text-neutral-950"
+                                aria-label={`${pendingLeaveCount} pending leaves`}
+                              >
+                                {pendingLeaveCount > 99 ? '99+' : pendingLeaveCount}
+                              </span>
+                            )}
                           </button>
                         );
                       })}

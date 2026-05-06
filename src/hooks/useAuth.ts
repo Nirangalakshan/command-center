@@ -38,6 +38,24 @@ export function useAuth(): AuthState {
   const [session, setSession] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const updateSessionIfChanged = useCallback((newSession: UserSession) => {
+    setSession((prev) => {
+      if (
+        prev &&
+        prev.userId === newSession.userId &&
+        prev.role === newSession.role &&
+        prev.tenantId === newSession.tenantId &&
+        prev.displayName === newSession.displayName &&
+        prev.authEmail === newSession.authEmail &&
+        prev.allowedQueueIds.length === newSession.allowedQueueIds.length &&
+        prev.allowedQueueIds.every((id, i) => id === newSession.allowedQueueIds[i])
+      ) {
+        return prev;
+      }
+      return newSession;
+    });
+  }, []);
+
   const loadUserSession = useCallback(async (authUser: SupabaseUser) => {
     try {
       // Fetch profile and role in parallel
@@ -75,11 +93,11 @@ export function useAuth(): AuthState {
         authEmail: authUser.email ?? null,
       };
 
-      setSession(userSession);
+      updateSessionIfChanged(userSession);
     } catch {
       setSession(null);
     }
-  }, []);
+  }, [updateSessionIfChanged]);
 
   useEffect(() => {
     // Set up auth state listener FIRST
@@ -133,7 +151,7 @@ export function useAuth(): AuthState {
               authEmail: firebaseUser.email ?? null,
             };
             await updateDoc(doc(db, 'call_center_agents', firebaseUser.uid), { status: 'available' }).catch(() => {});
-            setSession(userSession);
+            updateSessionIfChanged(userSession);
           } else {
             let sb = (await supabase.auth.getSession()).data.session;
             if (!sb?.user) {

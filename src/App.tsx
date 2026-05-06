@@ -9,7 +9,13 @@ import BookingPage from "./pages/BookingPage.tsx";
 import BookingDetailsPage from "./pages/BookingDetailsPage.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const App = () => (
   <FirebaseAuthProvider>

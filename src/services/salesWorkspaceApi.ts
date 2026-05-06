@@ -22,6 +22,7 @@ export type SalesSuburbWorkshopWithAgentContact = SalesSuburbWorkshopRow & {
   agent_first_called_at: string | null;
   agent_remarks: string;
   agent_follow_up_at: string | null;
+  agent_call_status: string | null;
 };
 
 /** Match workshop rows to suburb strings on leads and assignments */
@@ -322,6 +323,7 @@ export async function fetchSalesSuburbWorkshopsWithAgentContact(): Promise<Sales
       agent_first_called_at: c?.first_called_at ?? null,
       agent_remarks: c?.remarks ?? "",
       agent_follow_up_at: c?.follow_up_at ?? null,
+      agent_call_status: c?.call_status ?? null,
     };
   });
 }
@@ -428,6 +430,18 @@ export async function setSalesSuburbWorkshopFollowUp(
   const { error } = await supabase.rpc("set_sales_suburb_workshop_follow_up", {
     p_workshop_id: workshopId,
     p_follow_up_at: followUpAtIso,
+  });
+  if (error) throw new Error(formatSupabaseError(error));
+}
+
+/** Set or clear the agent's call outcome (confirmed / rejected / null) for a suburb workshop. */
+export async function setSalesSuburbWorkshopCallStatus(
+  workshopId: string,
+  status: "confirmed" | "rejected" | null,
+): Promise<void> {
+  const { error } = await supabase.rpc("set_sales_suburb_workshop_call_status", {
+    p_workshop_id: workshopId,
+    p_status: status,
   });
   if (error) throw new Error(formatSupabaseError(error));
 }

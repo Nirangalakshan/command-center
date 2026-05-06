@@ -31,10 +31,16 @@ import {
   AgentFollowUpsTab,
   AgentMyCallListTab,
   AgentSalesHomeTab,
+  AgentCompletedTab,
 } from '@/tabs/sales-workspace/SalesWorkspaceAgentTabs';
-// import { BookingsTab } from '@/tabs/BookingsTab';
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { fetchChats } from '@/services/chatApi';
+import { 
+  fetchAllLeaveRequests, 
+  subscribeToAllLeaveRequestChanges,
+  fetchMyLeaveRequests,
+  subscribeToMyLeaveRequests 
+} from '@/services/leaveRequestsApi';
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { SoftphoneCallLogContext } from '@/services/linkusCallLog';
@@ -101,7 +107,8 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (
         key === 'agent-sales-home' ||
         key === 'agent-my-calls' ||
-        key === 'agent-followups'
+        key === 'agent-followups' ||
+        key === 'agent-completed'
       ) {
         return permissions.canViewSalesAgentSuite;
       }
@@ -233,6 +240,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
   );
 
   const [chatNavUnreadCount, setChatNavUnreadCount] = useState(0);
+  const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
 
   useEffect(() => {
     if (!permissions.canViewChatTab) return;
@@ -267,6 +275,87 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     chatWorkshopOwnerUid,
   ]);
 
+  useEffect(() => {
+    if (session.role !== 'super-admin') return;
+
+    let cancelled = false;
+    const loadLeaves = async () => {
+      try {
+        const rows = await fetchAllLeaveRequests();
+        if (cancelled) return;
+
+        const ccUserIds = new Set(
+          d.agents
+            .filter((a) => !String(a.bmsOwnerUid ?? '').trim() && a.userId && a.userId.length >= 36)
+            .map((a) => a.userId)
+        );
+
+        const pending = rows.filter((r) => r.status === 'pending' && ccUserIds.has(r.user_id)).length;
+        setPendingLeaveCount(pending);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void loadLeaves();
+
+    const unsub = subscribeToAllLeaveRequestChanges((row, event) => {
+      // Re-fetch on any change so we don't have to keep a full list in memory just to maintain the count.
+      void loadLeaves();
+    });
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [session.role, d.agents]);
+
+  // For agents: Show a notification badge if a leave request was reviewed (approved/rejected)
+  // since the last time they viewed the leave-requests tab.
+  useEffect(() => {
+    if (session.role !== 'agent' || !session.userId) return;
+
+    let cancelled = false;
+    const LOCAL_STORAGE_KEY = 'last_seen_leave_reviews_at';
+
+    const loadAgentLeaves = async () => {
+      try {
+        const rows = await fetchMyLeaveRequests(session.userId);
+        if (cancelled) return;
+
+        if (d.selectedTab === 'leave-requests') {
+          localStorage.setItem(LOCAL_STORAGE_KEY, Date.now().toString());
+          setPendingLeaveCount(0);
+          return;
+        }
+
+        const lastSeenStr = localStorage.getItem(LOCAL_STORAGE_KEY);
+        const lastSeenMs = lastSeenStr ? parseInt(lastSeenStr, 10) : 0;
+
+        const unseenCount = rows.filter((r) => {
+          if (r.status === 'pending') return false;
+          if (!r.reviewed_at) return false;
+          return new Date(r.reviewed_at).getTime() > lastSeenMs;
+        }).length;
+
+        setPendingLeaveCount(unseenCount);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void loadAgentLeaves();
+
+    const unsub = subscribeToMyLeaveRequests(session.userId, () => {
+      void loadAgentLeaves();
+    });
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [session.role, session.userId, d.selectedTab]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
       {/* Floating softphone widget — visible for agents and super admins */}
@@ -285,6 +374,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
         currentRole={session.role}
         onSignOut={onSignOut}
         chatNavUnreadCount={chatNavUnreadCount}
+        pendingLeaveCount={pendingLeaveCount}
       />
 
       {/* Main content */}
@@ -472,6 +562,16 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
               )}
               {d.selectedTab === 'agent-followups' && (
                 <AgentFollowUpsTab />
+              )}
+              {d.selectedTab === 'agent-completed' && (
+                <AgentCompletedTab
+                  tenants={d.tenants}
+                  agents={d.agents}
+                  permissions={permissions}
+                  session={session}
+                  currentAgentDbId={currentAgentDbId}
+                  onRefreshDashboard={d.refresh}
+                />
               )}
             </>
           )}

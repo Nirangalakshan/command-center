@@ -810,6 +810,7 @@ export type Database = {
       sales_suburb_workshop_agent_contact: {
         Row: {
           agent_id: string
+          call_status: string | null
           created_at: string
           first_called_at: string | null
           follow_up_at: string | null
@@ -821,6 +822,7 @@ export type Database = {
         }
         Insert: {
           agent_id: string
+          call_status?: string | null
           created_at?: string
           first_called_at?: string | null
           follow_up_at?: string | null
@@ -832,6 +834,7 @@ export type Database = {
         }
         Update: {
           agent_id?: string
+          call_status?: string | null
           created_at?: string
           first_called_at?: string | null
           follow_up_at?: string | null
@@ -1044,6 +1047,10 @@ export type Database = {
       }
       set_sales_suburb_workshop_follow_up: {
         Args: { p_follow_up_at: string | null; p_workshop_id: string }
+        Returns: Json
+      }
+      set_sales_suburb_workshop_call_status: {
+        Args: { p_workshop_id: string; p_status: string | null }
         Returns: Json
       }
     }
