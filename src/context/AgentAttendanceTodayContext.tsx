@@ -11,6 +11,7 @@ import type { AgentAttendanceEventRow } from "@/services/attendanceApi";
 import { fetchAttendanceEventsForDay, subscribeToMyAttendanceEvents } from "@/services/attendanceApi";
 import { supabase } from "@/integrations/supabase/client";
 import { getAustralianDateKey } from "@/utils/australianTime";
+import { parse } from "date-fns";
 
 export type AgentAttendanceTodayContextValue = {
   /** Melbourne yyyy-MM-dd for `now`. */
@@ -62,7 +63,10 @@ export function AgentAttendanceTodayProvider({ now, children }: { now: number; c
     setTodayLoading(true);
     setTodayError(null);
     try {
-      const rows = await fetchAttendanceEventsForDay(supabaseUserId, todayKey);
+      const rows = await fetchAttendanceEventsForDay(
+        supabaseUserId,
+        parse(todayKey, "yyyy-MM-dd", new Date()),
+      );
       setTodayEvents(rows);
     } catch (e: unknown) {
       setTodayError(e instanceof Error ? e.message : "Could not load attendance.");
@@ -75,7 +79,10 @@ export function AgentAttendanceTodayProvider({ now, children }: { now: number; c
     if (supabaseUserId === undefined || supabaseUserId === null) return;
     setTodayError(null);
     try {
-      const rows = await fetchAttendanceEventsForDay(supabaseUserId, todayKey);
+      const rows = await fetchAttendanceEventsForDay(
+        supabaseUserId,
+        parse(todayKey, "yyyy-MM-dd", new Date()),
+      );
       setTodayEvents(rows);
     } catch (e: unknown) {
       setTodayError(e instanceof Error ? e.message : "Could not load attendance.");
@@ -89,20 +96,16 @@ export function AgentAttendanceTodayProvider({ now, children }: { now: number; c
   useEffect(() => {
     if (!supabaseUserId) return;
     const vk = todayKey;
-    return subscribeToMyAttendanceEvents(
-      supabaseUserId,
-      (row) => {
-        const rowDay = getAustralianDateKey(new Date(row.occurred_at).getTime());
-        if (rowDay !== vk) return;
-        setTodayEvents((prev) => {
-          if (prev.some((p) => p.id === row.id)) return prev;
-          return [...prev, row].sort(
-            (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
-          );
-        });
-      },
-      "melbourne-today",
-    );
+    return subscribeToMyAttendanceEvents(supabaseUserId, (row) => {
+      const rowDay = getAustralianDateKey(new Date(row.occurred_at).getTime());
+      if (rowDay !== vk) return;
+      setTodayEvents((prev) => {
+        if (prev.some((p) => p.id === row.id)) return prev;
+        return [...prev, row].sort(
+          (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
+        );
+      });
+    });
   }, [supabaseUserId, todayKey]);
 
   const value = useMemo(

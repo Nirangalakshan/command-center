@@ -478,19 +478,12 @@ export function AgentMyCallListTab({
   agents,
   session,
   currentAgentDbId,
-  tenants,
+  tenants: _tenants,
   onRefreshDashboard: _onRefreshDashboard,
 }: SalesAgentTabProps) {
-  const [rows, setRows] = useState<SalesLeadRow[]>([]);
   const [workshops, setWorkshops] = useState<SalesSuburbWorkshopWithAgentContact[]>([]);
   const [loading, setLoading] = useState(true);
-  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
-  const [markingId, setMarkingId] = useState<string | null>(null);
-  const [savingNotesId, setSavingNotesId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [totalFromApi, setTotalFromApi] = useState<number | null>(null);
-  const [outcomeOpen, setOutcomeOpen] = useState(false);
-  const [outcomeLead, setOutcomeLead] = useState<SalesLeadRow | null>(null);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
@@ -499,28 +492,21 @@ export function AgentMyCallListTab({
       setLoadError(null);
     }
     try {
-      const [r, ws] = await Promise.all([
-        fetchSalesLeadsMine(),
-        fetchSalesSuburbWorkshopsWithAgentContact().catch(
-          () => [] as SalesSuburbWorkshopWithAgentContact[],
-        ),
-      ]);
-      setTotalFromApi(r.length);
-      setRows(r);
-      setNoteDrafts(Object.fromEntries(r.map((l) => [l.id, l.notes ?? ""])));
+      const ws = await fetchSalesSuburbWorkshopsWithAgentContact().catch(
+        () => [] as SalesSuburbWorkshopWithAgentContact[],
+      );
       setWorkshops(ws);
     } catch (e) {
       if (!silent) {
-        setLoadError(e instanceof Error ? e.message : "Failed to load your call list");
-        setRows([]);
-        setTotalFromApi(null);
+        setLoadError(e instanceof Error ? e.message : "Failed to load workshops");
+        setWorkshops([]);
       }
     } finally {
       if (!silent) {
         setLoading(false);
       }
     }
-  }, [agents, currentAgentDbId, session.userId]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -534,8 +520,8 @@ export function AgentMyCallListTab({
         <div>
           <h2 className="text-lg font-semibold">My call list</h2>
           <p className="text-sm text-muted-foreground">
-            Mark called and save remarks in the table below (scroll horizontally if your screen is narrow). Workshop directory above is from the database — use{" "}
-            <strong className="font-medium text-foreground">Reload</strong> to refresh.
+            Suburb workshops from Sales — mark called, save remarks, and set follow-ups below (scroll horizontally on
+            narrow screens). Use <strong className="font-medium text-foreground">Reload</strong> to refresh.
             {agentLabel ? ` · ${agentLabel}` : ""}
           </p>
         </div>
@@ -546,7 +532,7 @@ export function AgentMyCallListTab({
 
       {loadError ? (
         <Alert variant="destructive">
-          <AlertTitle>Could not load leads</AlertTitle>
+          <AlertTitle>Could not load workshops</AlertTitle>
           <AlertDescription className="text-sm">{loadError}</AlertDescription>
         </Alert>
       ) : null}
@@ -555,175 +541,6 @@ export function AgentMyCallListTab({
         workshops={workshops}
         loading={loading}
         onRefresh={() => {
-          void load({ silent: true });
-        }}
-      />
-
-      {!loadError && !loading && totalFromApi === 0 ? (
-        <Alert>
-          <AlertTitle className="text-base">No leads are visible yet</AlertTitle>
-          <AlertDescription className="text-sm text-muted-foreground space-y-2">
-            <p>
-              The database returned <strong>0</strong> leads you are allowed to see. Typical fixes:
-            </p>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>
-                Apply Supabase migrations <code className="text-xs font-mono">20260511120000</code>{" "}
-                and <code className="text-xs font-mono">20260511140000</code> (suburb-patch access + fuzzy suburb match).
-              </li>
-              <li>
-                Add leads in Sales (super admin) with the <strong>same tenant</strong> as your suburb rows, or assign the lead directly to you.
-              </li>
-              <li>
-                Put the same suburb text on the lead as in Agent suburb assignment — matching ignores case; longer
-                labels like &quot;Melbourne, VIC&quot; match a patch &quot;Melbourne&quot; after the fuzzy migration.
-              </li>
-            </ul>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {loading ? <EmptyState message="Hydrating roster…" /> : (
-        <div className="overflow-x-auto rounded-md border">
-        <Table className="w-max min-w-full">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Phone</TableHead>
-              <TableHead>Suburb</TableHead>
-              <TableHead>Stage</TableHead>
-              <TableHead className="min-w-[10rem]">Mark as called</TableHead>
-              <TableHead className="min-w-[220px]">Remarks</TableHead>
-              <TableHead className="min-w-[9rem]">Call outcome</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((r) => {
-              const called = Boolean(r.first_called_at);
-              const draft = noteDrafts[r.id] ?? r.notes ?? "";
-              const dirty = draft.trim() !== (r.notes ?? "").trim();
-              return (
-                <TableRow
-                  key={r.id}
-                  className={`align-top ${r.journey_stage === "converted" ? "opacity-80 bg-muted/20" : ""}`}
-                >
-                  <TableCell className="align-top">{r.display_name}</TableCell>
-                  <TableCell className="font-mono text-xs whitespace-nowrap align-top">{r.phone}</TableCell>
-                  <TableCell className="text-sm align-top">{r.suburb?.trim() || "—"}</TableCell>
-                  <TableCell className="align-top"><Badge variant="outline">{r.journey_stage}</Badge></TableCell>
-                  <TableCell className="align-top">
-                    <div className="flex flex-col gap-1.5 min-w-[9.5rem]">
-                      {r.journey_stage === "converted" ? (
-                        <span className="text-xs text-muted-foreground">
-                          {called && r.first_called_at
-                            ? `First call: ${new Date(r.first_called_at).toLocaleString()}`
-                            : "—"}
-                        </span>
-                      ) : called ? (
-                        <span className="text-xs text-muted-foreground">
-                          {r.first_called_at
-                            ? new Date(r.first_called_at).toLocaleString()
-                            : "Marked"}
-                        </span>
-                      ) : (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          className="w-full"
-                          disabled={markingId === r.id}
-                          onClick={() => {
-                            setMarkingId(r.id);
-                            void markSalesLeadCalled(r.id)
-                              .then(async () => {
-                                toast.success("Marked as called");
-                                await load({ silent: true });
-                              })
-                              .catch((e) =>
-                                toast.error(e instanceof Error ? e.message : "Could not update"),
-                              )
-                              .finally(() => setMarkingId(null));
-                          }}
-                        >
-                          {markingId === r.id ? "Saving…" : "Mark as called"}
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <div className="flex flex-col gap-2 min-w-[200px] max-w-md">
-                      <Textarea
-                        rows={3}
-                        value={draft}
-                        onChange={(e) =>
-                          setNoteDrafts((prev) => ({ ...prev, [r.id]: e.target.value }))
-                        }
-                        placeholder="Notes visible to admins on the progress tracker"
-                        className="text-sm"
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={!dirty || savingNotesId === r.id}
-                        onClick={() => {
-                          setSavingNotesId(r.id);
-                          void updateSalesLeadDeskNotes(r.id, draft)
-                            .then(async () => {
-                              toast.success("Remarks saved");
-                              await load({ silent: true });
-                            })
-                            .catch((e) =>
-                              toast.error(e instanceof Error ? e.message : "Could not save"),
-                            )
-                            .finally(() => setSavingNotesId(null));
-                        }}
-                      >
-                        {savingNotesId === r.id && dirty ? "Saving…" : "Save remarks"}
-                      </Button>
-                    </div>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    {r.journey_stage !== "converted" ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="default"
-                        className="w-full min-w-[8rem]"
-                        onClick={() => {
-                          setOutcomeLead(r);
-                          setOutcomeOpen(true);
-                        }}
-                      >
-                        Log outcome
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7}>
-                  <EmptyState message="No rows to show — see the note above the table." />
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-        </div>
-      )}
-
-      <LeadOutcomeDrawer
-        lead={outcomeLead}
-        open={outcomeOpen}
-        onOpenChange={(v) => {
-          setOutcomeOpen(v);
-          if (!v) setOutcomeLead(null);
-        }}
-        onSaved={() => {
           void load({ silent: true });
         }}
       />
@@ -901,31 +718,21 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
 }
 
 export function AgentFollowUpsTab() {
-  const [leadRows, setLeadRows] = useState<SalesLeadRow[]>([]);
   const [workshopRows, setWorkshopRows] = useState<SalesSuburbWorkshopWithAgentContact[]>([]);
 
   const reload = useCallback(() => {
-    void Promise.all([
-      fetchSalesLeadsMine(),
-      fetchSalesSuburbWorkshopsWithAgentContact().catch(() => [] as SalesSuburbWorkshopWithAgentContact[]),
-    ]).then(([leads, ws]) => {
-      setLeadRows(
-        leads
-          .filter((x) => x.follow_up_at)
-          .slice()
-          .sort((a, b) =>
-            String(a.follow_up_at!).localeCompare(String(b.follow_up_at!)),
-          ),
-      );
-      setWorkshopRows(
-        ws
-          .filter((w) => Boolean(w.agent_follow_up_at))
-          .slice()
-          .sort((a, b) =>
-            String(a.agent_follow_up_at!).localeCompare(String(b.agent_follow_up_at!)),
-          ),
-      );
-    });
+    void fetchSalesSuburbWorkshopsWithAgentContact()
+      .catch(() => [] as SalesSuburbWorkshopWithAgentContact[])
+      .then((ws) => {
+        setWorkshopRows(
+          ws
+            .filter((w) => Boolean(w.agent_follow_up_at))
+            .slice()
+            .sort((a, b) =>
+              String(a.agent_follow_up_at!).localeCompare(String(b.agent_follow_up_at!)),
+            ),
+        );
+      });
   }, []);
 
   useEffect(() => {
@@ -939,47 +746,13 @@ export function AgentFollowUpsTab() {
           <div>
             <h2 className="text-lg font-semibold">My follow-ups</h2>
             <p className="text-sm text-muted-foreground">
-              Lead callbacks from <span className="font-medium text-foreground">Call back later</span> outcomes plus
-              workshop callback times from My call list.
+              Workshop callback times you set under <span className="font-medium text-foreground">My call list</span>{" "}
+              → Suburb workshops.
             </p>
           </div>
           <Button type="button" variant="outline" onClick={reload}>
             Reload
           </Button>
-        </div>
-
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold">Leads</h3>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>When</TableHead>
-                <TableHead>Notes</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {leadRows.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                    {r.display_name}
-                    <div className="font-mono text-[11px] text-muted-foreground">{r.phone}</div>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-sm">
-                    {r.follow_up_at ? new Date(r.follow_up_at).toLocaleString() : "—"}
-                  </TableCell>
-                  <TableCell className="text-sm">{r.notes || "—"}</TableCell>
-                </TableRow>
-              ))}
-              {leadRows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={3}>
-                    <EmptyState message='No lead follow-ups — use Log outcome → "Call back later" when dialling assigned leads.' />
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
         </div>
 
         <div className="space-y-2">

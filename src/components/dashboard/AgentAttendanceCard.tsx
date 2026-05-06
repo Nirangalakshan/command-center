@@ -10,6 +10,7 @@ import {
   formatTimeAu,
   getAustralianDateKey,
 } from "@/utils/australianTime";
+import { parse } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -83,7 +84,10 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
     setPastLoading(true);
     setPastError(null);
     try {
-      const rows = await fetchAttendanceEventsForDay(supabaseUserId, viewDayKey);
+      const rows = await fetchAttendanceEventsForDay(
+        supabaseUserId,
+        parse(viewDayKey, "yyyy-MM-dd", new Date()),
+      );
       setPastEvents(rows);
     } catch (e: unknown) {
       setPastError(e instanceof Error ? e.message : "Could not load attendance.");
@@ -100,20 +104,16 @@ export function AgentAttendanceCard({ session, now }: AgentAttendanceCardProps) 
   useEffect(() => {
     if (!supabaseUserId || isViewingToday) return;
     const vk = viewDayKey;
-    return subscribeToMyAttendanceEvents(
-      supabaseUserId,
-      (row) => {
-        const rowDay = getAustralianDateKey(new Date(row.occurred_at).getTime());
-        if (rowDay !== vk) return;
-        setPastEvents((prev) => {
-          if (prev.some((p) => p.id === row.id)) return prev;
-          return [...prev, row].sort(
-            (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
-          );
-        });
-      },
-      `past-${vk}`,
-    );
+    return subscribeToMyAttendanceEvents(supabaseUserId, (row) => {
+      const rowDay = getAustralianDateKey(new Date(row.occurred_at).getTime());
+      if (rowDay !== vk) return;
+      setPastEvents((prev) => {
+        if (prev.some((p) => p.id === row.id)) return prev;
+        return [...prev, row].sort(
+          (a, b) => new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
+        );
+      });
+    });
   }, [supabaseUserId, isViewingToday, viewDayKey]);
 
   const { status, shiftStartedAt, breakStartedAt } = useMemo(
