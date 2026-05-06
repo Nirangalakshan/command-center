@@ -1,5 +1,6 @@
 import { endOfDay, startOfDay } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
+import type { AgentShiftSchedule } from "./types";
 
 export const ATTENDANCE_EVENT_TYPES = [
   "clock_in",
@@ -367,4 +368,71 @@ export function subscribeToAllAttendanceInserts(
   return () => {
     void supabase.removeChannel(channel);
   };
+}
+
+export async function fetchAgentShiftSchedules(): Promise<AgentShiftSchedule[]> {
+  const { data, error } = await supabase
+    .from("agent_shift_schedules")
+    .select("*");
+
+  if (error) throw new Error(error.message);
+  return (data || []).map((row: any) => ({
+    id: row.id,
+    agentId: row.agent_id,
+    monday: row.monday,
+    tuesday: row.tuesday,
+    wednesday: row.wednesday,
+    thursday: row.thursday,
+    friday: row.friday,
+    saturday: row.saturday,
+    sunday: row.sunday,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export async function fetchMyShiftSchedule(agentId: string): Promise<AgentShiftSchedule | null> {
+  const { data, error } = await supabase
+    .from("agent_shift_schedules")
+    .select("*")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    agentId: data.agent_id,
+    monday: data.monday,
+    tuesday: data.tuesday,
+    wednesday: data.wednesday,
+    thursday: data.thursday,
+    friday: data.friday,
+    saturday: data.saturday,
+    sunday: data.sunday,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  };
+}
+
+export async function upsertAgentShiftSchedule(
+  schedule: Partial<AgentShiftSchedule> & { agentId: string },
+): Promise<void> {
+  const payload = {
+    agent_id: schedule.agentId,
+    monday: schedule.monday,
+    tuesday: schedule.tuesday,
+    wednesday: schedule.wednesday,
+    thursday: schedule.thursday,
+    friday: schedule.friday,
+    saturday: schedule.saturday,
+    sunday: schedule.sunday,
+  };
+
+  const { error } = await supabase
+    .from("agent_shift_schedules")
+    .upsert(payload, { onConflict: "agent_id" });
+
+  if (error) throw new Error(error.message);
 }

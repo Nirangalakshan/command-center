@@ -3,6 +3,8 @@ import { AgentAttendanceCard } from "@/components/dashboard/AgentAttendanceCard"
 import { AgentLeaveRequestsCard } from "@/components/dashboard/AgentLeaveRequestsCard";
 import { SuperAdminAttendanceBoard } from "@/components/dashboard/SuperAdminAttendanceBoard";
 import { SuperAdminLeaveRequestsBoard } from "@/components/dashboard/SuperAdminLeaveRequestsBoard";
+import { AgentShiftScheduleBoard } from "@/components/dashboard/AgentShiftScheduleBoard";
+import { AgentShiftScheduleView } from "@/components/dashboard/AgentShiftScheduleView";
 
 interface AttendanceTabProps {
   session: UserSession;
@@ -10,8 +12,8 @@ interface AttendanceTabProps {
   agents: Agent[];
   tenants: Tenant[];
   now: number;
-  /** Which area of Attendance to show (sidebar picks `attendance` vs `leave-requests` tab keys). */
-  section: "shifts" | "leave";
+  /** Which area of Attendance to show. */
+  section: "shifts" | "leave" | "shift-schedule";
 }
 
 export function AttendanceTab({
@@ -40,6 +42,19 @@ export function AttendanceTab({
         </div>
       );
     }
+    if (section === "shift-schedule") {
+      return (
+        <div className="cc-fade-in mx-auto max-w-7xl space-y-6">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Shift schedule</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Define the weekly working hours for each command center agent.
+            </p>
+          </div>
+          <AgentShiftScheduleBoard agents={agents} />
+        </div>
+      );
+    }
     return (
       <div className="cc-fade-in mx-auto max-w-7xl space-y-6">
         <div>
@@ -64,6 +79,32 @@ export function AttendanceTab({
             </p>
           </div>
           <AgentAttendanceCard session={session} now={now} />
+        </div>
+      );
+    }
+    if (section === "shift-schedule") {
+      const currentAgent = agents.find((a) => a.userId === session.userId);
+      const isCCAgent = currentAgent && !String(currentAgent.bmsOwnerUid ?? "").trim();
+
+      if (!isCCAgent) {
+        return (
+          <div className="cc-fade-in mx-auto max-w-6xl space-y-6 text-center pt-12">
+            <p className="text-muted-foreground text-sm">
+              Shift schedule is only available for Command Center agents.
+            </p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="cc-fade-in mx-auto max-w-6xl space-y-6">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Shift schedule</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Your weekly working hours as defined by the admin.
+            </p>
+          </div>
+          <AgentShiftScheduleView session={session} agents={agents} />
         </div>
       );
     }

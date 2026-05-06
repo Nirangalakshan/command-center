@@ -873,6 +873,7 @@ export function SalesSuburbWorkshopsTab({
   const [location, setLocation] = useState("");
   const [website, setWebsite] = useState("");
   const [saving, setSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const load = useCallback(async (tid: string) => {
     setLoadingTable(true);
@@ -942,6 +943,47 @@ export function SalesSuburbWorkshopsTab({
     return m;
   }, [rows]);
 
+  const filteredWsRows = useMemo(() => {
+    if (!searchQuery.trim()) return sortedWsRows;
+    const q = searchQuery.toLowerCase();
+    return sortedWsRows.filter(
+      (w) =>
+        (w.workshop_name && w.workshop_name.toLowerCase().includes(q)) ||
+        (w.phone_number && w.phone_number.toLowerCase().includes(q))
+    );
+  }, [sortedWsRows, searchQuery]);
+
+  const duplicateWarning = useMemo(() => {
+    if (!workshopName.trim() && !phoneNumber.trim()) return null;
+    const wsNameTrim = workshopName.trim().toLowerCase();
+    const phoneTrim = phoneNumber.trim();
+
+    const dup = rows.find(
+      (r) =>
+        r.id !== editingId &&
+        ((wsNameTrim &&
+          r.workshop_name.trim().toLowerCase() === wsNameTrim &&
+          normalizeSalesSuburbKey(r.suburb) === normalizeSalesSuburbKey(suburb)) ||
+          (phoneTrim && r.phone_number?.trim() === phoneTrim))
+    );
+
+    if (dup) {
+      if (
+        phoneTrim &&
+        dup.phone_number?.trim() === phoneTrim &&
+        wsNameTrim &&
+        dup.workshop_name.trim().toLowerCase() === wsNameTrim
+      ) {
+        return `Workshop with this name and phone number exists in ${dup.suburb}.`;
+      } else if (phoneTrim && dup.phone_number?.trim() === phoneTrim) {
+        return `Phone number already used by ${dup.workshop_name} in ${dup.suburb}.`;
+      } else {
+        return `Workshop with this name already exists in this suburb.`;
+      }
+    }
+    return null;
+  }, [rows, editingId, workshopName, phoneNumber, suburb]);
+
   function partialResetKeepSuburb(keepSuburb: string) {
     setEditingId(null);
     setSuburb(keepSuburb.trim());
@@ -954,6 +996,21 @@ export function SalesSuburbWorkshopsTab({
   }
 
   function submitWorkshop(tid: string) {
+    const isDuplicate = rows.some(
+      (r) =>
+        r.id !== editingId &&
+        r.workshop_name.trim().toLowerCase() === workshopName.trim().toLowerCase() &&
+        (
+          normalizeSalesSuburbKey(r.suburb) === normalizeSalesSuburbKey(suburb) ||
+          (phoneNumber.trim() && r.phone_number?.trim() === phoneNumber.trim())
+        )
+    );
+
+    if (isDuplicate) {
+      toast.error("Duplicate workshop: A workshop with this name already exists in this suburb, or shares the same phone number.");
+      return;
+    }
+
     const payload = {
       suburb,
       workshopName,
@@ -1112,12 +1169,17 @@ export function SalesSuburbWorkshopsTab({
                 />
               </div>
             </CardContent>
+            {duplicateWarning && (
+              <div className="px-6 pb-4 text-sm font-medium text-rose-500">
+                Duplicate Warning: {duplicateWarning}
+              </div>
+            )}
             <CardFooter className="flex-col items-stretch gap-3 border-t bg-muted/20 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   className="min-h-11 min-w-[10rem] font-semibold shadow-sm"
-                  disabled={saving || !suburb.trim() || !workshopName.trim()}
+                  disabled={saving || !suburb.trim() || !workshopName.trim() || !!duplicateWarning}
                   onClick={() => submitWorkshop(tid)}
                 >
                   {saving ? "Saving…" : editingId ? "Save changes" : "Save workshop"}
@@ -1133,6 +1195,15 @@ export function SalesSuburbWorkshopsTab({
               </p>
             </CardFooter>
           </Card>
+
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="Search by name or phone..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="max-w-sm"
+            />
+          </div>
 
           {loadingTable ? (
             <EmptyState message="Loading workshops…" />
@@ -1150,8 +1221,8 @@ export function SalesSuburbWorkshopsTab({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedWsRows.map((r, idx) => {
-                    const prev = idx > 0 ? sortedWsRows[idx - 1] : null;
+                  {filteredWsRows.map((r, idx) => {
+                    const prev = idx > 0 ? filteredWsRows[idx - 1] : null;
                     const nk = normalizeSalesSuburbKey(r.suburb);
                     const grouped =
                       prev !== null &&

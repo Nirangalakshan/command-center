@@ -96,7 +96,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'clients') return permissions.canViewClientsTab;
       if (key === 'did-mappings') return permissions.canManageDIDMappings;
       if (key === 'audit-logs') return permissions.canViewAuditLogs;
-      if (key === 'attendance' || key === 'leave-requests') return permissions.canViewAttendanceTab;
+      if (key === 'attendance' || key === 'leave-requests' || key === 'shift-schedule') return permissions.canViewAttendanceTab;
       if (
         key === 'sales-suburbs' ||
         key === 'sales-workshops' ||
@@ -375,6 +375,10 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
         onSignOut={onSignOut}
         chatNavUnreadCount={chatNavUnreadCount}
         pendingLeaveCount={pendingLeaveCount}
+        isCCAgent={
+          session.role === 'agent' &&
+          !!d.agents.find((a) => a.userId === session.userId && !String(a.bmsOwnerUid ?? '').trim())
+        }
       />
 
       {/* Main content */}
@@ -430,14 +434,20 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   incomingCalls={d.incomingCalls}
                 />
               )}
-              {(d.selectedTab === 'attendance' || d.selectedTab === 'leave-requests') && (
+              {(d.selectedTab === 'attendance' || d.selectedTab === 'leave-requests' || d.selectedTab === 'shift-schedule') && (
                 <AttendanceTab
                   session={session}
                   permissions={permissions}
                   agents={d.agents}
                   tenants={d.tenants}
                   now={d.now}
-                  section={d.selectedTab === 'leave-requests' ? 'leave' : 'shifts'}
+                  section={
+                    d.selectedTab === 'leave-requests' 
+                      ? 'leave' 
+                      : d.selectedTab === 'shift-schedule'
+                      ? 'shift-schedule'
+                      : 'shifts'
+                  }
                 />
               )}
               {d.selectedTab === 'agents' && (

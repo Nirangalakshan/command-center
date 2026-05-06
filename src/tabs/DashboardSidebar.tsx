@@ -25,6 +25,7 @@ import {
   Users,
   UserPlus,
   History,
+  CalendarDays,
 } from 'lucide-react';
 import type { Permissions, UserRole } from '@/services/types';
 
@@ -39,6 +40,8 @@ interface DashboardSidebarProps {
   chatNavUnreadCount?: number;
   /** Pending leave requests count for super admins — shows an indicator on the Leave requests nav item. */
   pendingLeaveCount?: number;
+  /** Whether the logged-in agent is a Command Center agent (no BMS link). */
+  isCCAgent?: boolean;
 }
 
 type Perm = keyof Permissions;
@@ -65,6 +68,7 @@ const NAV_ITEMS: SidebarEntry[] = [
     items: [
       { key: 'attendance', label: 'Time tracking', icon: CalendarClock },
       { key: 'leave-requests', label: 'Leave requests', icon: CalendarOff },
+      { key: 'shift-schedule', label: 'Shift schedule', icon: CalendarDays },
     ],
   },
   { kind: 'item', key: 'agents', label: 'Agents', icon: Users, perm: 'canViewAgentsTab' },
@@ -109,6 +113,7 @@ export default function DashboardSidebar({
   onSignOut,
   chatNavUnreadCount = 0,
   pendingLeaveCount = 0,
+  isCCAgent = false,
 }: DashboardSidebarProps) {
   const [open, setOpen] = useState(true);
   const [expandedGroups, setExpandedGroups] = useState(() => new Set<string>());
@@ -225,6 +230,8 @@ export default function DashboardSidebar({
                   {expandedGroups.has(entry.label) && (
                     <div className="ml-1 space-y-0.5 border-l border-neutral-700 pl-2">
                       {entry.items.map((item) => {
+                        if (item.key === 'shift-schedule' && currentRole === 'agent' && !isCCAgent) return null;
+
                         const SubIcon = item.icon;
                         const active = selectedTab === item.key;
                         const isLeaveItem = item.key === 'leave-requests';
