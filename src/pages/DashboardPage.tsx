@@ -3,7 +3,6 @@ import '@/styles/dashboard.css';
 import { useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '@/services/types';
-import { useDashboardData } from '@/hooks/useDashboardData';
 import { useLiveClock } from '@/hooks/useLiveClock';
 import { useFirebaseAuth } from '@/integrations/firebase/useFirebaseAuth';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -66,8 +65,10 @@ function AgentAttendanceShell({
   return <>{children}</>;
 }
 
+import { DashboardDataProvider, useDashboard } from '@/context/DashboardDataContext';
+
 export default function DashboardPage({ session, permissions, onSignOut }: DashboardPageProps) {
-  const d = useDashboardData({ session });
+  const d = useDashboard();
   const { formattedDate: clockDate, formattedTime: clockTime } = useLiveClock();
   const { firebaseUser } = useFirebaseAuth();
   const [clients, setClients] = useState<TenantOnboarding[]>([]);

@@ -41,6 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useCallNotification } from "@/context/CallNotificationContext";
 
 interface OverviewTabProps {
   summary: DashboardSummary | null;
@@ -68,8 +69,8 @@ export function OverviewTab({
   incomingCalls,
 }: OverviewTabProps) {
   const isAgentOverview = session?.role === "agent";
-  const seenIncomingIdsRef = useRef<Set<string>>(new Set());
-  const audioUnlockedRef = useRef(false);
+  const { selectedCall, setSelectedCall } = useCallNotification();
+  const restoredFromSession = useRef(false);
 
   const myAnsweredCallsCount = useMemo(() => {
     if (!isAgentOverview || !session) return 0;
@@ -87,10 +88,6 @@ export function OverviewTab({
     () => agents.filter((a) => a.status === "ringing"),
     [agents],
   );
-  const [selectedCall, setSelectedCall] = useState<CallDetailSnapshot | null>(
-    null,
-  );
-  const restoredFromSession = useRef(false);
 
   // Restore call detail saved before navigating away (Book Now / Booking Details)
   useEffect(() => {
@@ -100,11 +97,10 @@ export function OverviewTab({
       setSelectedCall(restored);
       clearCallDetailSession();
     }
-  }, []);
+  }, [setSelectedCall]);
 
   useEffect(() => {
     if (!selectedCall) return;
-    // Skip auto-clear for calls restored from session (they may not appear in live data)
     if (restoredFromSession.current) return;
 
     const isStillActive =
@@ -119,34 +115,7 @@ export function OverviewTab({
     if (!isStillActive) {
       setSelectedCall(null);
     }
-  }, [selectedCall, incomingCalls, agents]);
-
-  useEffect(() => {
-    const unlockAudio = () => {
-      audioUnlockedRef.current = true;
-    };
-    window.addEventListener("pointerdown", unlockAudio, { once: true });
-    window.addEventListener("keydown", unlockAudio, { once: true });
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-    };
-  }, []);
-
-  useEffect(() => {
-    const currentIncoming = incomingCalls || [];
-    const nextIds = new Set(currentIncoming.map((call) => call.id));
-    const seenIds = seenIncomingIdsRef.current;
-    const hasNewIncoming = currentIncoming.some(
-      (call) => !seenIds.has(call.id),
-    );
-
-    if (hasNewIncoming && audioUnlockedRef.current) {
-      playIncomingAlertTone();
-    }
-
-    seenIncomingIdsRef.current = nextIds;
-  }, [incomingCalls]);
+  }, [selectedCall, incomingCalls, agents, setSelectedCall]);
 
   const queueCallDetails = useMemo(() => {
     const map = new Map<
@@ -166,18 +135,6 @@ export function OverviewTab({
     >();
 
     for (const queue of queues) {
-      // --- Build the best snapshot from all available sources ---
-      //
-      // The agent DB state (ringing / on-call + current_caller) is the most
-      // stable source — it persists across polls and CDC refreshes.
-      // The realtime IncomingCall broadcast is fast but volatile.
-      //
-      // Once an agent answers the call, Yeastar does NOT fire CallHangup
-      // (the call is still live), so the IncomingCall entry lingers in
-      // `incomingCalls`. To prevent the card from staying amber after
-      // answer, we exclude any incoming whose caller number matches a
-      // live agent's currentCaller in this queue.
-
       const liveAgentForQueue = liveAgents.find((agent) =>
         agent.queueIds.includes(queue.id),
       );
@@ -216,10 +173,6 @@ export function OverviewTab({
         continue;
       }
 
-      // Priority 2: ringing agent in DB (stable across Yeastar event churn).
-      // Skip any ringing agent whose caller has already been answered by
-      // the live agent in this queue (Yeastar can lag between ring → answer
-      // events across agents in the same queue).
       const ringingAgentForQueue = ringingAgents.find((agent) => {
         if (!agent.queueIds.includes(queue.id)) return false;
         if (
@@ -253,7 +206,6 @@ export function OverviewTab({
         continue;
       }
 
-      // Priority 3: agent on-call (answered) in this queue.
       if (liveAgentForQueue) {
         const detail = buildLiveOrIncomingDetail(
           "live",
@@ -287,7 +239,6 @@ export function OverviewTab({
         continue;
       }
 
-      // Priority 4: broadcast exists but without caller number — still show button
       const anyBroadcastForQueue = (incomingCalls || []).find(
         (call) => call.queueId === queue.id,
       );
@@ -338,7 +289,6 @@ export function OverviewTab({
 
   return (
     <div className="cc-fade-in space-y-8">
-      {/* Queue Status — top of screen, full width */}
       <div className="space-y-4">
         <div className="flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
           <LiveDot color="var(--cc-color-cyan)" />
@@ -383,9 +333,7 @@ export function OverviewTab({
         </div>
       </div>
 
-      {/* Metrics (left) + Notifications (right) — two-column row */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Left: Metric Cards */}
         <div>
           {isAgentOverview ? (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -457,7 +405,6 @@ export function OverviewTab({
           )}
         </div>
 
-        {/* Right: Notifications Card */}
         <div>
           <NotificationsCard
             queues={queues}
@@ -590,18 +537,6 @@ export function OverviewTab({
           )}
         </CardContent>
       </Card>
-
-      <CallDetailsSheet
-        detail={selectedCall}
-        open={Boolean(selectedCall)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedCall(null);
-            restoredFromSession.current = false;
-            clearCallDetailSession();
-          }
-        }}
-      />
     </div>
   );
 }
@@ -632,7 +567,6 @@ function buildLiveOrIncomingDetail(
   throw new Error("Queue detail requested without an active call.");
 }
 
-/** Strip non-digit chars so "+94 77 123 4567" and "0771234567" match. */
 function normalizeNumber(phone: string | null | undefined): string {
   return (phone ?? "").replace(/\D/g, "");
 }
@@ -651,45 +585,4 @@ function findIncomingCallForAgent(
     incomingCalls.find((call) => call.tenantId === agent.tenantId) ||
     null
   );
-}
-
-function playIncomingAlertTone(): void {
-  if (typeof window === "undefined") return;
-  const AudioCtx =
-    window.AudioContext ||
-    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
-  if (!AudioCtx) return;
-
-  try {
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
-    const master = ctx.createGain();
-    master.gain.setValueAtTime(0.0001, now);
-    master.connect(ctx.destination);
-
-    const pulse = (start: number, frequency: number, duration = 0.11) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(frequency, start);
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.08, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-      osc.connect(gain);
-      gain.connect(master);
-      osc.start(start);
-      osc.stop(start + duration + 0.02);
-    };
-
-    pulse(now + 0.01, 880);
-    pulse(now + 0.18, 1046);
-
-    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
-    window.setTimeout(() => {
-      void ctx.close();
-    }, 700);
-  } catch {
-    // Audio failures are non-critical (autoplay policy/device limitations).
-  }
 }
