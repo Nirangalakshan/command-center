@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Agent, Permissions, Tenant, UserSession, Queue } from "@/services/types";
 import {
   createSalesCampaign,
@@ -81,7 +81,7 @@ function sortAgentsForPicker(agentsList: Agent[]): Agent[] {
   );
 }
 
-/** Full org roster (fetchAllAgents âˆª dashboard agents), sorted. `fullFetch=null` means still loading. */
+/** Full org roster (fetchAllAgents ∪ dashboard agents), sorted. `fullFetch=null` means still loading. */
 function pickerRosterAgents(
   fullFetch: Agent[] | null,
   dashboardAgents: Agent[],
@@ -187,7 +187,7 @@ export function SalesCallCentreDashboardTab({
             </div>
           ) : null}
           {loading ? (
-            <EmptyState message="Loading tenant sales dataâ€¦" />
+            <EmptyState message="Loading tenant sales data..." />
           ) : (
             <>
               <div
@@ -262,10 +262,10 @@ export function SalesCallCentreDashboardTab({
                       }`}
                     >
                       <Badge variant="outline" className="justify-center py-3">
-                        Called Â· {stats.called}
+                        Called - {stats.called}
                       </Badge>
                       <Badge variant="outline" className="justify-center py-3">
-                        Not called Â· {stats.notCalled}
+                        Not called - {stats.notCalled}
                       </Badge>
                       {showWide ? (
                         <>
@@ -273,30 +273,30 @@ export function SalesCallCentreDashboardTab({
                             variant="secondary"
                             className="justify-center py-3"
                           >
-                            Interested+ Â· {stats.interested}
+                            Interested+ - {stats.interested}
                           </Badge>
                           <Badge
                             variant="secondary"
                             className="justify-center py-3"
                           >
-                            Trial Â· {stats.trialStarted}
+                            Trial - {stats.trialStarted}
                           </Badge>
                           <Badge
                             variant="secondary"
                             className="justify-center py-3"
                           >
-                            Visit Â· {stats.siteVisitsBooked}
+                            Visit - {stats.siteVisitsBooked}
                           </Badge>
                           <Badge variant="default" className="justify-center py-3">
-                            Converted Â· {stats.converted}
+                            Converted - {stats.converted}
                           </Badge>
                           <Badge variant="outline" className="justify-center py-3">
-                            Assigned Â· {stats.assignedTotal}
+                            Assigned - {stats.assignedTotal}
                           </Badge>
                         </>
                       ) : (
                         <Badge variant="outline" className="justify-center py-3 sm:col-span-2">
-                          Converted Â· {stats.converted}
+                          Converted - {stats.converted}
                         </Badge>
                       )}
                     </div>
@@ -318,7 +318,7 @@ export function SalesCallCentreDashboardTab({
               </div>
               {agents.length ? null : (
                 <p className="text-xs text-muted-foreground">
-                  Agent roster arrives from Agents â€” ensure extensions are visible
+                  Agent roster arrives from Agents - ensure extensions are visible
                   for assignments.
                 </p>
               )}
@@ -379,7 +379,7 @@ export function SalesLeadDatabaseTab({
             <CardHeader>
               <CardTitle>Add lead</CardTitle>
               <CardDescription>
-                Assignments respect do-not-call â€” blocked pairs cannot be routed.
+                Assignments respect do-not-call - blocked pairs cannot be routed.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-3">
@@ -430,7 +430,7 @@ export function SalesLeadDatabaseTab({
             </CardContent>
           </Card>
           {loading ? (
-            <EmptyState message="Loading leadsâ€¦" />
+            <EmptyState message="Loading leads..." />
           ) : (
             <ScrollArea className="h-[min(480px,calc(100vh-24rem))] rounded-xl border border-border">
               <Table>
@@ -451,9 +451,9 @@ export function SalesLeadDatabaseTab({
                     <TableRow key={r.id}>
                       <TableCell>{r.display_name}</TableCell>
                       <TableCell className="font-mono text-xs">{r.phone}</TableCell>
-                      <TableCell className="text-xs">{r.suburb?.trim() || "â€”"}</TableCell>
+                      <TableCell className="text-xs">{r.suburb?.trim() || "-"}</TableCell>
                       <TableCell className="max-w-[240px] truncate text-xs" title={r.notes}>
-                        {r.notes?.trim() || "â€”"}
+                        {r.notes?.trim() || "-"}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{r.journey_stage}</Badge>
@@ -462,7 +462,7 @@ export function SalesLeadDatabaseTab({
                         {r.assigned_agent_id
                           ? agents.find((a) => a.id === r.assigned_agent_id)
                               ?.name ?? r.assigned_agent_id
-                          : "â€”"}
+                          : "-"}
                       </TableCell>
                       <TableCell>
                         <Checkbox
@@ -502,7 +502,7 @@ export function SalesLeadDatabaseTab({
                   {rows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={8}>
-                        <EmptyState message="No leads yet â€” create one above." />
+                        <EmptyState message="No leads yet - create one above." />
                       </TableCell>
                     </TableRow>
                   ) : null}
@@ -573,7 +573,7 @@ export function SalesCampaignManagerTab({
             </Button>
           </div>
           {loading ? (
-            <EmptyState message="Loadingâ€¦" />
+            <EmptyState message="Loading..." />
           ) : (
             <ul className="space-y-2">
               {rows.map((r) => (
@@ -675,7 +675,7 @@ export function SalesAgentSuburbAssignmentTab({
           <h2 className="text-lg font-semibold">Agent suburb assignment</h2>
           <p className="text-xs text-muted-foreground">
             Pick an agent, then choose a suburb. One suburb can host several workshop records; assigning the suburb gives the agent visibility to all of them. Add many suburbs per agent one at a time. Suburb options come from Sales â†’ Suburb workshops.
-            {pickerLoading ? " Loading full rosterâ€¦" : null}
+            {pickerLoading ? " Loading full roster..." : null}
           </p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-2">
@@ -688,7 +688,7 @@ export function SalesAgentSuburbAssignmentTab({
                 <SelectTrigger className="min-w-[240px] max-w-sm">
                   <SelectValue
                     placeholder={
-                      pickerLoading ? "Loading agentsâ€¦" : "Choose agent"
+                      pickerLoading ? "Loading agents..." : "Choose agent"
                     }
                   />
                 </SelectTrigger>
@@ -700,7 +700,7 @@ export function SalesAgentSuburbAssignmentTab({
                         <span className="text-[11px] font-normal text-muted-foreground">
                           {[a.extension ? `Ext ${a.extension}` : "", a.tenantName || a.tenantId]
                             .filter(Boolean)
-                            .join(" Â· ") || "â€”"}
+                            .join(" - ") || "-"}
                         </span>
                       </span>
                     </SelectItem>
@@ -724,7 +724,7 @@ export function SalesAgentSuburbAssignmentTab({
                         ? "Add workshops first (Suburb workshops tab)"
                         : suburbChoices.length === 0
                           ? "Agent already has all workshop suburbs"
-                          : "Choose suburbâ€¦"
+                          : "Choose suburb..."
                     }
                   />
                 </SelectTrigger>
@@ -740,11 +740,11 @@ export function SalesAgentSuburbAssignmentTab({
                             workshop
                             {wsList.length === 1 ? "" : "s"}
                             {wsList.length > 0
-                              ? ` Â· ${wsList
+                              ? ` - ${wsList
                                   .map((w) => w.workshop_name.trim())
                                   .filter(Boolean)
                                   .slice(0, 3)
-                                  .join(", ")}${wsList.length > 3 ? "â€¦" : ""}`
+                                  .join(", ")}${wsList.length > 3 ? "..." : ""}`
                               : ""}
                           </span>
                         </span>
@@ -781,7 +781,7 @@ export function SalesAgentSuburbAssignmentTab({
             </Button>
           </div>
           {loadingTable ? (
-            <EmptyState message="Loadingâ€¦" />
+            <EmptyState message="Loading..." />
           ) : (
             <ScrollArea className="h-[360px] rounded-xl border">
               <Table>
@@ -823,8 +823,8 @@ export function SalesAgentSuburbAssignmentTab({
                           <TableCell className="font-medium">{r.suburb}</TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {names.length === 0
-                              ? "â€”"
-                              : names.join(" Â· ")}
+                              ? "-"
+                              : names.join(" - ")}
                           </TableCell>
                           <TableCell>
                             <Button
@@ -844,7 +844,7 @@ export function SalesAgentSuburbAssignmentTab({
                   {rows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4}>
-                        <EmptyState message="Assign workshop suburbs from the dropdown â€” each agent can carry multiple suburbs." />
+                        <EmptyState message="Assign workshop suburbs from the dropdown - each agent can carry multiple suburbs." />
                       </TableCell>
                     </TableRow>
                   ) : null}
@@ -1038,8 +1038,8 @@ export function SalesSuburbWorkshopsTab({
         }).then(async () => {
           toast.success(
             countAfter === 1
-              ? "Workshop saved â€” suburb kept so you can add another site."
-              : `This suburb now has ${countAfter} workshops â€” suburb stays filled.`,
+              ? "Workshop saved - suburb kept so you can add another site."
+              : `This suburb now has ${countAfter} workshops - suburb stays filled.`,
           );
           partialResetKeepSuburb(subKeep);
           await load(tid);
@@ -1058,7 +1058,7 @@ export function SalesSuburbWorkshopsTab({
           <div>
             <h2 className="text-lg font-semibold">Suburb workshops</h2>
             <p className="text-sm text-muted-foreground">
-              Log as many workshops as you need against the same suburb (each row is one site/dealer card). Reuse suburb spelling exactly as on CRM leads â€” case does not matter. Agents mapped to that suburb see every workshop here.
+              Log as many workshops as you need against the same suburb (each row is one site/dealer card). Reuse suburb spelling exactly as on CRM leads - case does not matter. Agents mapped to that suburb see every workshop here.
             </p>
           </div>
           {rows.length > 0 ? (
@@ -1073,7 +1073,7 @@ export function SalesSuburbWorkshopsTab({
                   return (
                     <Badge key={norm} variant="outline" className="font-normal">
                       {label}
-                      <span className="ml-1.5 tabular-nums opacity-70">Ã—{n}</span>
+                      <span className="ml-1.5 tabular-nums opacity-70">Ã-{n}</span>
                     </Badge>
                   );
                 })}
@@ -1093,7 +1093,7 @@ export function SalesSuburbWorkshopsTab({
                 <Label htmlFor="sw-suburb">Suburb</Label>
                 <Input
                   id="sw-suburb"
-                  placeholder="e.g. Preston â€” same label for multiple workshops"
+                  placeholder="e.g. Preston - same label for multiple workshops"
                   value={suburb}
                   onChange={(e) => setSuburb(e.target.value)}
                   list={
@@ -1119,7 +1119,7 @@ export function SalesSuburbWorkshopsTab({
                   id="sw-name"
                   value={workshopName}
                   onChange={(e) => setWorkshopName(e.target.value)}
-                  placeholder="Required â€” e.g. Preston North Panel"
+                  placeholder="Required - e.g. Preston North Panel"
                 />
               </div>
               <p className="text-xs font-medium text-muted-foreground sm:col-span-2">
@@ -1163,7 +1163,7 @@ export function SalesSuburbWorkshopsTab({
                 <Label htmlFor="sw-web">Website (optional)</Label>
                 <Input
                   id="sw-web"
-                  placeholder="Optional â€” https://..."
+                  placeholder="Optional - https://..."
                   value={website}
                   onChange={(e) => setWebsite(e.target.value)}
                 />
@@ -1182,7 +1182,7 @@ export function SalesSuburbWorkshopsTab({
                   disabled={saving || !suburb.trim() || !workshopName.trim() || !!duplicateWarning}
                   onClick={() => submitWorkshop(tid)}
                 >
-                  {saving ? "Savingâ€¦" : editingId ? "Save changes" : "Save workshop"}
+                  {saving ? "Saving..." : editingId ? "Save changes" : "Save workshop"}
                 </Button>
                 {editingId ? (
                   <Button type="button" variant="outline" disabled={saving} onClick={resetForm}>
@@ -1206,7 +1206,7 @@ export function SalesSuburbWorkshopsTab({
           </div>
 
           {loadingTable ? (
-            <EmptyState message="Loading workshopsâ€¦" />
+            <EmptyState message="Loading workshops..." />
           ) : (
             <ScrollArea className="h-[min(420px,50vh)] rounded-xl border">
               <Table>
@@ -1245,7 +1245,7 @@ export function SalesSuburbWorkshopsTab({
                         >
                           {grouped ? (
                             <span className="text-muted-foreground text-xs italic">
-                              same suburb Â· different site
+                              same suburb - different site
                             </span>
                           ) : (
                             <span className="font-medium">
@@ -1261,10 +1261,10 @@ export function SalesSuburbWorkshopsTab({
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm">{r.workshop_name || "â€”"}</TableCell>
-                      <TableCell className="font-mono text-xs">{r.phone_number || "â€”"}</TableCell>
-                      <TableCell className="text-sm">{r.owner_name || "â€”"}</TableCell>
-                      <TableCell className="max-w-[180px] truncate text-xs">{r.owner_email || "â€”"}</TableCell>
+                        <TableCell className="text-sm">{r.workshop_name || "-"}</TableCell>
+                      <TableCell className="font-mono text-xs">{r.phone_number || "-"}</TableCell>
+                      <TableCell className="text-sm">{r.owner_name || "-"}</TableCell>
+                      <TableCell className="max-w-[180px] truncate text-xs">{r.owner_email || "-"}</TableCell>
                       <TableCell className="whitespace-nowrap">
                         <Button type="button" variant="outline" size="sm" className="mr-2" onClick={() => startEdit(r)}>
                           Edit
@@ -1342,10 +1342,10 @@ export function SalesCallAssignmentBoardTab({
           </p>
           <p className="text-xs text-muted-foreground">
             Full agent roster loads for assignees (every extension you can see in RLS).
-            {pickerLoading ? " Loadingâ€¦" : ""}
+            {pickerLoading ? " Loading..." : ""}
           </p>
           {loading ? (
-            <EmptyState message="Loading poolâ€¦" />
+            <EmptyState message="Loading pool..." />
           ) : (
             <ScrollArea className="h-[min(520px,70vh)] rounded-xl border">
               <Table>
@@ -1362,7 +1362,7 @@ export function SalesCallAssignmentBoardTab({
                     <TableRow key={r.id}>
                       <TableCell>{r.display_name}</TableCell>
                       <TableCell className="font-mono text-xs">{r.phone}</TableCell>
-                      <TableCell>{r.suburb || "â€”"}</TableCell>
+                      <TableCell>{r.suburb || "-"}</TableCell>
                       <TableCell>
                         <div className="flex gap-2">
                           <Select
@@ -1375,7 +1375,7 @@ export function SalesCallAssignmentBoardTab({
                             <SelectTrigger>
                               <SelectValue
                                 placeholder={
-                                  pickerLoading ? "Loading agentsâ€¦" : "Pick agent"
+                                  pickerLoading ? "Loading agents..." : "Pick agent"
                                 }
                               />
                             </SelectTrigger>
@@ -1387,7 +1387,7 @@ export function SalesCallAssignmentBoardTab({
                                     <span className="text-[11px] font-normal text-muted-foreground">
                                       {[a.extension ? `Ext ${a.extension}` : "", a.tenantName || a.tenantId]
                                         .filter(Boolean)
-                                        .join(" Â· ") || "â€”"}
+                                        .join(" - ") || "-"}
                                     </span>
                                   </span>
                                 </SelectItem>
@@ -1506,24 +1506,24 @@ export function SalesCallProgressTab({
             </Button>
           </div>
           {loading ? (
-            <EmptyState message="Loading workshop contact activityâ€¦" />
+            <EmptyState message="Loading workshop contact activity..." />
           ) : (
             <>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <Badge className="justify-center py-4 text-sm font-medium bg-neutral-900 text-white">
-                  Total logged Â· {stats.total}
+                  Total logged - {stats.total}
                 </Badge>
                 <Badge variant="outline" className="justify-center py-4 text-sm border-blue-200 text-blue-700 bg-blue-50/50">
-                  Marked called Â· {stats.markedCalled}
+                  Marked called - {stats.markedCalled}
                 </Badge>
                 <Badge variant="outline" className="justify-center py-4 text-sm border-amber-200 text-amber-700 bg-amber-50/50">
-                  With follow-up Â· {stats.withFollowUp}
+                  With follow-up - {stats.withFollowUp}
                 </Badge>
                 <Badge variant="outline" className="justify-center py-4 text-sm border-purple-200 text-purple-700 bg-purple-50/50">
-                  With remarks Â· {stats.withRemarks}
+                  With remarks - {stats.withRemarks}
                 </Badge>
                 <Badge variant="outline" className="justify-center py-4 text-sm border-emerald-200 text-emerald-700 bg-emerald-50/50">
-                  Completed Â· {stats.completed}
+                  Completed - {stats.completed}
                 </Badge>
               </div>
 
@@ -1537,7 +1537,7 @@ export function SalesCallProgressTab({
                 <TabsContent value="all" className="space-y-2 mt-0">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-sm font-semibold">Suburb workshops â€” agent status</h3>
+                      <h3 className="text-sm font-semibold">Suburb workshops - agent status</h3>
                       <p className="text-xs text-muted-foreground">
                         Every saved workshop contact row (mark called + remarks); use Follow-ups tab for callbacks only.
                       </p>
@@ -1562,12 +1562,12 @@ export function SalesCallProgressTab({
                           return (
                             <TableRow key={r.id}>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "â€”"}
+                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "-"}
                               </TableCell>
                               <TableCell className="font-medium text-sm">{agentName}</TableCell>
-                              <TableCell className="text-sm">{w?.suburb?.trim() || "â€”"}</TableCell>
+                              <TableCell className="text-sm">{w?.suburb?.trim() || "-"}</TableCell>
                               <TableCell className="font-medium text-sm">
-                                {w?.workshop_name?.trim() || "â€”"}
+                                {w?.workshop_name?.trim() || "-"}
                               </TableCell>
                               <TableCell>
                                 {r.call_status ? (
@@ -1576,10 +1576,10 @@ export function SalesCallProgressTab({
                                   </Badge>
                                 ) : r.first_called_at ? (
                                   <Badge variant="outline" className="text-[10px] tracking-wide uppercase">Called</Badge>
-                                ) : "â€”"}
+                                ) : "-"}
                               </TableCell>
                               <TableCell className="text-xs max-w-md align-top whitespace-pre-wrap break-words text-muted-foreground">
-                                {(r.remarks ?? "").trim() || "â€”"}
+                                {(r.remarks ?? "").trim() || "-"}
                               </TableCell>
                             </TableRow>
                           );
@@ -1587,7 +1587,7 @@ export function SalesCallProgressTab({
                         {contacts.length === 0 ? (
                           <TableRow>
                             <TableCell colSpan={6}>
-                              <EmptyState message="No workshop contact rows yet â€” agents use Mark as called and remarks on My call list." />
+                              <EmptyState message="No workshop contact rows yet - agents use Mark as called and remarks on My call list." />
                             </TableCell>
                           </TableRow>
                         ) : null}
@@ -1599,7 +1599,7 @@ export function SalesCallProgressTab({
                 <TabsContent value="followups" className="space-y-2 mt-0">
                   <h3 className="text-sm font-semibold text-amber-700">Scheduled workshop callbacks</h3>
                   <p className="text-xs text-muted-foreground">
-                    Rows with a follow-up time set by agents on My call list suburb workshops â€” sorted earliest first.
+                    Rows with a follow-up time set by agents on My call list suburb workshops - sorted earliest first.
                   </p>
                   <ScrollArea className="h-[min(60vh,520px)] rounded-xl border border-amber-200 bg-amber-50/10">
                     <Table>
@@ -1620,16 +1620,16 @@ export function SalesCallProgressTab({
                           return (
                             <TableRow key={r.id}>
                               <TableCell className="text-xs whitespace-nowrap font-semibold text-amber-700">
-                                {r.follow_up_at ? new Date(r.follow_up_at).toLocaleString() : "â€”"}
+                                {r.follow_up_at ? new Date(r.follow_up_at).toLocaleString() : "-"}
                               </TableCell>
                               <TableCell className="font-medium text-sm">{agentName}</TableCell>
-                              <TableCell className="text-sm">{w?.suburb?.trim() || "â€”"}</TableCell>
-                              <TableCell className="font-medium text-sm">{w?.workshop_name?.trim() || "â€”"}</TableCell>
+                              <TableCell className="text-sm">{w?.suburb?.trim() || "-"}</TableCell>
+                              <TableCell className="font-medium text-sm">{w?.workshop_name?.trim() || "-"}</TableCell>
                               <TableCell className="text-xs max-w-md align-top whitespace-pre-wrap break-words text-muted-foreground">
-                                {(r.remarks ?? "").trim() || "â€”"}
+                                {(r.remarks ?? "").trim() || "-"}
                               </TableCell>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "â€”"}
+                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "-"}
                               </TableCell>
                             </TableRow>
                           );
@@ -1670,18 +1670,18 @@ export function SalesCallProgressTab({
                           return (
                             <TableRow key={r.id}>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "â€”"}
+                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "-"}
                               </TableCell>
                               <TableCell className="font-medium text-sm">{agentName}</TableCell>
-                              <TableCell className="text-sm">{w?.suburb?.trim() || "â€”"}</TableCell>
-                              <TableCell className="font-medium text-sm">{w?.workshop_name?.trim() || "â€”"}</TableCell>
+                              <TableCell className="text-sm">{w?.suburb?.trim() || "-"}</TableCell>
+                              <TableCell className="font-medium text-sm">{w?.workshop_name?.trim() || "-"}</TableCell>
                               <TableCell>
                                 <Badge variant={r.call_status === 'confirmed' ? 'default' : 'destructive'} className="text-[10px] tracking-wide uppercase">
                                   {r.call_status}
                                 </Badge>
                               </TableCell>
                               <TableCell className="text-xs max-w-md align-top whitespace-pre-wrap break-words text-muted-foreground">
-                                {(r.remarks ?? "").trim() || "â€”"}
+                                {(r.remarks ?? "").trim() || "-"}
                               </TableCell>
                             </TableRow>
                           );
@@ -1747,7 +1747,7 @@ export function SalesTrialSitePipelineTab({
             </CardHeader>
             <CardContent>
               {loading ? (
-                <EmptyState message="Loadingâ€¦" />
+                <EmptyState message="Loading..." />
               ) : (
                 <ScrollArea className="h-[360px] pr-4">
                   <div className="space-y-2">
@@ -1774,7 +1774,7 @@ export function SalesTrialSitePipelineTab({
             </CardHeader>
             <CardContent>
               {loading ? (
-                <EmptyState message="Loadingâ€¦" />
+                <EmptyState message="Loading..." />
               ) : (
                 <ScrollArea className="h-[360px] pr-4">
                   <div className="space-y-2">
@@ -1846,7 +1846,7 @@ export function SalesCallLogsTab({
                 Call logs &amp; customer responses
               </h2>
               <p className="text-sm text-muted-foreground">
-                Every disposition creates a row here with suburb, agent attribution, remarks, and customer responses â€” alongside the latest notes shown on Lead / customer database.
+                Every disposition creates a row here with suburb, agent attribution, remarks, and customer responses - alongside the latest notes shown on Lead / customer database.
               </p>
             </div>
             <Button
@@ -1861,7 +1861,7 @@ export function SalesCallLogsTab({
             </Button>
           </div>
           {loading ? (
-            <EmptyState message="Fetching interaction historyâ€¦" />
+            <EmptyState message="Fetching interaction history..." />
           ) : (
             <ScrollArea className="h-[min(520px,72vh)] rounded-xl border">
               <Table>
@@ -1889,26 +1889,26 @@ export function SalesCallLogsTab({
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap max-w-[100px] truncate">
-                        {r.lead?.suburb?.trim() || "â€”"}
+                        {r.lead?.suburb?.trim() || "-"}
                       </TableCell>
                       <TableCell className="text-xs max-w-[120px] truncate">
-                        {r.agent_id ? agents.find((a) => a.id === r.agent_id)?.name ?? r.agent_id : "â€”"}
+                        {r.agent_id ? agents.find((a) => a.id === r.agent_id)?.name ?? r.agent_id : "-"}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{r.outcome}</Badge>
                       </TableCell>
                       <TableCell className="max-w-[200px] truncate text-sm">
-                        {r.notes || "â€”"}
+                        {r.notes || "-"}
                       </TableCell>
                       <TableCell className="max-w-[200px] truncate text-sm">
-                        {r.customer_response || "â€”"}
+                        {r.customer_response || "-"}
                       </TableCell>
                     </TableRow>
                   ))}
                   {rows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7}>
-                        <EmptyState message="No interactions yet â€” agents log outcomes from their workspace." />
+                        <EmptyState message="No interactions yet - agents log outcomes from their workspace." />
                       </TableCell>
                     </TableRow>
                   ) : null}

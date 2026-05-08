@@ -13,6 +13,7 @@ import DashboardSidebar from '@/tabs/DashboardSidebar';
 import { LoadingSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { OverviewTab } from '@/tabs/OverviewTab';
 import { AgentsTab } from '@/tabs/AgentsTab';
+import { AgentPerformanceTab } from '@/tabs/AgentPerformanceTab';
 import { CallsTab } from '@/tabs/CallsTab';
 import { SipLinesTab } from '@/tabs/SipLinesTab';
 import { ClientsTab } from '@/tabs/ClientsTab';
@@ -90,7 +91,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'overview') return permissions.canViewOverviewTab;
       if (key === 'calls') return permissions.canViewCallsTab;
       if (key === 'bookings') return permissions.canViewBookingsTab;
-      if (key === 'agents') return permissions.canViewAgentsTab;
+      if (key === 'agents' || key === 'agent-performance') return permissions.canViewAgentsTab;
       if (key === 'chat') return permissions.canViewChatTab;
       if (key === 'agent-onboarding') return permissions.canViewAgentOnboardingTab;
       if (key === 'sip') return permissions.canViewSipTab;
@@ -459,6 +460,13 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   permissions={permissions}
                   now={d.now}
                   onRefresh={d.refresh}
+                />
+              )}
+              {d.selectedTab === 'agent-performance' && (
+                <AgentPerformanceTab
+                  agents={d.agents}
+                  calls={d.calls}
+                  tenantId={effectiveSalesTenantId}
                 />
               )}
               {d.selectedTab === 'agent-onboarding' && (

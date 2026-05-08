@@ -320,6 +320,41 @@ export async function insertAttendanceEvent(
   if (error) throw new Error(error.message);
 }
 
+export async function ensureClockedOut(opts: {
+  userId: string;
+  tenantId: string | null;
+  displayName: string;
+}): Promise<void> {
+  const { data: events, error: fetchErr } = await supabase
+    .from("agent_attendance_events")
+    .select("event_type, occurred_at")
+    .eq("user_id", opts.userId)
+    .gte("occurred_at", startOfDay(new Date()).toISOString())
+    .order("occurred_at", { ascending: true });
+
+  if (fetchErr) return; // Silent fail if we can't check
+
+  const { status } = deriveAttendanceShiftStatus(events || []);
+  if (status === "off_clock") return;
+
+  if (status === "on_break") {
+    await supabase.from("agent_attendance_events").insert({
+      user_id: opts.userId,
+      tenant_id: opts.tenantId,
+      agent_display_name: opts.displayName || null,
+      event_type: "break_end",
+    });
+  }
+
+  await supabase.from("agent_attendance_events").insert({
+    user_id: opts.userId,
+    tenant_id: opts.tenantId,
+    agent_display_name: opts.displayName || null,
+    event_type: "clock_out",
+  });
+}
+
+
 export function subscribeToMyAttendanceEvents(
   userId: string,
   onEvent: (row: AgentAttendanceEventRow) => void,

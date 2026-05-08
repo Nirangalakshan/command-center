@@ -8,6 +8,7 @@ import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChan
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { logSystemActivity } from '@/services/auditLogApi';
 import { setAllowFirebaseEnvAutoLogin } from '@/lib/firebaseEnvAutoLoginPolicy';
+import { ensureClockedOut } from '@/services/attendanceApi';
 
 interface AuthState {
   user: SupabaseUser | FirebaseUser | null;
@@ -314,6 +315,13 @@ export function useAuth(): AuthState {
     setAllowFirebaseEnvAutoLogin(true);
 
     if (session?.role === 'agent') {
+      // Ensure they are clocked out when logging out
+      await ensureClockedOut({
+        userId: session.userId,
+        tenantId: session.tenantId,
+        displayName: session.displayName,
+      }).catch(() => {});
+
       // Offline status for supabase agents
       const { error: presenceErr } = await supabase
         .from('agents')

@@ -71,7 +71,16 @@ const NAV_ITEMS: SidebarEntry[] = [
       { key: 'shift-schedule', label: 'Shift schedule', icon: CalendarDays },
     ],
   },
-  { kind: 'item', key: 'agents', label: 'Agents', icon: Users, perm: 'canViewAgentsTab' },
+  {
+    kind: 'group',
+    label: 'Agents & Performance',
+    icon: Users,
+    perm: 'canViewAgentsTab',
+    items: [
+      { key: 'agents', label: 'Directory', icon: Users },
+      { key: 'agent-performance', label: 'Performance', icon: Activity },
+    ],
+  },
   { kind: 'item', key: 'agent-onboarding', label: 'Agent Onboarding', icon: UserPlus, perm: 'canViewAgentOnboardingTab' },
   { kind: 'item', key: 'chat', label: 'Chat', icon: MessageSquare, perm: 'canViewChatTab' },
   { kind: 'item', key: 'calls', label: 'Calls', icon: Phone, perm: 'canViewCallsTab' },

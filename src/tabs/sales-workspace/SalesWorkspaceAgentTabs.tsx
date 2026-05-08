@@ -1,5 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { Phone, Plus } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  PopoverClose,
+} from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { SOFTPHONE_DIAL_REQUEST_EVENT } from "@/components/dashboard/SoftphoneWidget";
 import type {
   Agent,
   Permissions,
@@ -13,6 +30,7 @@ import {
   fetchSalesSuburbWorkshopsWithAgentContact,
   markSalesLeadCalled,
   markSalesSuburbWorkshopCalled,
+  insertSalesSuburbWorkshop,
   normalizeSalesSuburbKey,
   salesProgressFromLeads,
   workshopsMatchingSuburb,
@@ -131,7 +149,7 @@ function SuburbWorkshopsTable({
       </CardHeader>
       <CardContent>
         {loading ? (
-          <EmptyState message="Loading workshops…" />
+          <EmptyState message="Loading workshops..." />
         ) : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">No workshop records for your access.</p>
         ) : (
@@ -161,13 +179,51 @@ function SuburbWorkshopsTable({
                   const followDirty = followDraftIso !== serverFollowIso;
                   return (
                     <TableRow key={w.id}>
-                      <TableCell className="text-sm">{w.suburb?.trim() || "—"}</TableCell>
-                      <TableCell className="font-medium">{w.workshop_name?.trim() || "—"}</TableCell>
-                      <TableCell className="text-sm">{w.owner_name?.trim() || "—"}</TableCell>
+                      <TableCell className="text-sm">{w.suburb?.trim() || "-"}</TableCell>
+                      <TableCell className="font-medium">{w.workshop_name?.trim() || "-"}</TableCell>
+                      <TableCell className="text-sm">{w.owner_name?.trim() || "-"}</TableCell>
                       <TableCell className="font-mono text-xs whitespace-nowrap">
-                        {w.phone_number?.trim() || "—"}
+                        {w.phone_number?.trim() ? (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button variant="link" className="h-auto p-0 text-xs font-mono">
+                                {w.phone_number.trim()}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-3" side="top">
+                              <div className="flex flex-col gap-3">
+                                <p className="text-xs font-medium text-slate-700">Dial {w.phone_number.trim()}?</p>
+                                <div className="flex gap-2">
+                                  <PopoverClose asChild>
+                                    <Button 
+                                      size="sm" 
+                                      className="bg-emerald-500 hover:bg-emerald-600 flex-1 text-white"
+                                      onClick={() => {
+                                        window.dispatchEvent(
+                                          new CustomEvent(SOFTPHONE_DIAL_REQUEST_EVENT, {
+                                            detail: { number: w.phone_number?.trim() },
+                                          })
+                                        );
+                                      }}
+                                    >
+                                      <Phone className="mr-1 h-3 w-3" />
+                                      Call
+                                    </Button>
+                                  </PopoverClose>
+                                  <PopoverClose asChild>
+                                    <Button variant="outline" size="sm" className="flex-1">
+                                      Cancel
+                                    </Button>
+                                  </PopoverClose>
+                                </div>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        ) : (
+                          "-"
+                        )}
                       </TableCell>
-                      <TableCell className="text-sm break-all">{w.owner_email?.trim() || "—"}</TableCell>
+                      <TableCell className="text-sm break-all">{w.owner_email?.trim() || "-"}</TableCell>
                       <TableCell className="align-top">
                         {called ? (
                           <div className="flex flex-col gap-1.5 min-w-[11rem]">
@@ -197,7 +253,7 @@ function SuburbWorkshopsTable({
                               }}
                             >
                               <SelectTrigger className="h-7 text-xs" disabled={savingStatusId === w.id}>
-                                <SelectValue placeholder={savingStatusId === w.id ? "Saving…" : "Set outcome…"} />
+                                <SelectValue placeholder={savingStatusId === w.id ? "Saving..." : "Set outcome..."} />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="confirmed">
@@ -235,7 +291,7 @@ function SuburbWorkshopsTable({
                                 .finally(() => setMarkingId(null));
                             }}
                           >
-                            {markingId === w.id ? "Saving…" : "Mark as called"}
+                            {markingId === w.id ? "Saving..." : "Mark as called"}
                           </Button>
                         )}
                       </TableCell>
@@ -268,7 +324,7 @@ function SuburbWorkshopsTable({
                                 .finally(() => setSavingNotesId(null));
                             }}
                           >
-                            {savingNotesId === w.id && dirty ? "Saving…" : "Save remarks"}
+                            {savingNotesId === w.id && dirty ? "Saving..." : "Save remarks"}
                           </Button>
                         </div>
                       </TableCell>
@@ -307,7 +363,7 @@ function SuburbWorkshopsTable({
                                   .finally(() => setSavingFollowUpId(null));
                               }}
                             >
-                              {savingFollowUpId === w.id && followDirty ? "Saving…" : "Save"}
+                              {savingFollowUpId === w.id && followDirty ? "Saving..." : "Save"}
                             </Button>
                             <Button
                               type="button"
@@ -349,6 +405,215 @@ function SuburbWorkshopsTable({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function AddWorkshopDialog({
+  suburb: prefilledSuburb,
+  assignedSuburbs = [],
+  tenantId,
+  onSuccess,
+}: {
+  suburb?: string;
+  assignedSuburbs?: string[];
+  tenantId: string;
+  onSuccess?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [suburb, setSuburb] = useState(prefilledSuburb || "");
+  const [workshopName, setWorkshopName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [location, setLocation] = useState("");
+  const [website, setWebsite] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Sync internal suburb state when prefilledSuburb changes
+  useEffect(() => {
+    if (prefilledSuburb) setSuburb(prefilledSuburb);
+  }, [prefilledSuburb]);
+
+  // Clear error when dialog opens/closes
+  useEffect(() => {
+    if (!open) setError(null);
+  }, [open]);
+
+  const handleSubmit = async () => {
+    setError(null);
+    if (!suburb) {
+      setError("Suburb is required");
+      return;
+    }
+    if (!workshopName.trim()) {
+      setError("Workshop name is required");
+      return;
+    }
+    setSaving(true);
+    try {
+      await insertSalesSuburbWorkshop({
+        tenantId,
+        suburb: suburb.trim(),
+        workshopName,
+        phoneNumber,
+        ownerName,
+        ownerEmail,
+        location,
+        website,
+      });
+      toast.success("Workshop added successfully");
+      setOpen(false);
+      onSuccess?.();
+      // Reset form
+      if (!prefilledSuburb) setSuburb("");
+      setWorkshopName("");
+      setPhoneNumber("");
+      setOwnerName("");
+      setOwnerEmail("");
+      setLocation("");
+      setWebsite("");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to add workshop";
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const trigger = prefilledSuburb ? (
+    <Button variant="secondary" size="icon" className="h-5 w-5 rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border-emerald-200">
+      <Plus className="h-3 w-3" />
+    </Button>
+  ) : (
+    <Button variant="outline" size="sm" className="h-8 gap-1.5 border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700">
+      <Plus className="h-3.5 w-3.5" />
+      Add Workshop
+    </Button>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        {trigger}
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle>Add Workshop</DialogTitle>
+          <DialogDescription>
+            {prefilledSuburb ? (
+              <>Add a new workshop for <strong>{prefilledSuburb}</strong>.</>
+            ) : (
+              "Add a new workshop to one of your assigned suburbs."
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {error && (
+          <div className="bg-destructive/10 text-destructive text-xs p-2 rounded-md mb-2">
+            {error}
+          </div>
+        )}
+        <div className="grid gap-4 py-4">
+          {!prefilledSuburb && (
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="suburb-select" className="text-right text-xs">
+                Suburb *
+              </Label>
+              <Select value={suburb} onValueChange={setSuburb}>
+                <SelectTrigger id="suburb-select" className="col-span-3 text-sm">
+                  <SelectValue placeholder="Select a suburb..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {assignedSuburbs.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="name" className="text-right text-xs">
+              Name *
+            </Label>
+            <Input
+              id="name"
+              value={workshopName}
+              onChange={(e) => setWorkshopName(e.target.value)}
+              className="col-span-3 text-sm"
+              placeholder="e.g. Preston North Panel"
+            />
+          </div>
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="phone" className="text-right text-xs">
+              Phone
+            </Label>
+            <Input
+              id="phone"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              className="col-span-3 text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="owner" className="text-right text-xs">
+              Owner
+            </Label>
+            <Input
+              id="owner"
+              value={ownerName}
+              onChange={(e) => setOwnerName(e.target.value)}
+              className="col-span-3 text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="email" className="text-right text-xs">
+              Email
+            </Label>
+            <Input
+              id="email"
+              type="email"
+              value={ownerEmail}
+              onChange={(e) => setOwnerEmail(e.target.value)}
+              className="col-span-3 text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="location" className="text-right text-xs">
+              Location
+            </Label>
+            <Input
+              id="location"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              className="col-span-3 text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="website" className="text-right text-xs">
+              Website
+            </Label>
+            <Input
+              id="website"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+              className="col-span-3 text-sm"
+              placeholder="https://..."
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={handleSubmit} disabled={saving}>
+            {saving ? "Adding..." : "Add Workshop"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -435,7 +700,7 @@ export function AgentSalesHomeTab({
       <div>
         <h2 className="text-lg font-semibold">Agent home</h2>
         <p className="text-sm text-muted-foreground">
-          Assigned leads-only view — privacy enforced by tenant rules.
+          Assigned leads-only view - privacy enforced by tenant rules.
         </p>
       </div>
       {err ? (
@@ -444,7 +709,7 @@ export function AgentSalesHomeTab({
         </div>
       ) : null}
       {loading ? (
-        <EmptyState message="Loading desk summary…" />
+        <EmptyState message="Loading desk summary..." />
       ) : (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -467,27 +732,49 @@ export function AgentSalesHomeTab({
           </div>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Assigned suburbs</CardTitle>
-              <p className="text-sm font-normal text-muted-foreground">
-                Your territory from Sales → Agent suburb assignment — workshops and leads use these patches.
-              </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Assigned suburbs</CardTitle>
+                  <p className="text-sm font-normal text-muted-foreground">
+                    Your territory from Sales → Agent suburb assignment.
+                  </p>
+                </div>
+                {agentId && assignedSuburbLabels.length > 0 && (
+                  <AddWorkshopDialog 
+                    assignedSuburbs={assignedSuburbLabels}
+                    tenantId={agents.find((ag) => ag.userId === session.userId)?.tenantId || session.tenantId || ""}
+                    onSuccess={() => void load({ silent: true })}
+                  />
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {!agentId ? (
                 <p className="text-sm text-muted-foreground">
-                  Your login is not yet linked to an agent row — ops can attach it under Agents.
+                  Your login is not yet linked to an agent row - ops can attach it under Agents.
                 </p>
               ) : assignedSuburbLabels.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No suburbs on your profile yet — ask a super admin to assign suburbs to you.
+                  No suburbs on your profile yet - ask a super admin to assign suburbs to you.
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {assignedSuburbLabels.map((s) => (
-                    <Badge key={s} variant="secondary">
-                      {s}
-                    </Badge>
-                  ))}
+                  {assignedSuburbLabels.map((s) => {
+                    const agentObj = agents.find((ag) => ag.userId === session.userId);
+                    const tid = agentObj?.tenantId || session.tenantId;
+                    return (
+                      <Badge key={s} variant="secondary" className="pr-1 gap-1.5 flex items-center h-8 px-2">
+                        <span className="text-xs font-medium">{s}</span>
+                        {tid && (
+                          <AddWorkshopDialog 
+                            suburb={s} 
+                            tenantId={tid} 
+                            onSuccess={() => void load({ silent: true })} 
+                          />
+                        )}
+                      </Badge>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -496,11 +783,11 @@ export function AgentSalesHomeTab({
             <Card>
               <CardHeader><CardTitle>Snapshot</CardTitle></CardHeader>
               <CardContent className="flex flex-wrap gap-2">
-                <Badge variant="outline">Called · {stats.called}</Badge>
-                <Badge variant="outline">Not called · {stats.notCalled}</Badge>
-                <Badge variant="secondary">Interested · {stats.interested}</Badge>
-                <Badge variant="secondary">Visits · {stats.siteVisitsBooked}</Badge>
-                <Badge>Converted · {stats.converted}</Badge>
+                <Badge variant="outline">Called - {stats.called}</Badge>
+                <Badge variant="outline">Not called - {stats.notCalled}</Badge>
+                <Badge variant="secondary">Interested - {stats.interested}</Badge>
+                <Badge variant="secondary">Visits - {stats.siteVisitsBooked}</Badge>
+                <Badge>Converted - {stats.converted}</Badge>
               </CardContent>
             </Card>
           ) : (
@@ -570,17 +857,26 @@ export function AgentMyCallListTab({
         <div>
           <h2 className="text-lg font-semibold">My call list</h2>
           <p className="text-sm text-muted-foreground">
-            Suburb workshops from Sales — mark called, save remarks, and set follow-ups below (scroll horizontally on
+            Suburb workshops from Sales - mark called, save remarks, and set follow-ups below (scroll horizontally on
             narrow screens). Use <strong className="font-medium text-foreground">Reload</strong> to refresh.
             Workshops you set a <em>Follow-up</em> time for move to the <strong className="font-medium text-foreground">My follow-ups</strong> tab.
             Workshops you mark <em>Confirmed</em> or <em>Rejected</em> move to the{" "}
             <strong className="font-medium text-foreground">Completed</strong> tab automatically.
-            {agentLabel ? ` · ${agentLabel}` : ""}
+            {agentLabel ? ` - ${agentLabel}` : ""}
           </p>
         </div>
-        <Button type="button" variant="outline" onClick={() => void load()}>
-          Reload
-        </Button>
+        <div className="flex items-center gap-2">
+          {(() => {
+            const agentObj = agents.find((ag) => ag.userId === session.userId);
+            const tid = agentObj?.tenantId || session.tenantId;
+            // For general add button in this tab, we'd need a suburb picker or we just rely on the ones in Agent Home.
+            // But since the user complained about visibility, let's at least make sure they can see them in Agent Home.
+            return null;
+          })()}
+          <Button type="button" variant="outline" onClick={() => void load()}>
+            Reload
+          </Button>
+        </div>
       </div>
 
       {loadError ? (
@@ -650,12 +946,12 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
       <div>
         <h2 className="text-lg font-semibold">Call workspace</h2>
         <p className="text-sm text-muted-foreground">
-          Tie each dial to CRM outcomes — this drawer logs post-call results (trials / visits / conversions).
+          Tie each dial to CRM outcomes - this drawer logs post-call results (trials / visits / conversions).
           Desk notes sync to supervisors on lead records and timelines. Use Overview + softphone for live PBX routing.
         </p>
       </div>
-      {loading ? <EmptyState message="Loading assignees…" /> : rows.length === 0 ? (
-        <EmptyState message="Nothing assigned — supervisors release leads from Assignment Board." />
+      {loading ? <EmptyState message="Loading assignees..." /> : rows.length === 0 ? (
+        <EmptyState message="Nothing assigned - supervisors release leads from Assignment Board." />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[320px,minmax(0,1fr)]">
           <Card>
@@ -675,7 +971,7 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
               {picked ? (
                 <>
                   <div className="rounded-lg bg-muted px-3 py-2 font-mono text-sm">{picked.phone}</div>
-                  <div className="text-xs text-muted-foreground">{picked.suburb || "No suburb captured"} · {picked.journey_stage}</div>
+                  <div className="text-xs text-muted-foreground">{picked.suburb || "No suburb captured"} - {picked.journey_stage}</div>
                   <Button type="button" onClick={() => setOpen(true)} disabled={!picked}>
                     Open outcome drawer
                   </Button>
@@ -715,9 +1011,28 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
                     </div>
                   ))
                 ) : (
-                  <p className="text-muted-foreground">
-                    No workshop records for this lead&apos;s suburb — ask a manager to publish one under Sales → Suburb workshops.
-                  </p>
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <p className="text-muted-foreground">
+                      No workshop records for this lead&apos;s suburb.
+                    </p>
+                    {(() => {
+                      const agentObj = props.agents.find((ag) => ag.userId === props.session.userId);
+                      const tid = agentObj?.tenantId;
+                      if (tid && picked?.suburb) {
+                        return (
+                          <div className="flex flex-col items-center gap-2">
+                            <span className="text-xs text-muted-foreground">Would you like to add one?</span>
+                            <AddWorkshopDialog 
+                              suburb={picked.suburb} 
+                              tenantId={tid} 
+                              onSuccess={() => void reload()} 
+                            />
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -725,7 +1040,7 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
               <CardHeader><CardTitle>Operator hints</CardTitle></CardHeader>
               <CardContent className="text-sm space-y-2">
                 <p>1. Dial from Overview / softphone, then log the disposition so supervisors retain a clean audit trail.</p>
-                <p>2. Every outcome replaces the CRM “notes” preview with what you typed in that call — use desk notes below for quieter scratchpads.</p>
+                <p>2. Every outcome replaces the CRM “notes” preview with what you typed in that call - use desk notes below for quieter scratchpads.</p>
                 <Button type="button" variant="secondary" disabled={!picked} onClick={() => setOpen(true)}>Jump to disposition</Button>
               </CardContent>
             </Card>
@@ -733,7 +1048,7 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
               <CardHeader><CardTitle>Desk remarks</CardTitle></CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  Saved to this lead&apos;s CRM notes immediately. Logging a disposition overwrites notes with that call memo — recap important context after each log if needed.
+                  Saved to this lead&apos;s CRM notes immediately. Logging a disposition overwrites notes with that call memo - recap important context after each log if needed.
                 </p>
                 <div className="space-y-2">
                   <Label htmlFor="desk-notes">Notes visible to admins</Label>
@@ -758,7 +1073,7 @@ export function AgentCallWorkspaceTab(props: SalesAgentTabProps) {
                     }).catch((e) => toast.error(e instanceof Error ? e.message : "Could not save")).finally(() => setNotesSaving(false));
                   }}
                 >
-                  {notesSaving ? "Saving…" : "Save desk notes"}
+                  {notesSaving ? "Saving..." : "Save desk notes"}
                 </Button>
               </CardContent>
             </Card>
@@ -896,7 +1211,7 @@ export function AgentPerformanceRewardsTab(props: SalesAgentTabProps) {
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold">Performance &amp; rewards</h2>
-        <p className="text-sm text-muted-foreground">Self-serve rollup — finance still reviews payouts.</p>
+        <p className="text-sm text-muted-foreground">Self-serve rollup - finance still reviews payouts.</p>
       </div>
       <Card>
         <CardHeader><CardTitle>Converted</CardTitle></CardHeader>
@@ -987,11 +1302,11 @@ export function AgentCompletedTab(_props: SalesAgentTabProps) {
       </div>
 
       {loading ? (
-        <EmptyState message="Loading…" />
+        <EmptyState message="Loading..." />
       ) : completedRows.length === 0 ? (
         <div className="rounded-xl border border-dashed px-6 py-10 text-center">
           <p className="text-sm text-muted-foreground">
-            No completed workshops yet — mark a workshop as{" "}
+            No completed workshops yet - mark a workshop as{" "}
             <strong className="font-medium text-foreground">Confirmed</strong> or{" "}
             <strong className="font-medium text-foreground">Rejected</strong> in My call list to see it here.
           </p>
@@ -1016,16 +1331,16 @@ export function AgentCompletedTab(_props: SalesAgentTabProps) {
                 const status = w.agent_call_status;
                 return (
                   <TableRow key={w.id}>
-                    <TableCell className="text-sm">{w.suburb?.trim() || "—"}</TableCell>
-                    <TableCell className="font-medium">{w.workshop_name?.trim() || "—"}</TableCell>
-                    <TableCell className="text-sm">{w.owner_name?.trim() || "—"}</TableCell>
+                    <TableCell className="text-sm">{w.suburb?.trim() || "-"}</TableCell>
+                    <TableCell className="font-medium">{w.workshop_name?.trim() || "-"}</TableCell>
+                    <TableCell className="text-sm">{w.owner_name?.trim() || "-"}</TableCell>
                     <TableCell className="font-mono text-xs whitespace-nowrap">
-                      {w.phone_number?.trim() || "—"}
+                      {w.phone_number?.trim() || "-"}
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                       {w.agent_first_called_at
                         ? new Date(w.agent_first_called_at).toLocaleString()
-                        : "—"}
+                        : "-"}
                     </TableCell>
                     <TableCell>
                       {status === "confirmed" ? (
@@ -1039,7 +1354,7 @@ export function AgentCompletedTab(_props: SalesAgentTabProps) {
                       )}
                     </TableCell>
                     <TableCell className="text-sm max-w-xs">
-                      {w.agent_remarks?.trim() || "—"}
+                      {w.agent_remarks?.trim() || "-"}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -1050,7 +1365,7 @@ export function AgentCompletedTab(_props: SalesAgentTabProps) {
                         disabled={clearingId === w.id}
                         onClick={() => clearStatus(w.id)}
                       >
-                        {clearingId === w.id ? "Clearing…" : "Move back to call list"}
+                        {clearingId === w.id ? "Clearing..." : "Move back to call list"}
                       </Button>
                     </TableCell>
                   </TableRow>

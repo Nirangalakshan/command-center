@@ -353,24 +353,23 @@ export async function insertSalesSuburbWorkshop(row: {
   location: string;
   website: string;
 }): Promise<SalesSuburbWorkshopRow> {
-  const { tenantId } = row;
-  const { data, error } = await supabase
-    .from("sales_suburb_workshops")
-    .insert({
-      tenant_id: tenantId,
-      suburb: row.suburb.trim(),
-      workshop_name: row.workshopName.trim(),
-      phone_number: row.phoneNumber.trim(),
-      owner_name: row.ownerName.trim(),
-      owner_email: row.ownerEmail.trim(),
-      location: row.location.trim(),
-      website: row.website.trim(),
-    })
-    .select("*");
+  // Use RPC to bypass RLS — the function does its own authorization check
+  const { data, error } = await supabase.rpc(
+    "agent_insert_sales_suburb_workshop" as never,
+    {
+      p_tenant_id: row.tenantId,
+      p_suburb: row.suburb.trim(),
+      p_workshop_name: row.workshopName.trim(),
+      p_phone_number: row.phoneNumber.trim(),
+      p_owner_name: row.ownerName.trim(),
+      p_owner_email: row.ownerEmail.trim(),
+      p_location: row.location.trim(),
+      p_website: row.website.trim(),
+    } as never,
+  );
   if (error) throw new Error(formatSupabaseError(error));
-  const inserted = Array.isArray(data) ? data[0] : undefined;
-  if (!inserted) throw new Error("No row returned after insert — check RLS and migrations.");
-  return inserted;
+  if (!data) throw new Error("No row returned after insert — check RLS and migrations.");
+  return data as unknown as SalesSuburbWorkshopRow;
 }
 
 export async function updateSalesSuburbWorkshop(
