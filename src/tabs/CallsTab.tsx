@@ -8,6 +8,7 @@ import {
   LINKUS_CALL_LOG_EVENT,
 } from '@/services/linkusCallLog';
 import { formatTime, formatPhone, formatSeconds } from '@/utils/formatters';
+import { formatTimeAu } from '@/utils/australianTime';
 import { RESULT_MAP } from '@/components/dashboard/ResultBadge';
 import { EmptyState } from '@/components/dashboard/EmptyState';
 import { Badge } from '@/components/ui/badge';
@@ -398,7 +399,7 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
 
                   return (
                     <TableRow key={c.id}>
-                      <TableCell className="font-mono text-xs">{formatTime(c.startTime)}</TableCell>
+                      <TableCell className="font-mono text-xs">{formatTimeAu(c.startTime)}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1">
                           <Badge

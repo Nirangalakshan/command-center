@@ -292,7 +292,7 @@ export function useDashboardData({
 
     // Real-time subscriptions
     const unsubCalls = subscribeToIncomingCalls(
-      session.allowedQueueIds,
+      session.role === "super-admin" ? [] : session.allowedQueueIds,
       (call) => {
         // Drop internal extensions and numbers from unrecognised countries.
         // Accept: +94/94 (Sri Lanka), +61/61 (Australia), or local 0… numbers.

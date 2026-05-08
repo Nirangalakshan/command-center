@@ -3,6 +3,7 @@ import '@/styles/dashboard.css';
 import { useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '@/services/types';
+import { useDashboard } from '@/context/DashboardDataContext';
 import { useLiveClock } from '@/hooks/useLiveClock';
 import { useFirebaseAuth } from '@/integrations/firebase/useFirebaseAuth';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -44,6 +45,7 @@ import {
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { SoftphoneCallLogContext } from '@/services/linkusCallLog';
+import { cacheAgentSession } from '@/services/linkusCallLog';
 
 interface DashboardPageProps {
   session: UserSession;
@@ -65,8 +67,6 @@ function AgentAttendanceShell({
   }
   return <>{children}</>;
 }
-
-import { DashboardDataProvider, useDashboard } from '@/context/DashboardDataContext';
 
 export default function DashboardPage({ session, permissions, onSignOut }: DashboardPageProps) {
   const d = useDashboard();
@@ -193,6 +193,19 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     d.agents,
     d.queues,
   ]);
+
+  useEffect(() => {
+    if (softphoneCallLogContext?.agentId) {
+      cacheAgentSession({
+        agentId: softphoneCallLogContext.agentId,
+        agentName: softphoneCallLogContext.agentName,
+        tenantId: softphoneCallLogContext.tenantId,
+        tenantName: softphoneCallLogContext.tenantName,
+        queueId: softphoneCallLogContext.queueId,
+        queueName: softphoneCallLogContext.queueName,
+      });
+    }
+  }, [softphoneCallLogContext]);
 
   const softphoneIdentityExtension = useMemo(() => {
     if (currentUserExtension) return currentUserExtension;

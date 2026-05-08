@@ -66,6 +66,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatTimeAu } from "@/utils/australianTime";
 
 const PROGRESS_EXPAND_AT = 20;
 
@@ -229,7 +230,7 @@ function SuburbWorkshopsTable({
                           <div className="flex flex-col gap-1.5 min-w-[11rem]">
                             <span className="text-xs text-muted-foreground whitespace-nowrap">
                               {w.agent_first_called_at
-                                ? new Date(w.agent_first_called_at).toLocaleString()
+                                ? formatTimeAu(w.agent_first_called_at)
                                 : "Marked"}
                             </span>
                             <Select
@@ -1224,7 +1225,7 @@ export function AgentPerformanceRewardsTab(props: SalesAgentTabProps) {
           <TableBody>
             {mine.map((c) => (
               <TableRow key={c.id}>
-                <TableCell className="text-xs whitespace-nowrap">{new Date(c.created_at).toLocaleString()}</TableCell>
+                <TableCell className="text-xs whitespace-nowrap">{formatTimeAu(c.created_at)}</TableCell>
                 <TableCell className="font-mono text-xs truncate max-w-[200px]">{c.lead_id}</TableCell>
                 <TableCell><Badge variant="outline">{c.status}</Badge></TableCell>
               </TableRow>
@@ -1339,7 +1340,7 @@ export function AgentCompletedTab(_props: SalesAgentTabProps) {
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                       {w.agent_first_called_at
-                        ? new Date(w.agent_first_called_at).toLocaleString()
+                        ? formatTimeAu(w.agent_first_called_at)
                         : "-"}
                     </TableCell>
                     <TableCell>

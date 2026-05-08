@@ -61,6 +61,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { formatTimeAu } from "@/utils/australianTime";
 
 const PROGRESS_EXPAND_AT = 20;
 
@@ -1562,7 +1563,7 @@ export function SalesCallProgressTab({
                           return (
                             <TableRow key={r.id}>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "-"}
+                                {r.updated_at ? formatTimeAu(r.updated_at) : "-"}
                               </TableCell>
                               <TableCell className="font-medium text-sm">{agentName}</TableCell>
                               <TableCell className="text-sm">{w?.suburb?.trim() || "-"}</TableCell>
@@ -1620,7 +1621,7 @@ export function SalesCallProgressTab({
                           return (
                             <TableRow key={r.id}>
                               <TableCell className="text-xs whitespace-nowrap font-semibold text-amber-700">
-                                {r.follow_up_at ? new Date(r.follow_up_at).toLocaleString() : "-"}
+                                {r.follow_up_at ? formatTimeAu(r.follow_up_at) : "-"}
                               </TableCell>
                               <TableCell className="font-medium text-sm">{agentName}</TableCell>
                               <TableCell className="text-sm">{w?.suburb?.trim() || "-"}</TableCell>
@@ -1629,7 +1630,7 @@ export function SalesCallProgressTab({
                                 {(r.remarks ?? "").trim() || "-"}
                               </TableCell>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "-"}
+                                {r.updated_at ? formatTimeAu(r.updated_at) : "-"}
                               </TableCell>
                             </TableRow>
                           );
@@ -1670,7 +1671,7 @@ export function SalesCallProgressTab({
                           return (
                             <TableRow key={r.id}>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                                {r.updated_at ? new Date(r.updated_at).toLocaleString() : "-"}
+                                {r.updated_at ? formatTimeAu(r.updated_at) : "-"}
                               </TableCell>
                               <TableCell className="font-medium text-sm">{agentName}</TableCell>
                               <TableCell className="text-sm">{w?.suburb?.trim() || "-"}</TableCell>
@@ -1880,7 +1881,7 @@ export function SalesCallLogsTab({
                   {rows.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {new Date(r.created_at).toLocaleString()}
+                        {formatTimeAu(r.created_at)}
                       </TableCell>
                       <TableCell className="text-sm">
                         {r.lead?.display_name ?? r.lead_id}

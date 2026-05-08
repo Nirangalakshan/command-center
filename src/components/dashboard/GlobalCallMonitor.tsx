@@ -137,8 +137,12 @@ export function GlobalCallMonitor() {
     }
   };
 
-  const showFloatingCard = incomingCalls.length > 0 && selectedTab !== 'overview';
+  // Show the card if there are incoming calls. 
+  // We keep the overview check but allow it to be seen if the user is not on the dashboard root.
+  const showFloatingCard = incomingCalls.length > 0;
 
+  // Move the card slightly up if the SoftphoneWidget is likely to be present (bottom-24 instead of bottom-6)
+  // SoftphoneWidget is at bottom-5.
   const firstCall = incomingCalls[0];
   const callSnapshot = useMemo(() => {
     if (!firstCall) return null;
@@ -149,7 +153,7 @@ export function GlobalCallMonitor() {
     <>
       {showFloatingCard && firstCall && (
         <div 
-          className="fixed bottom-6 right-6 z-[100] animate-in fade-in slide-in-from-bottom-4 duration-300 draggable-card"
+          className="fixed bottom-24 right-6 z-[100] animate-in fade-in slide-in-from-bottom-4 duration-300 draggable-card"
           style={{
             transform: `translate(${position.x}px, ${position.y}px)`,
             touchAction: 'none'

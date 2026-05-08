@@ -16,6 +16,7 @@ import {
   formatSeconds,
   formatTime,
 } from "@/utils/formatters";
+import { formatTimeAu } from "@/utils/australianTime";
 import {
   buildIncomingCallSnapshot,
   buildLiveCallSnapshot,
@@ -474,7 +475,7 @@ export function OverviewTab({
                     >
                       <TableCell className="font-mono text-xs">
                         {a.callStartTime
-                          ? formatTime(new Date(a.callStartTime))
+                          ? formatTimeAu(new Date(a.callStartTime))
                           : "—"}
                       </TableCell>
                       <TableCell className="font-mono text-xs">

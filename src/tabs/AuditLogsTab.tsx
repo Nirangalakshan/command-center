@@ -20,6 +20,7 @@ import {
 } from '@/services/dashboardApi';
 import { yeastarCallRowId } from '@/services/linkusCallLog';
 import { cn } from '@/lib/utils';
+import { formatTimeAu } from '@/utils/australianTime';
 
 function normAction(log: AuditLogEntry): string {
   return (log.action ?? '').trim().toLowerCase().replace(/-/g, '_');
@@ -266,11 +267,11 @@ function dispositionDetailsCell(d: SoftphoneCallDispositionAuditRow): ReactNode 
         PBX row {pbxId}
       </p>
       <p className="text-[10px] text-slate-500">
-        First seen {d.createdAt ? new Date(d.createdAt).toLocaleString() : '—'}
+        First seen {d.createdAt ? formatTimeAu(d.createdAt) : '—'}
         {d.updatedAt !== d.createdAt ? (
           <>
             <br />
-            Updated {new Date(d.updatedAt).toLocaleString()}
+            Updated {formatTimeAu(d.updatedAt)}
           </>
         ) : null}
       </p>
@@ -472,7 +473,7 @@ export function AuditLogsTab() {
                           <div className="flex items-center gap-2">
                             <Calendar className="h-3 w-3 opacity-70" />
                             {d.updatedAt
-                              ? new Date(d.updatedAt).toLocaleString()
+                              ? formatTimeAu(d.updatedAt)
                               : 'N/A'}
                           </div>
                         </td>
@@ -526,7 +527,7 @@ export function AuditLogsTab() {
                       <td className="whitespace-nowrap px-6 py-3 text-slate-500">
                         <div className="flex items-center gap-2">
                           <Calendar className="h-3 w-3 opacity-70" />
-                          {log.created_at ? new Date(log.created_at).toLocaleString() : 'N/A'}
+                          {log.created_at ? formatTimeAu(log.created_at) : 'N/A'}
                         </div>
                       </td>
                       <td className="whitespace-nowrap px-6 py-3 font-medium text-slate-800">
