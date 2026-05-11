@@ -112,6 +112,24 @@ export function formatTimeAu(isoOrMs: string | Date | number | null): string {
   });
 }
 
+/** HH:mm in Melbourne (24h). */
+export function formatTimeAuShort(isoOrMs: string | Date | number | null): string {
+  if (isoOrMs === null || isoOrMs === undefined) return "—";
+  const d =
+    typeof isoOrMs === "number"
+      ? new Date(isoOrMs)
+      : isoOrMs instanceof Date
+        ? isoOrMs
+        : new Date(isoOrMs);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("en-AU", {
+    timeZone: AU_DASHBOARD_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export function formatAustralianNavDate(isoMs: Date): string {
   return isoMs.toLocaleDateString("en-AU", {
     timeZone: AU_DASHBOARD_TIMEZONE,
@@ -130,5 +148,26 @@ export function formatAustralianNavTime(isoMs: Date): string {
     second: "2-digit",
     hour12: false,
     timeZoneName: "short",
+  });
+}
+
+/** d MMM yyyy, HH:mm in Melbourne. */
+export function formatDateTimeAu(isoOrMs: string | Date | number | null): string {
+  if (isoOrMs === null || isoOrMs === undefined) return "—";
+  const d =
+    typeof isoOrMs === "number"
+      ? new Date(isoOrMs)
+      : isoOrMs instanceof Date
+        ? isoOrMs
+        : new Date(isoOrMs);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-AU", {
+    timeZone: AU_DASHBOARD_TIMEZONE,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   });
 }

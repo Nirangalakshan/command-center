@@ -676,6 +676,11 @@ export function subscribeToIncomingCalls(
       }
     })
     .on("broadcast", { event: "CallHangup" }, ({ payload }) => {
+      // Call ended — remove from ringing list
+      onHangup?.(payload.id as string);
+    })
+    .on("broadcast", { event: "CallAnswered" }, ({ payload }) => {
+      // Agent picked up — stop ringing immediately (don't wait for the CDR)
       onHangup?.(payload.id as string);
     })
     .subscribe();

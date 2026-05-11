@@ -37,6 +37,12 @@ import {
   eachDayOfInterval,
 } from "date-fns";
 import { ChevronLeft, ChevronRight, Users, Calendar } from "lucide-react";
+import {
+  formatAustralianDayHeading,
+  formatTimeAuShort,
+  getAustralianDateKey,
+  startOfAustralianDayMs,
+} from "@/utils/australianTime";
 
 // ─── View mode ────────────────────────────────────────────────────────────────
 
@@ -97,7 +103,10 @@ function stepAnchor(mode: ViewMode, anchor: Date, dir: 1 | -1): Date {
 
 /** Human-readable label for the current range. */
 function rangeLabel(mode: ViewMode, anchor: Date): string {
-  if (mode === "day") return format(anchor, "EEE d MMM yyyy");
+  if (mode === "day") {
+    const ymd = getAustralianDateKey(anchor.getTime());
+    return formatAustralianDayHeading(ymd);
+  }
   if (mode === "week") {
     const s = startOfWeek(anchor, { weekStartsOn: 1 });
     const e = endOfWeek(anchor, { weekStartsOn: 1 });
@@ -108,13 +117,17 @@ function rangeLabel(mode: ViewMode, anchor: Date): string {
 
 /** Is the current anchor's period covering today? */
 function isCurrentPeriod(mode: ViewMode, anchor: Date, nowMs: number): boolean {
-  const today = new Date(nowMs);
-  if (mode === "day") return format(anchor, "yyyy-MM-dd") === format(today, "yyyy-MM-dd");
+  const todayYmd = getAustralianDateKey(nowMs);
+  const anchorYmd = getAustralianDateKey(anchor.getTime());
+
+  if (mode === "day") return anchorYmd === todayYmd;
   if (mode === "week") {
+    const today = new Date(nowMs);
     const s = startOfWeek(anchor, { weekStartsOn: 1 });
     const e = endOfWeek(anchor, { weekStartsOn: 1 });
     return today >= s && today <= e;
   }
+  const today = new Date(nowMs);
   return (
     anchor.getFullYear() === today.getFullYear() &&
     anchor.getMonth() === today.getMonth()
@@ -126,7 +139,7 @@ function countDaysPresent(events: AgentAttendanceEventRow[]): number {
   const days = new Set(
     events
       .filter((e) => e.event_type === "clock_in")
-      .map((e) => format(new Date(e.occurred_at), "yyyy-MM-dd")),
+      .map((e) => getAustralianDateKey(new Date(e.occurred_at).getTime())),
   );
   return days.size;
 }
@@ -143,7 +156,10 @@ export function SuperAdminAttendanceBoard({
   const [error, setError] = useState<string | null>(null);
 
   // anchor is the "representative" date for the current view period
-  const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
+  const [anchor, setAnchor] = useState(() => {
+    const ymd = getAustralianDateKey(Date.now());
+    return new Date(startOfAustralianDayMs(ymd));
+  });
   const [viewMode, setViewMode] = useState<ViewMode>("day");
 
   // Derived
@@ -198,8 +214,8 @@ export function SuperAdminAttendanceBoard({
     if (!isLive || viewMode !== "day") return;
     return subscribeToAllAttendanceInserts((row) => {
       if (!commandCentreUserIds.has(row.user_id)) return;
-      const rowDay = format(new Date(row.occurred_at), "yyyy-MM-dd");
-      const anchorDay = format(anchor, "yyyy-MM-dd");
+      const rowDay = getAustralianDateKey(new Date(row.occurred_at).getTime());
+      const anchorDay = getAustralianDateKey(anchor.getTime());
       if (rowDay !== anchorDay) return;
       setEvents((prev) => {
         if (prev.some((p) => p.id === row.id)) return prev;
@@ -293,13 +309,13 @@ export function SuperAdminAttendanceBoard({
         let totalBreakMs = 0;
 
         for (const day of days) {
+          const dayYmd = getAustralianDateKey(day.getTime());
           const dayEvs = sorted.filter(
-            (e) =>
-              format(new Date(e.occurred_at), "yyyy-MM-dd") === format(day, "yyyy-MM-dd"),
+            (e) => getAustralianDateKey(new Date(e.occurred_at).getTime()) === dayYmd,
           );
           if (dayEvs.length === 0) continue;
           const dayNowMs =
-            format(day, "yyyy-MM-dd") === format(new Date(now), "yyyy-MM-dd")
+            dayYmd === getAustralianDateKey(now)
               ? now
               : endOfDay(day).getTime();
           const { workedMs, breakMs } = computeWorkedAndBreakMs(dayEvs, dayNowMs);
@@ -317,10 +333,9 @@ export function SuperAdminAttendanceBoard({
           null;
 
         // Current status from today's events only (for live dot)
+        const todayYmd = getAustralianDateKey(now);
         const todayEvs = sorted.filter(
-          (e) =>
-            format(new Date(e.occurred_at), "yyyy-MM-dd") ===
-            format(new Date(now), "yyyy-MM-dd"),
+          (e) => getAustralianDateKey(new Date(e.occurred_at).getTime()) === todayYmd,
         );
         const { status } = deriveAttendanceShiftStatus(todayEvs);
 
@@ -355,12 +370,16 @@ export function SuperAdminAttendanceBoard({
     if (isLive) return;
     setAnchor((a) => stepAnchor(viewMode, a, 1));
   };
-  const goToToday = () => setAnchor(startOfDay(new Date(now)));
+  const goToToday = () => {
+    const ymd = getAustralianDateKey(now);
+    setAnchor(new Date(startOfAustralianDayMs(ymd)));
+  };
 
   // When switching modes, snap the anchor to today so the new period is sensible
   const switchMode = (m: ViewMode) => {
     setViewMode(m);
-    setAnchor(startOfDay(new Date(now)));
+    const ymd = getAustralianDateKey(now);
+    setAnchor(new Date(startOfAustralianDayMs(ymd)));
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -429,12 +448,12 @@ export function SuperAdminAttendanceBoard({
             <input
               type="date"
               className="h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm"
-              value={format(anchor, "yyyy-MM-dd")}
-              max={format(new Date(now), "yyyy-MM-dd")}
+              value={getAustralianDateKey(anchor.getTime())}
+              max={getAustralianDateKey(now)}
               onChange={(e) => {
                 const v = e.target.value;
                 if (!v) return;
-                setAnchor(startOfDay(parse(v, "yyyy-MM-dd", new Date())));
+                setAnchor(new Date(startOfAustralianDayMs(v)));
               }}
               aria-label="Pick a date"
             />
@@ -508,7 +527,7 @@ export function SuperAdminAttendanceBoard({
                         ) : (
                           <div className="flex flex-col gap-1">
                             {r.segments.map((s, i) => (
-                              <span key={i}>{format(new Date(s.clockInMs), "HH:mm")}</span>
+                              <span key={i}>{formatTimeAuShort(s.clockInMs)}</span>
                             ))}
                           </div>
                         )}
@@ -525,7 +544,7 @@ export function SuperAdminAttendanceBoard({
                               >
                                 {s.clockOutMs == null
                                   ? "Open"
-                                  : format(new Date(s.clockOutMs), "HH:mm")}
+                                  : formatTimeAuShort(s.clockOutMs)}
                               </span>
                             ))}
                           </div>

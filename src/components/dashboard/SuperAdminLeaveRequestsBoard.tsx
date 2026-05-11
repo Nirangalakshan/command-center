@@ -32,6 +32,7 @@ import {
 } from "@/services/leaveRequestsApi";
 import { LeaveRequestPhotoButton } from "@/components/dashboard/LeaveRequestPhotoButton";
 import { isSupabaseAuthUserId } from "@/services/attendanceApi";
+import { formatDateTimeAu } from "@/utils/australianTime";
 import { format } from "date-fns";
 import { CalendarOff, Check, X } from "lucide-react";
 
@@ -293,8 +294,8 @@ export function SuperAdminLeaveRequestsBoard({ agents, tenants }: SuperAdminLeav
                             </Button>
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">
-                            {r.reviewed_at ? format(new Date(r.reviewed_at), "d MMM yyyy, HH:mm") : "—"}
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            {r.reviewed_at ? formatDateTimeAu(r.reviewed_at) : "—"}
                           </span>
                         )}
                       </TableCell>

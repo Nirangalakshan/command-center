@@ -1,6 +1,10 @@
-import { endOfDay, startOfDay } from "date-fns";
+import {
+  attendanceDayRangeAustralianYmd,
+  getAustralianDateKey,
+} from "@/utils/australianTime";
 import { supabase } from "@/integrations/supabase/client";
 import type { AgentShiftSchedule } from "./types";
+import { startOfDay, endOfDay } from "date-fns";
 
 export const ATTENDANCE_EVENT_TYPES = [
   "clock_in",
@@ -31,11 +35,10 @@ export function isSupabaseAuthUserId(id: string | null | undefined): boolean {
   return UUID_RE.test(id);
 }
 
+/** Returns the start and end of the Melbourne calendar day for a given browser Date. */
 export function attendanceDayRange(day: Date): { startIso: string; endIso: string } {
-  return {
-    startIso: startOfDay(day).toISOString(),
-    endIso: endOfDay(day).toISOString(),
-  };
+  const ymd = getAustralianDateKey(day.getTime());
+  return attendanceDayRangeAustralianYmd(ymd);
 }
 
 export function deriveAttendanceShiftStatus(

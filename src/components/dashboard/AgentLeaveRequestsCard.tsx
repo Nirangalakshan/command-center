@@ -33,6 +33,7 @@ import {
   type LeaveDurationType,
   type LeaveHalfDayPart,
 } from "@/services/leaveRequestsApi";
+import { getAustralianDateKey } from "@/utils/australianTime";
 import { supabase } from "@/integrations/supabase/client";
 import { format, startOfDay } from "date-fns";
 import { CalendarOff, Trash2, X } from "lucide-react";
@@ -80,7 +81,7 @@ export function AgentLeaveRequestsCard({ session }: AgentLeaveRequestsCardProps)
   const [submitting, setSubmitting] = useState(false);
   const [supabaseUserId, setSupabaseUserId] = useState<string | null | undefined>(undefined);
 
-  const todayKey = useMemo(() => format(startOfDay(new Date()), "yyyy-MM-dd"), []);
+  const todayKey = useMemo(() => getAustralianDateKey(Date.now()), []);
 
   const [startDate, setStartDate] = useState(todayKey);
   const [endDate, setEndDate] = useState(todayKey);

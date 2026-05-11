@@ -585,6 +585,22 @@ async function handleIncomingCall(body: Record<string, unknown>) {
     return;
   }
 
+  // ANSWER/ANSWERED: the call has been picked up by an agent. Broadcast
+  // CallAnswered immediately so the dashboard stops ringing and removes the
+  // floating card — we do NOT wait for the CDR (which only arrives after the
+  // full call ends, potentially minutes later).
+  const isAnswered = memberStatus === 'ANSWER' || memberStatus === 'ANSWERED';
+  if (isAnswered) {
+    await updateAgentLiveCallState(extension, memberStatus, callfrom);
+    await supabase.channel('yeastar-incoming-calls').send({
+      type: 'broadcast',
+      event: 'CallAnswered',
+      payload: { id: `incoming-${callid}`, callerNumber: callfrom },
+    });
+    // console.log(`[yeastar-webhook] IncomingCall ANSWERED — CallAnswered broadcast: ${callfrom} → ${did}`);
+    return;
+  }
+
   await updateAgentLiveCallState(extension, memberStatus, callfrom);
 
   await supabase.channel('yeastar-incoming-calls').send({

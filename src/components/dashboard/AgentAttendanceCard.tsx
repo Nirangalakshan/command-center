@@ -492,6 +492,7 @@ import {
   formatAustralianDayHeading,
   formatAustralianDayShort,
   formatTimeAu,
+  formatTimeAuShort,
   getAustralianDateKey,
 } from "@/utils/australianTime";
 import { Button } from "@/components/ui/button";
@@ -1056,9 +1057,9 @@ export function AgentAttendanceCard({
           (shiftStartedAt || breakStartedAt) && (
             <div className="font-mono text-xs text-muted-foreground">
               {status === "on_break" && breakStartedAt
-                ? `Break since ${formatTimeAu(new Date(breakStartedAt))}`
+                ? `Break since ${formatTimeAuShort(breakStartedAt)}`
                 : shiftStartedAt
-                  ? `Shift since ${formatTimeAu(new Date(shiftStartedAt))}`
+                  ? `Shift since ${formatTimeAuShort(shiftStartedAt)}`
                   : null}
             </div>
           )}
@@ -1223,13 +1224,13 @@ export function AgentAttendanceCard({
                             {i + 1}
                           </TableCell>
                           <TableCell className="font-mono text-sm">
-                            {formatTimeAu(new Date(seg.clockInMs))}
+                            {formatTimeAuShort(seg.clockInMs)}
                           </TableCell>
                           <TableCell className="font-mono text-sm">
                             {seg.clockOutMs == null ? (
                               <span className="text-amber-700">Open</span>
                             ) : (
-                              formatTimeAu(new Date(seg.clockOutMs))
+                              formatTimeAuShort(seg.clockOutMs)
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm text-amber-800/90">
@@ -1366,7 +1367,7 @@ export function AgentAttendanceCard({
                           </TableCell>
                           <TableCell className="font-mono text-sm">
                             {row.clockIn != null ? (
-                              formatTimeAu(new Date(row.clockIn))
+                              formatTimeAuShort(row.clockIn)
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
@@ -1377,7 +1378,7 @@ export function AgentAttendanceCard({
                             ) : row.clockOut == null ? (
                               <span className="text-amber-700">Open</span>
                             ) : (
-                              formatTimeAu(new Date(row.clockOut))
+                              formatTimeAuShort(row.clockOut)
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm text-amber-800/90">
