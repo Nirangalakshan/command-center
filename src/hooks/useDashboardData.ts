@@ -194,13 +194,17 @@ export function useDashboardData({
   //      case where Yeastar emits different callid formats between
   //      IncomingCall and NewCdr payloads.
   //
-  // In both cases we only evict when the CDR ended *after* the ring began,
-  // so an old CDR from a previous call with the same caller number (or a
-  // reused callid) cannot wipe a currently-ringing card.
+  // Clock-skew tolerance: `waitingSince` is set in the BROWSER when the
+  // Supabase Realtime broadcast is received — always slightly later than
+  // the actual PBX wall-clock start time. For short calls (caller hangs up
+  // immediately), the CDR end_time (= PBX startTime + 0 s) can be *before*
+  // waitingSince. We allow 90 s of skew so these calls are correctly evicted.
   useEffect(() => {
     setIncomingCalls((prev) => {
       if (prev.length === 0) return prev;
       const RING_MATCH_WINDOW_MS = 5 * 60_000; // 5 min
+      // Allow up to 90 s of clock skew between PBX time and browser time.
+      const CLOCK_SKEW_TOLERANCE_MS = 90_000;
 
       const fresh = prev.filter((ic) => {
         const callid = ic.id.replace(/^incoming-/, "");
@@ -210,7 +214,9 @@ export function useDashboardData({
           if (!endTimeIso) return false;
           const endMs = new Date(endTimeIso).getTime();
           if (!Number.isFinite(endMs)) return false;
-          return endMs >= ic.waitingSince;
+          // Accept if CDR endTime >= (waitingSince - tolerance).
+          // This handles short calls where PBX clock is behind browser clock.
+          return endMs >= ic.waitingSince - CLOCK_SKEW_TOLERANCE_MS;
         };
 
         const directMatch = calls.find((c) => c.id === `yeastar-${callid}`);
@@ -260,9 +266,11 @@ export function useDashboardData({
   }, [calls]);
 
   // Evict stale incoming-call entries that have been sitting around for too
-  // long (e.g. because the CallHangup broadcast was missed or never sent).
-  // Runs every tick (1 s) since `now` changes every second.
-  const STALE_INCOMING_MS = 120_000; // 2 minutes
+  // long (last-resort fallback in case Realtime events were dropped).
+  // Reduced from 2 minutes to 45 seconds — the new BYE detection in the
+  // webhook means legitimate long-ring calls are handled correctly and no
+  // longer need a 2-minute grace period.
+  const STALE_INCOMING_MS = 45_000; // 45 seconds
   useEffect(() => {
     setIncomingCalls((prev) => {
       if (prev.length === 0) return prev;

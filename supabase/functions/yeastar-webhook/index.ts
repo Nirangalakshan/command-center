@@ -573,15 +573,45 @@ async function handleIncomingCall(body: Record<string, unknown>) {
     status: 'ringing' as const,
   };
 
-  // BYE on an IncomingCall only means this ring *leg* ended (e.g. one queue
-  // agent didn't answer).  The call itself is still live — the queue will ring
-  // the next agent.  We must NOT fire CallHangup here; that would remove the
-  // call from the dashboard and cause the "disappear / reappear broken" cycle.
-  // The definitive end-of-call signal is the CDR (handleNewCdr), which fires
-  // CallHangup once the call is truly over.
+  // BYE on an IncomingCall can mean two things:
+  //   (a) One queue agent declined — the queue will ring the next agent. Call is still live.
+  //   (b) The CALLER hung up — the call is dead.
+  //
+  // We distinguish them by checking whether any agent is still actively ringing
+  // for this caller after the BYE. If no agent is in 'ringing' state with this
+  // caller number, the call is truly over and we fire CallHangup immediately
+  // (rather than waiting up to 2 minutes for the stale eviction or the CDR).
   if (memberStatus === 'BYE') {
     await updateAgentLiveCallState(extension, memberStatus, callfrom);
-    // console.log(`[yeastar-webhook] IncomingCall BYE (leg ended, call still active): ${callfrom} → ${did}`);
+
+    // Give the PBX ~500 ms to update agent states before we check.
+    // (Yeastar usually updates ExtensionStatus before sending BYE.)
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Check if any agent is still ringing for this caller — if so, the queue
+    // is routing the call to another agent and we must NOT broadcast CallHangup.
+    let stillRinging = false;
+    if (callfrom) {
+      const { data: ringingAgents } = await supabase
+        .from('agents')
+        .select('id')
+        .in('status', ['ringing', 'on-call'])
+        .eq('current_caller', callfrom)
+        .limit(1);
+      stillRinging = (ringingAgents?.length ?? 0) > 0;
+    }
+
+    if (!stillRinging) {
+      // No agent is ringing for this caller → caller hung up. Remove card immediately.
+      await supabase.channel('yeastar-incoming-calls').send({
+        type: 'broadcast',
+        event: 'CallHangup',
+        payload: { id: `incoming-${callid}`, callerNumber: callfrom },
+      });
+      // console.log(`[yeastar-webhook] IncomingCall BYE — caller hung up, CallHangup broadcast: ${callfrom}`);
+    } else {
+      // console.log(`[yeastar-webhook] IncomingCall BYE — queue routing to next agent: ${callfrom}`);
+    }
     return;
   }
 
