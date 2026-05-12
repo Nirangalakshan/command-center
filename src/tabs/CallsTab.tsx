@@ -23,12 +23,25 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { 
+  ChevronLeft, 
+  ChevronRight, 
+  Calendar,
+  RotateCcw
+} from 'lucide-react';
+import { 
+  getAustralianDateKey, 
+  addAustralianCalendarDays,
+  formatAustralianDayHeading 
+} from '@/utils/australianTime';
 
 interface CallsTabProps {
   calls: Call[];
   queues: Queue[];
   tenants: Tenant[];
   permissions: Permissions;
+  callDate: string;
+  onDateChange: (ymd: string) => void;
 }
 
 // ── Caller-name resolution hook ──────────────────────────────────────────────
@@ -187,7 +200,14 @@ function CallStatusBadge({ result }: { result: CallResult }) {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps) {
+export function CallsTab({ 
+  calls, 
+  queues, 
+  tenants, 
+  permissions,
+  callDate,
+  onDateChange 
+}: CallsTabProps) {
   const [filterResult, setFilterResult] = useState('all');
   const [filterQueue, setFilterQueue] = useState('all');
   const [filterDirection, setFilterDirection] = useState<'all' | 'inbound' | 'outbound'>('all');
@@ -200,10 +220,11 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
     return () => window.removeEventListener(LINKUS_CALL_LOG_EVENT, sync);
   }, []);
 
-  const allCalls = useMemo(
-    () => mergeCallsWithLinkusLog(calls, linkusLog),
-    [calls, linkusLog],
-  );
+  const allCalls = useMemo(() => {
+    const merged = mergeCallsWithLinkusLog(calls, linkusLog);
+    // Filter to only the selected Melbourne day (server-side 'calls' are already filtered, but 'linkusLog' is not)
+    return merged.filter((c) => getAustralianDateKey(new Date(c.startTime).getTime()) === callDate);
+  }, [calls, linkusLog, callDate]);
 
   const { nameMap, loading: namesLoading, didTenantLabelMap } = useCallerNames(allCalls, tenants);
 
@@ -263,6 +284,61 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
       <Card className="border-border/80 bg-white shadow-sm">
         <CardHeader className="gap-4 pb-3">
           <div className="space-y-4">
+            <div>
+              <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                Filter by Date (Melbourne)
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-slate-50/50 p-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-md hover:bg-white hover:shadow-sm"
+                    onClick={() => onDateChange(addAustralianCalendarDays(callDate, -1))}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <div className="flex items-center gap-2 px-3">
+                    <Calendar className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-semibold tabular-nums">
+                      {formatAustralianDayHeading(callDate)}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-md hover:bg-white hover:shadow-sm"
+                    onClick={() => onDateChange(addAustralianCalendarDays(callDate, 1))}
+                    disabled={callDate >= getAustralianDateKey(Date.now())}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {callDate !== getAustralianDateKey(Date.now()) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 rounded-lg bg-white"
+                    onClick={() => onDateChange(getAustralianDateKey(Date.now()))}
+                  >
+                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                    Today
+                  </Button>
+                )}
+
+                <Input
+                  type="date"
+                  className="h-9 w-[150px] bg-white"
+                  value={callDate}
+                  onChange={(e) => {
+                    if (e.target.value) onDateChange(e.target.value);
+                  }}
+                  max={getAustralianDateKey(Date.now())}
+                />
+              </div>
+            </div>
+
             <div>
               <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
                 Filter by Direction
@@ -452,7 +528,11 @@ export function CallsTab({ calls, queues, tenants, permissions }: CallsTabProps)
                         </TableCell>
                       )}
                       <TableCell className="max-w-[200px]">
-                        <span className="font-medium text-foreground">{c.agentName}</span>
+                        {(c.result === 'answered' || (c.result as string) === 'rejected') ? (
+                          <span className="font-medium text-foreground">{c.agentName}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="font-mono text-xs">
                         {c.durationSeconds > 0 ? formatSeconds(c.durationSeconds) : '—'}

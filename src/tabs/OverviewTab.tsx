@@ -10,6 +10,10 @@ import type {
   AgentGroup,
   IncomingCall,
 } from "@/services/types";
+import { 
+  getAustralianDateKey, 
+  formatAustralianDayShort 
+} from "@/utils/australianTime";
 import {
   formatDuration,
   formatPhone,
@@ -55,6 +59,7 @@ interface OverviewTabProps {
   session?: UserSession | null;
   agentGroups?: AgentGroup[];
   incomingCalls?: IncomingCall[];
+  callDate?: string;
 }
 
 export function OverviewTab({
@@ -68,6 +73,7 @@ export function OverviewTab({
   session,
   agentGroups,
   incomingCalls,
+  callDate,
 }: OverviewTabProps) {
   const isAgentOverview = session?.role === "agent";
   const { selectedCall, setSelectedCall } = useCallNotification();
@@ -378,7 +384,7 @@ export function OverviewTab({
                 sub={`${summary.availableAgents} available`}
               />
               <MetricCard
-                label="Calls Today"
+                label={callDate && callDate !== getAustralianDateKey(Date.now()) ? `Calls (${formatAustralianDayShort(callDate)})` : "Calls Today"}
                 value={summary.totalCallsToday}
                 accent="var(--cc-color-cyan)"
               />

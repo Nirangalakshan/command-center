@@ -309,7 +309,7 @@ async function handleNewCdr(body: Record<string, unknown>) {
   const talkduraction = Number(body.talkduraction ?? body.talk_duration ?? 0);
   const status = String(body.status ?? '');
   const didFromPayload = String(
-    body.did ?? body.did_number ?? body.didnumber ?? body.didNumber ?? '',
+    body.did ?? body.did_number ?? body.didnumber ?? body.didNumber ?? body.did_num ?? body.didnum ?? '',
   ).trim();
   const recording = body.recording ? String(body.recording) : null;
 
@@ -381,21 +381,30 @@ async function handleNewCdr(body: Record<string, unknown>) {
   const dialedNumber =
     direction === 'inbound'
       ? inboundDid
-      : (extractYeastarPartyNumber(rawFrom) || rawFrom.replace(/\s+/g, '').trim() || null);
+      : customerNumber;
 
   const cdrRowId = `yeastar-${callid}`;
-  const { data: existingCall } = await supabase
-    .from('calls')
-    .select('agent_id')
-    .eq('id', cdrRowId)
-    .maybeSingle();
-  const preLinkedAgentId =
-    existingCall?.agent_id && String(existingCall.agent_id).trim()
-      ? String(existingCall.agent_id)
-      : null;
+  const linkusKey = callid.split('@')[0]?.trim() || callid;
+  const linkusBase = linkusKey.split('-')[0].split('_')[0].trim();
+  
+  const [existingCallRes, dispositionRes] = await Promise.all([
+    supabase.from('calls').select('agent_id').eq('id', cdrRowId).maybeSingle(),
+    supabase.from('softphone_call_dispositions')
+      .select('agent_id')
+      .in('linkus_call_id', [linkusKey, linkusBase])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  ]);
+
+  const preLinkedAgentId = existingCallRes.data?.agent_id && String(existingCallRes.data.agent_id).trim()
+    ? String(existingCallRes.data.agent_id)
+    : null;
+  
+  const softphoneAgentId = dispositionRes.data?.agent_id;
 
   const resolvedAgentId = agentRow?.id ?? null;
-  const finalAgentId = preLinkedAgentId ?? resolvedAgentId;
+  const finalAgentId = softphoneAgentId ?? preLinkedAgentId ?? resolvedAgentId;
 
   // Upsert call record (idempotent on callid)
   const { error } = await supabase.from('calls').upsert({
@@ -666,7 +675,7 @@ function parseYeastarDate(dateStr: string): Date {
   const mi = Number(m[5]);
   const s = Number(m[6]);
 
-  const iana = Deno.env.get('YEASTAR_CDR_TIMEZONE')?.trim();
+  const iana = Deno.env.get('YEASTAR_CDR_TIMEZONE')?.trim() || 'Australia/Melbourne';
   const TemporalCtor = (globalThis as unknown as { Temporal?: { PlainDateTime: { from: (v: unknown) => { toZonedDateTime: (tz: string) => { epochMilliseconds: bigint | number } } } } }).Temporal;
 
   if (iana && TemporalCtor?.PlainDateTime) {

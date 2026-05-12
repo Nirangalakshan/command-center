@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useDashboard } from '@/context/DashboardDataContext';
 import { useCallNotification } from '@/context/CallNotificationContext';
 import { 
@@ -148,6 +149,11 @@ export function GlobalCallMonitor() {
     if (!firstCall) return null;
     return buildIncomingCallSnapshot(firstCall, now);
   }, [firstCall, now]);
+
+  const { pathname } = useLocation();
+  const isBookingPage = pathname === '/booking' || pathname.startsWith('/bookings');
+
+  if (isBookingPage) return null;
 
   return (
     <>

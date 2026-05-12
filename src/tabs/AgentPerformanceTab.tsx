@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import type { Agent, Call, Queue, Tenant } from '@/services/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/dashboard/StatusBadge';
 import { formatDuration } from '@/utils/formatters';
 import {
@@ -11,12 +12,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { BarChart, Clock, Phone, TrendingUp, Users, CheckCircle2, XCircle, FileText } from 'lucide-react';
+import { BarChart, Clock, Phone, TrendingUp, Users, CheckCircle2, XCircle, FileText, Search } from 'lucide-react';
 import { EmptyState } from '@/components/dashboard/EmptyState';
 import { 
   fetchSalesSuburbWorkshopAgentContactTenant, 
   type SalesSuburbWorkshopContactRow 
 } from '@/services/salesWorkspaceApi';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 
 interface AgentPerformanceTabProps {
   agents: Agent[];
@@ -28,6 +37,8 @@ interface AgentPerformanceTabProps {
 
 export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanceTabProps) {
   const [workshopContacts, setWorkshopContacts] = useState<SalesSuburbWorkshopContactRow[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     if (!tenantId) return;
@@ -36,7 +47,7 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
       .catch(() => {});
   }, [tenantId]);
 
-  const performanceData = useMemo(() => {
+  const allPerformanceData = useMemo(() => {
     // Only include Command Center agents (no BMS link)
     const ccAgents = agents.filter(a => !String(a.bmsOwnerUid ?? '').trim());
 
@@ -75,15 +86,65 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
     });
   }, [agents, calls, workshopContacts]);
 
-  // Aggregate stats
-  const totalAgents = performanceData.length;
-  const totalAnswered = performanceData.reduce((acc, a) => acc + a.answeredCalls, 0);
+  const filteredPerformanceData = useMemo(() => {
+    return allPerformanceData.filter(item => {
+      const matchesAgent = selectedAgentId === "all" || item.id === selectedAgentId;
+      const matchesSearch = !searchQuery || 
+        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.extension.includes(searchQuery);
+      return matchesAgent && matchesSearch;
+    });
+  }, [allPerformanceData, selectedAgentId, searchQuery]);
+
+  // Aggregate stats (based on filtered data or all data?)
+  // Usually overview stats show the whole team, but user might want them filtered too.
+  // We'll show filtered stats if an agent is selected, otherwise team stats.
+  const statsData = selectedAgentId !== "all" ? filteredPerformanceData : allPerformanceData;
+  const totalAgents = statsData.length;
+  const totalAnswered = statsData.reduce((acc, a) => acc + a.answeredCalls, 0);
   const avgTeamHandleTime = totalAnswered > 0 
-    ? Math.round(performanceData.reduce((acc, a) => acc + a.totalDuration, 0) / totalAnswered)
+    ? Math.round(statsData.reduce((acc, a) => acc + a.totalDuration, 0) / totalAnswered)
     : 0;
 
   return (
     <div className="cc-fade-in space-y-6">
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-4 items-end sm:items-center justify-between">
+        <div className="flex flex-1 items-center gap-4 w-full sm:w-auto">
+          <div className="relative flex-1 sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input 
+              placeholder="Search agent name or extension..." 
+              className="pl-9 bg-white border-slate-200"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+            <SelectTrigger className="w-[200px] bg-white border-slate-200">
+              <SelectValue placeholder="All Agents" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Agents</SelectItem>
+              {allPerformanceData.map(agent => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.name} ({agent.extension})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        
+        {selectedAgentId !== "all" && (
+          <button 
+            onClick={() => setSelectedAgentId("all")}
+            className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 underline underline-offset-4"
+          >
+            Clear Filter
+          </button>
+        )}
+      </div>
+
       {/* Top Metrics */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card className="border-border/80 bg-white shadow-sm hover:shadow-md transition-shadow">
@@ -92,7 +153,9 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
               <Users className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-sm font-medium text-slate-500">Total Agents</p>
+              <p className="text-sm font-medium text-slate-500">
+                {selectedAgentId !== "all" ? "Filtered Agents" : "Total Agents"}
+              </p>
               <p className="text-2xl font-bold text-slate-900">{totalAgents}</p>
             </div>
           </CardContent>
@@ -104,12 +167,12 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
               <Phone className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-sm font-medium text-slate-500">Total Answered Calls</p>
+              <p className="text-sm font-medium text-slate-500">Answered Calls</p>
               <p className="text-2xl font-bold text-slate-900">{totalAnswered}</p>
             </div>
           </CardContent>
         </Card>
-
+        
         <Card className="border-border/80 bg-white shadow-sm hover:shadow-md transition-shadow">
           <CardContent className="flex items-center gap-4 p-5">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
@@ -130,7 +193,7 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
             <div>
               <p className="text-sm font-medium text-slate-500">Top Performer</p>
               <p className="text-lg font-bold text-slate-900 truncate">
-                {performanceData.length > 0 ? performanceData[0].name : '-'}
+                {statsData.length > 0 ? statsData[0].name : '-'}
               </p>
             </div>
           </CardContent>
@@ -145,9 +208,21 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {performanceData.length === 0 ? (
-             <div className="p-8">
-               <EmptyState message="No command center agents found for performance analysis" />
+          {filteredPerformanceData.length === 0 ? (
+             <div className="p-8 text-center">
+               <EmptyState message={searchQuery || selectedAgentId !== "all" ? "No agents matching your filters" : "No command center agents found"} />
+               {(searchQuery || selectedAgentId !== "all") && (
+                 <Button 
+                   variant="outline" 
+                   className="mt-4"
+                   onClick={() => {
+                     setSearchQuery("");
+                     setSelectedAgentId("all");
+                   }}
+                 >
+                   Reset Filters
+                 </Button>
+               )}
              </div>
           ) : (
             <div className="overflow-x-auto">
@@ -171,7 +246,7 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {performanceData.map((agent) => (
+                  {filteredPerformanceData.map((agent) => (
                     <TableRow key={agent.id} className="hover:bg-slate-50/50">
                       <TableCell className="font-medium">
                         <div className="flex flex-col">
@@ -201,7 +276,7 @@ export function AgentPerformanceTab({ agents, calls, tenantId }: AgentPerformanc
                       <TableCell className="text-right text-slate-600 font-mono text-xs">
                         {formatDuration(agent.totalDuration * 1000)}
                       </TableCell>
-
+  
                       {/* My Call List */}
                       <TableCell className="text-right text-slate-600 border-l border-slate-100">
                         <div className="flex items-center justify-end gap-1">

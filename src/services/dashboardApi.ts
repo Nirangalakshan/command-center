@@ -61,13 +61,12 @@ export async function fetchTenants(): Promise<Tenant[]> {
 
 export async function fetchSummary(
   tenantId?: string | null,
+  providedData?: { agents?: Agent[]; queues?: Queue[]; calls?: Call[] },
 ): Promise<DashboardSummary> {
-  // Fetch agents and calls for computation
-  const [agents, queues, calls] = await Promise.all([
-    fetchAgents(tenantId),
-    fetchQueues(tenantId),
-    fetchCalls(tenantId),
-  ]);
+  // Use provided data if available to avoid redundant network requests
+  const agents = providedData?.agents ?? await fetchAgents(tenantId);
+  const queues = providedData?.queues ?? await fetchQueues(tenantId);
+  const calls = providedData?.calls ?? await fetchCalls(tenantId);
 
   const onCall = agents.filter((a) => a.status === "on-call").length;
   const online = agents.filter((a) => a.status !== "offline").length;
@@ -248,63 +247,130 @@ function pbxCallIdFromCallsRowId(id: string): string | null {
 
 export async function fetchCalls(
   tenantId?: string | null,
-  limit: number = 100,
+  limit: number = 200,
+  startDate?: string,
+  endDate?: string,
 ): Promise<Call[]> {
   let query = supabase.from("calls").select("*");
   if (tenantId) query = query.eq("tenant_id", tenantId);
+  if (startDate) query = query.gte("start_time", startDate);
+  if (endDate) query = query.lte("start_time", endDate);
   const { data, error } = await query
     .order("start_time", { ascending: false })
-    .limit(Math.min(Math.max(limit, 1), 500));
+    .limit(Math.min(Math.max(limit, 1), 1000));
   if (error) throw new Error(error.message);
   const rows = data || [];
   if (rows.length === 0) return [];
 
-  const dispositionByLinkusId = await fetchSoftphoneDispositionAgentMap(tenantId);
+  const dispositionByLinkusId = await fetchSoftphoneDispositionAgentMap(tenantId, rows.map(r => r.id));
 
-  const mergedAgentIds = rows.map((c) => {
-    const pbId = pbxCallIdFromCallsRowId(c.id);
-    const fromDisp =
-      pbId && dispositionByLinkusId.size > 0
-        ? dispositionByLinkusId.get(pbId) ??
-          dispositionByLinkusId.get(pbId.split("@")[0] ?? "") ??
-          [...dispositionByLinkusId.entries()].find(
-            ([k]) =>
-              k === pbId ||
-              k.endsWith(pbId) ||
-              pbId.endsWith(k) ||
-              k.replace(/\D/g, "") === pbId.replace(/\D/g, ""),
-          )?.[1]
+
+  // ── De-duplicate Yeastar CDR legs ────────────────────────────────────────
+  // Yeastar PBX emits one CDR per call leg (queue ring, each agent ring, etc.).
+  // We collapse those into one row per unique call using a 3-minute time window.
+  // Priority: softphone disposition match > answered with DID > answered > longest duration.
+
+  const DEDUP_WINDOW_MS = 3 * 60 * 1000;
+
+  function digitsOnly(s: string): string {
+    return String(s ?? "").replace(/\D/g, "");
+  }
+
+  type RawRow = (typeof rows)[0];
+
+  // Score a row so we can pick the best leg.
+  // Higher = better. Disposition match is king, then answered+DID, then answered.
+  function rowScore(row: RawRow, disp: { agentId: string; agentName: string } | undefined): number {
+    let score = 0;
+    if (disp) score += 1000;                         // softphone disposition found
+    if (row.result === "answered") score += 100;
+    if (row.dialed_number) score += 50;
+    if ((row.duration_seconds ?? 0) > 0) score += 10;
+    score += Math.min(row.duration_seconds ?? 0, 9); // tie-break by duration (cap at 9)
+    return score;
+  }
+
+  // Build clusters: each cluster = one "real" call
+  const clusters: RawRow[][] = [];
+
+  for (const row of rows) {
+    const rowMs = new Date(row.start_time).getTime();
+    const rowNum = digitsOnly(row.caller_number);
+    const rowDir = row.direction ?? "inbound";
+
+    let placed = false;
+    for (const cluster of clusters) {
+      const rep = cluster[0];
+      const repMs = new Date(rep.start_time).getTime();
+      const repNum = digitsOnly(rep.caller_number);
+      const repDir = rep.direction ?? "inbound";
+
+      if (
+        rowDir === repDir &&
+        (rowNum === repNum || repNum.endsWith(rowNum) || rowNum.endsWith(repNum)) &&
+        Math.abs(rowMs - repMs) <= DEDUP_WINDOW_MS
+      ) {
+        cluster.push(row);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) clusters.push([row]);
+  }
+
+  // Pick the best row from each cluster and keep track of the cluster-wide disposition
+  const clusterData = clusters.map((cluster) => {
+    // Find the disposition for any row in the cluster
+    const clusterDisp = cluster.reduce<{ agentId: string; agentName: string } | undefined>((found, r) => {
+      if (found) return found;
+      const pbId = pbxCallIdFromCallsRowId(r.id);
+      if (!pbId) return undefined;
+      return (
+        dispositionByLinkusId.get(pbId) ??
+        dispositionByLinkusId.get(pbId.split("@")[0] ?? "") ??
+        [...dispositionByLinkusId.entries()].find(
+          ([k]) =>
+            k === pbId ||
+            k.endsWith(pbId) ||
+            pbId.endsWith(k) ||
+            k.replace(/\D/g, "") === pbId.replace(/\D/g, ""),
+        )?.[1]
+      );
+    }, undefined);
+
+    const winner = cluster.reduce((best, row) => {
+      const rowPbId = pbxCallIdFromCallsRowId(row.id);
+      const rowDisp = rowPbId
+        ? (dispositionByLinkusId.get(rowPbId) ??
+          dispositionByLinkusId.get(rowPbId.split("@")[0] ?? ""))
         : undefined;
-    return (fromDisp ?? c.agent_id) as string | null;
+      return rowScore(row, rowDisp ?? clusterDisp) > rowScore(best, clusterDisp)
+        ? row
+        : best;
+    });
+
+    return { winner, disposition: clusterDisp };
   });
 
-  const agentIds = [
-    ...new Set(
-      mergedAgentIds.filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const queueIds = [...new Set(rows.map((c) => c.queue_id))];
-  const tenantIds = [...new Set(rows.map((c) => c.tenant_id))];
+  const winners = clusterData.map(d => d.winner);
+  const winnerDispositions = clusterData.map(d => d.disposition);
+
+  const winnerAgentIds = winners.map((w, i) => winnerDispositions[i]?.agentId ?? w.agent_id);
+
+  const allAgentIds = [...new Set(winnerAgentIds.filter((id): id is string => Boolean(id)))];
+  const allQueueIds = [...new Set(winners.map((w) => w.queue_id))];
+  const allTenantIds = [...new Set(winners.map((w) => w.tenant_id))];
 
   const [agentsRes, queuesRes, tenantsRes] = await Promise.all([
-    agentIds.length > 0
-      ? supabase.from("agents").select("id, name").in("id", agentIds)
-      : Promise.resolve({
-          data: [] as { id: string; name: string }[],
-          error: null,
-        }),
-    queueIds.length > 0
-      ? supabase.from("queues").select("id, name").in("id", queueIds)
-      : Promise.resolve({
-          data: [] as { id: string; name: string }[],
-          error: null,
-        }),
-    tenantIds.length > 0
-      ? supabase.from("tenants").select("id, name").in("id", tenantIds)
-      : Promise.resolve({
-          data: [] as { id: string; name: string }[],
-          error: null,
-        }),
+    allAgentIds.length > 0
+      ? supabase.from("agents").select("id, name").in("id", allAgentIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
+    allQueueIds.length > 0
+      ? supabase.from("queues").select("id, name").in("id", allQueueIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
+    allTenantIds.length > 0
+      ? supabase.from("tenants").select("id, name").in("id", allTenantIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[], error: null }),
   ]);
 
   if (agentsRes.error) throw new Error(agentsRes.error.message);
@@ -315,9 +381,12 @@ export async function fetchCalls(
   const queueMap = new Map((queuesRes.data ?? []).map((q) => [q.id, q.name]));
   const tenantMap = new Map((tenantsRes.data ?? []).map((t) => [t.id, t.name]));
 
-  return rows.map((c, i) => {
-    const effectiveAgentId = mergedAgentIds[i] ?? c.agent_id;
+  return winners.map((c, i) => {
+    const effectiveAgentId = winnerAgentIds[i];
     const rowForDirection = { ...c, agent_id: effectiveAgentId };
+    const dispName = winnerDispositions[i]?.agentName;
+    const dbAgentName = effectiveAgentId ? agentMap.get(effectiveAgentId) : null;
+
     return {
       id: c.id,
       tenantId: c.tenant_id,
@@ -335,9 +404,11 @@ export async function fetchCalls(
       recordingUrl: c.recording_url,
       transcriptStatus: c.transcript_status as TranscriptStatus,
       summaryStatus: c.summary_status as "pending" | "ready" | "none",
-      agentName: effectiveAgentId
-        ? (agentMap.get(effectiveAgentId) ?? "Unknown agent")
-        : "—",
+      // Priority: 
+      // 1. Captured Name from Softphone (Absolute authority)
+      // 2. Database Name from Agent Table (Fallback)
+      // 3. Status-based label
+      agentName: dispName || dbAgentName || (effectiveAgentId ? "Unknown agent" : "—"),
       queueName: queueMap.get(c.queue_id) ?? c.queue_id,
       tenantName: tenantMap.get(c.tenant_id) ?? c.tenant_id,
     };
@@ -421,20 +492,43 @@ const dynamicSupabase = supabase as unknown as UntypedSupabase;
  */
 async function fetchSoftphoneDispositionAgentMap(
   tenantId: string | null | undefined,
-): Promise<Map<string, string>> {
-  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  rawCallIds: string[],
+): Promise<Map<string, { agentId: string; agentName: string }>> {
+  if (rawCallIds.length === 0) return new Map();
+
+  // Extract clean PBX IDs for the query (handle -admin, _leg, etc. suffixes)
+  const cleanIds = rawCallIds
+    .map((id) => pbxCallIdFromCallsRowId(id))
+    .filter((id): id is string => Boolean(id))
+    .flatMap((id) => {
+      const parts = [id];
+      // Strip common suffixes: -ext, @pbx, _leg
+      const base = id.split("@")[0].split("-")[0].split("_")[0];
+      if (base && base !== id) parts.push(base);
+      return parts;
+    });
+
+  const uniqueIds = [...new Set(cleanIds)];
+  if (uniqueIds.length === 0) return new Map();
+
+  // Fetch only the dispositions relevant to these calls
   let q = dynamicSupabase
     .from("softphone_call_dispositions")
-    .select("linkus_call_id, agent_id")
-    .gte("created_at", since)
-    .limit(2000);
+    .select("linkus_call_id, agent_id, agent_name")
+    .in("linkus_call_id", uniqueIds.slice(0, 500)); // Cap at 500 to stay within query limits
+
   if (tenantId) q = q.eq("tenant_id", tenantId);
+
   const { data, error } = await q;
   if (error || !data?.length) return new Map();
-  const m = new Map<string, string>();
-  for (const row of data as { linkus_call_id: string; agent_id: string }[]) {
+
+  const m = new Map<string, { agentId: string; agentName: string }>();
+  for (const row of data as any[]) {
     if (row.linkus_call_id && row.agent_id) {
-      m.set(row.linkus_call_id, row.agent_id);
+      m.set(row.linkus_call_id, {
+        agentId: row.agent_id,
+        agentName: row.agent_name || "",
+      });
     }
   }
   return m;

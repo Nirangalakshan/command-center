@@ -186,7 +186,7 @@ export function buildCallFromLinkusSessionEnd(
     direction: p.direction,
     callerNumber,
     callerName: p.name?.trim() ? p.name : null,
-    dialedNumber: null,
+    dialedNumber: p.direction === 'outbound' ? (digits || p.number.trim()) : null,
     startTime: new Date(p.startTimeMs).toISOString(),
     answerTime: answered ? new Date(p.startTimeMs).toISOString() : null,
     endTime: new Date(p.endTimeMs).toISOString(),

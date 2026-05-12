@@ -12,28 +12,50 @@ import { AgentAttendanceTodayProvider } from '@/context/AgentAttendanceTodayCont
 import { SoftphoneWidget } from '@/components/dashboard/SoftphoneWidget';
 import DashboardSidebar from '@/tabs/DashboardSidebar';
 import { LoadingSkeleton } from '@/components/dashboard/LoadingSkeleton';
-import { OverviewTab } from '@/tabs/OverviewTab';
-import { AgentsTab } from '@/tabs/AgentsTab';
-import { AgentPerformanceTab } from '@/tabs/AgentPerformanceTab';
-import { CallsTab } from '@/tabs/CallsTab';
-import { SipLinesTab } from '@/tabs/SipLinesTab';
-import { ClientsTab } from '@/tabs/ClientsTab';
-import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
-import { AttendanceTab } from '@/tabs/AttendanceTab';
-import { AuditLogsTab } from '@/tabs/AuditLogsTab';
-import { ChatTab } from '@/tabs/ChatTab';
-import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
+import { OverviewTab as RawOverviewTab } from '@/tabs/OverviewTab';
+import { AgentsTab as RawAgentsTab } from '@/tabs/AgentsTab';
+import { AgentPerformanceTab as RawAgentPerformanceTab } from '@/tabs/AgentPerformanceTab';
+import { CallsTab as RawCallsTab } from '@/tabs/CallsTab';
+import { SipLinesTab as RawSipLinesTab } from '@/tabs/SipLinesTab';
+import { ClientsTab as RawClientsTab } from '@/tabs/ClientsTab';
+import { AgentOnboardingTab as RawAgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
+import { AttendanceTab as RawAttendanceTab } from '@/tabs/AttendanceTab';
+import { AuditLogsTab as RawAuditLogsTab } from '@/tabs/AuditLogsTab';
+import { ChatTab as RawChatTab } from '@/tabs/ChatTab';
+import { DIDMappingsTab as RawDIDMappingsTab } from '@/tabs/DIDMappingsTab';
 import {
-  SalesAgentSuburbAssignmentTab,
-  SalesCallProgressTab,
-  SalesSuburbWorkshopsTab,
+  SalesAgentSuburbAssignmentTab as RawSalesAgentSuburbAssignmentTab,
+  SalesCallProgressTab as RawSalesCallProgressTab,
+  SalesSuburbWorkshopsTab as RawSalesSuburbWorkshopsTab,
 } from '@/tabs/sales-workspace/SalesWorkspaceAdminTabs';
 import {
-  AgentFollowUpsTab,
-  AgentMyCallListTab,
-  AgentSalesHomeTab,
-  AgentCompletedTab,
+  AgentFollowUpsTab as RawAgentFollowUpsTab,
+  AgentMyCallListTab as RawAgentMyCallListTab,
+  AgentSalesHomeTab as RawAgentSalesHomeTab,
+  AgentCompletedTab as RawAgentCompletedTab,
 } from '@/tabs/sales-workspace/SalesWorkspaceAgentTabs';
+import { memo } from 'react';
+
+// Memoize tab components to prevent re-renders when irrelevant state (like the 1s clock) changes
+// Note: OverviewTab still needs 'now', but other tabs might not.
+const OverviewTab = memo(RawOverviewTab);
+const AgentsTab = memo(RawAgentsTab);
+const AgentPerformanceTab = memo(RawAgentPerformanceTab);
+const CallsTab = memo(RawCallsTab);
+const SipLinesTab = memo(RawSipLinesTab);
+const ClientsTab = memo(RawClientsTab);
+const AgentOnboardingTab = memo(RawAgentOnboardingTab);
+const AttendanceTab = memo(RawAttendanceTab);
+const AuditLogsTab = memo(RawAuditLogsTab);
+const ChatTab = memo(RawChatTab);
+const DIDMappingsTab = memo(RawDIDMappingsTab);
+const SalesAgentSuburbAssignmentTab = memo(RawSalesAgentSuburbAssignmentTab);
+const SalesCallProgressTab = memo(RawSalesCallProgressTab);
+const SalesSuburbWorkshopsTab = memo(RawSalesSuburbWorkshopsTab);
+const AgentFollowUpsTab = memo(RawAgentFollowUpsTab);
+const AgentMyCallListTab = memo(RawAgentMyCallListTab);
+const AgentSalesHomeTab = memo(RawAgentSalesHomeTab);
+const AgentCompletedTab = memo(RawAgentCompletedTab);
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { fetchChats } from '@/services/chatApi';
 import { 
@@ -144,90 +166,6 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     setClients(updated);
   }, [session, d.selectedTenant]);
 
-  // Resolve the email used to register with the Linkus softphone.
-  //   • Agents  → use their record in the agents table (per-agent Yeastar extension)
-  //   • Super admin → use VITE_YEASTAR_ADMIN_EMAIL if set (dedicated admin extension),
-  //                   otherwise fall back to the Firebase login email
-  //   • Other roles (client-admin, supervisor) → no softphone
-  const adminExtEmail = (import.meta.env.VITE_YEASTAR_ADMIN_EMAIL as string | undefined)?.trim();
-
-  let softphoneEmail: string | null = null;
-  let currentUserExtension: string | null = null;
-  if (session.role === 'agent') {
-    const currentAgent = d.agents.find((a) => a.userId === session.userId);
-    const fromRoster = (currentAgent?.email ?? '').trim();
-    const fromSession = (session.authEmail ?? '').trim();
-    const fromFirebase = (firebaseUser?.email ?? '').trim();
-    // Prefer PBX roster email once loaded; until then keep the FAB using the sign-in email
-    // so the widget does not unmount while `fetchAgents` is still in flight.
-    softphoneEmail = fromRoster || fromSession || fromFirebase || null;
-    currentUserExtension = currentAgent?.extension?.trim() || null;
-  } else if (session.role === 'super-admin') {
-    softphoneEmail = adminExtEmail || firebaseUser?.email || null;
-  }
-
-  const softphoneCallLogContext = useMemo((): SoftphoneCallLogContext | null => {
-    if (!softphoneEmail) return null;
-    const tid =
-      session.tenantId ?? d.selectedTenant ?? d.tenants[0]?.id ?? null;
-    if (!tid) return null;
-    const tenant = d.tenants.find((t) => t.id === tid);
-    const agent = d.agents.find((a) => a.userId === session.userId);
-    const qid = agent?.queueIds?.[0] ?? 'unknown';
-    const queue = d.queues.find((q) => q.id === qid);
-    return {
-      tenantId: tid,
-      tenantName: tenant?.name ?? tid,
-      agentId: agent?.id ?? null,
-      agentName: agent?.name ?? session.displayName,
-      queueId: qid,
-      queueName: queue?.name ?? 'Queue',
-    };
-  }, [
-    softphoneEmail,
-    session.tenantId,
-    session.userId,
-    session.displayName,
-    d.selectedTenant,
-    d.tenants,
-    d.agents,
-    d.queues,
-  ]);
-
-  useEffect(() => {
-    if (softphoneCallLogContext?.agentId) {
-      cacheAgentSession({
-        agentId: softphoneCallLogContext.agentId,
-        agentName: softphoneCallLogContext.agentName,
-        tenantId: softphoneCallLogContext.tenantId,
-        tenantName: softphoneCallLogContext.tenantName,
-        queueId: softphoneCallLogContext.queueId,
-        queueName: softphoneCallLogContext.queueName,
-      });
-    }
-  }, [softphoneCallLogContext]);
-
-  const softphoneIdentityExtension = useMemo(() => {
-    if (currentUserExtension) return currentUserExtension;
-    if (!softphoneEmail) return null;
-    const byEmail = d.agents.find(
-      (a) =>
-        (a.email ?? '').trim().toLowerCase() ===
-        softphoneEmail.trim().toLowerCase()
-    );
-    return byEmail?.extension?.trim() || null;
-  }, [currentUserExtension, softphoneEmail, d.agents]);
-
-  // Restrict visible extensions to the same thousand block as the logged-in
-  // extension (e.g. 2000-2999, 3000-3999, etc.).
-  const softphoneVisibleRange = useMemo(() => {
-    if (!softphoneEmail) return null;
-    const numeric = (softphoneIdentityExtension ?? '').replace(/\D/g, '');
-    const n = Number.parseInt(numeric, 10);
-    if (!Number.isFinite(n) || n < 0) return null;
-    const min = Math.floor(n / 1000) * 1000;
-    return { min, max: min + 999 };
-  }, [softphoneEmail, softphoneIdentityExtension]);
 
   /** BMS chat list needs a tenant scope; super-admins often have no row in the switcher — fall back like softphone context. */
   const effectiveChatTenantId = useMemo(
@@ -373,12 +311,6 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-950">
-      {/* Floating softphone widget — visible for agents and super admins */}
-      <SoftphoneWidget
-        agentEmail={softphoneEmail}
-        callLogContext={softphoneCallLogContext}
-        visibleExtensionRange={softphoneVisibleRange}
-      />
 
       {/* Sidebar */}
       <DashboardSidebar
@@ -447,6 +379,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   session={session}
                   agentGroups={d.agentGroups}
                   incomingCalls={d.incomingCalls}
+                  callDate={d.callDate}
                 />
               )}
               {(d.selectedTab === 'attendance' || d.selectedTab === 'leave-requests' || d.selectedTab === 'shift-schedule') && (
@@ -509,6 +442,8 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   queues={d.queues}
                   tenants={d.tenants}
                   permissions={permissions}
+                  callDate={d.callDate}
+                  onDateChange={d.setCallDate}
                 />
               )}
               {/* {d.selectedTab === 'bookings' && (
