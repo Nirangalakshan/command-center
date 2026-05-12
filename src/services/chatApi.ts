@@ -1,6 +1,6 @@
 import { getFirebaseOnlyBmsBearerToken } from '@/services/bmsAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { Agent } from "./types";
+import type { Agent } from '@/services/types';
 
 const BASE_URL =
   (import.meta.env.VITE_BMS_SUPPORT_CHAT_API_URL as string) ??
@@ -616,7 +616,7 @@ export async function postCallCenterChatMessage(
   const fallback: ChatMessage = {
     messageId: '',
     conversationId: chatId,
-    chatId: chatId,
+    chatId,
     senderId: '',
     text,
     createdAt: new Date().toISOString(),

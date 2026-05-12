@@ -24,6 +24,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import type { Permissions, UserSession } from '@/services/types';
 import { useFirebaseAuth } from '@/integrations/firebase/useFirebaseAuth';
@@ -35,7 +42,7 @@ import {
   postCallCenterChatMessage,
   postConversationRead,
   postConversationClaim,
-  postConversationClose,
+  postChatClose,
   postCallCenterChatClose,
   fetchWorkshopName,
   fetchWorkshopNames,
@@ -59,13 +66,6 @@ import {
 } from '@/services/auditLogApi';
 import { InternalChatTab } from '@/tabs/InternalChatTab';
 import { useDashboard } from '@/context/DashboardDataContext';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 interface ChatTabProps {
   session: UserSession;
@@ -215,6 +215,18 @@ export function ChatTab({
     () => allConversations.reduce((sum, c) => sum + c.unreadForAgent, 0),
     [allConversations],
   );
+
+  const unreadByOwnerUid = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const c of allConversations) {
+      const uid = c.ownerUid?.trim();
+      if (!uid) continue;
+      const n = Number(c.unreadForAgent) || 0;
+      if (n <= 0) continue;
+      map[uid] = (map[uid] ?? 0) + n;
+    }
+    return map;
+  }, [allConversations]);
 
   useEffect(() => {
     onInboxStatsChange?.({ unreadCount: totalUnread });
@@ -417,7 +429,7 @@ export function ChatTab({
     return () => {
       cancelled = true;
     };
-  }, [selectedId, loadConversations, session]);
+  }, [selectedId, loadConversations, session, firebaseUser?.uid]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -531,74 +543,6 @@ export function ChatTab({
     [queue, loadConversations],
   );
 
-  const handleClose = async () => {
-    if (!selectedId || closing) return;
-    const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
-    setClosing(true);
-    try {
-      if (isCallCenterThread) {
-        await postCallCenterChatClose(selectedId);
-        callCenterThreadIdsRef.current.delete(selectedId);
-      } else {
-        await postConversationClose(selectedId);
-      }
-      setSelectedId(null);
-      await loadConversations();
-    } catch (err) {
-      setThreadError(err instanceof Error ? err.message : 'Failed to close conversation.');
-    } finally {
-      setClosing(false);
-    }
-  };
-
-  const handleSend = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const text = draft.trim();
-    if (!text || !selectedId || sending) return;
-
-    setSending(true);
-    setThreadError(null);
-    try {
-      const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
-      const created = isCallCenterThread
-        ? await postCallCenterChatMessage(selectedId, text)
-        : await postConversationMessage(selectedId, text);
-      setDraft('');
-
-      if (created) {
-        const uid = firebaseUser?.uid?.trim() ?? '';
-        const msg = !created.senderId?.trim()
-          ? { ...created, senderId: uid || session.userId }
-          : created;
-
-        setMessages((prev) => {
-          const id = msg.messageId?.trim();
-          if (id && prev.some((p) => p.messageId === id)) return prev;
-          return [...prev, msg];
-        });
-      } else {
-        const rows = isCallCenterThread
-          ? await fetchCallCenterChatMessages(selectedId)
-          : await fetchConversationMessages(selectedId);
-        setMessages(rows);
-      }
-
-      void loadConversations();
-      void refreshThreadMessages(selectedId);
-
-      const replyId = created?.messageId?.trim() || null;
-      void logSystemActivity(session, AUDIT_ACTION_CHAT_REPLY, AUDIT_RESOURCE_BMS_CHAT, selectedId, {
-        messageId: replyId,
-        textPreview: text.slice(0, 400),
-        tenantName: selectedConversation?.userName ?? null,
-      }).catch(() => {});
-    } catch (err) {
-      setThreadError(err instanceof Error ? err.message : 'Failed to send message.');
-    } finally {
-      setSending(false);
-    }
-  };
-
   const openStartChat = useCallback(async () => {
     setStartChatOpen(true);
     setOwnersError(null);
@@ -669,6 +613,74 @@ export function ChatTab({
     ],
   );
 
+  const handleClose = async () => {
+    if (!selectedId || closing) return;
+    const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
+    setClosing(true);
+    try {
+      if (isCallCenterThread) {
+        await postCallCenterChatClose(selectedId);
+        callCenterThreadIdsRef.current.delete(selectedId);
+      } else {
+        await postChatClose(selectedId);
+      }
+      setSelectedId(null);
+      await loadConversations();
+    } catch (err) {
+      setThreadError(err instanceof Error ? err.message : 'Failed to close conversation.');
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const handleSend = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const text = draft.trim();
+    if (!text || !selectedId || sending) return;
+
+    setSending(true);
+    setThreadError(null);
+    try {
+      const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
+      const created = isCallCenterThread
+        ? await postCallCenterChatMessage(selectedId, text)
+        : await postConversationMessage(selectedId, text);
+      setDraft('');
+
+      if (created) {
+        const uid = firebaseUser?.uid?.trim() ?? '';
+        const msg = !created.senderId?.trim()
+          ? { ...created, senderId: uid || session.userId }
+          : created;
+
+        setMessages((prev) => {
+          const id = msg.messageId?.trim();
+          if (id && prev.some((p) => p.messageId === id)) return prev;
+          return [...prev, msg];
+        });
+      } else {
+        const rows = isCallCenterThread
+          ? await fetchCallCenterChatMessages(selectedId)
+          : await fetchConversationMessages(selectedId);
+        setMessages(rows);
+      }
+
+      void loadConversations();
+      void refreshThreadMessages(selectedId);
+
+      const replyId = created?.messageId?.trim() || null;
+      void logSystemActivity(session, AUDIT_ACTION_CHAT_REPLY, AUDIT_RESOURCE_BMS_CHAT, selectedId, {
+        messageId: replyId,
+        textPreview: text.slice(0, 400),
+        tenantName: selectedConversation?.userName ?? null,
+      }).catch(() => {});
+    } catch (err) {
+      setThreadError(err instanceof Error ? err.message : 'Failed to send message.');
+    } finally {
+      setSending(false);
+    }
+  };
+
   if (!permissions.canViewChatTab && session.role !== 'super-admin') {
     return (
       <Card className="border-border/80 bg-white shadow-sm">
@@ -720,368 +732,458 @@ export function ChatTab({
         <InternalChatTab session={session} permissions={permissions} />
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,360px)_1fr] lg:items-stretch">
-        <Card
-          className={cn(
-            'flex min-h-0 flex-col overflow-hidden border-border/80 bg-white shadow-sm',
-            selectedId && 'max-lg:hidden',
-          )}
-        >
-          <CardHeader className="shrink-0 pb-3">
-            <CardTitle className="flex items-center justify-between gap-2 text-base">
-              <span className="flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-sky-600" />
-                Chat Inbox
-              </span>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-8 border-sky-200 bg-sky-50 px-2.5 text-xs text-sky-700 hover:bg-sky-100"
-                  onClick={() => void openStartChat()}
-                >
-                  Chat with owner
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-slate-900"
-                  aria-label={soundsMuted ? 'Unmute new message sounds' : 'Mute new message sounds'}
-                  title={soundsMuted ? 'Sounds off' : 'Sounds on'}
-                  onClick={() => {
-                    const next = !soundsMuted;
-                    setChatSoundMuted(next);
-                    setSoundsMuted(next);
-                  }}
-                >
-                  {soundsMuted ? (
-                    <VolumeX className="h-4 w-4" />
-                  ) : (
-                    <Volume2 className="h-4 w-4" />
-                  )}
-                </Button>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    'tabular-nums',
-                    totalUnread > 0
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                      : 'border-sky-200 bg-sky-50 text-sky-700',
-                  )}
-                >
-                  {totalUnread} unread
-                </Badge>
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
-            {startChatOpen && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold text-slate-700">Open workshop chat</p>
+          <Card
+            className={cn(
+              'flex min-h-0 flex-col overflow-hidden border-border/80 bg-white shadow-sm',
+              selectedId && 'max-lg:hidden',
+            )}
+          >
+            <CardHeader className="shrink-0 pb-3">
+              <CardTitle className="flex items-center justify-between gap-2 text-base">
+                <span className="flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4 text-sky-600" />
+                  Chat Inbox
+                </span>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-8 border-sky-200 bg-sky-50 px-2.5 text-xs text-sky-700 hover:bg-sky-100"
+                    onClick={() => void openStartChat()}
+                  >
+                    Chat with owner
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-slate-500 hover:text-slate-900"
-                    onClick={closeStartChat}
-                    aria-label="Close"
+                    className="h-8 w-8 text-muted-foreground hover:text-slate-900"
+                    aria-label={soundsMuted ? 'Unmute new message sounds' : 'Mute new message sounds'}
+                    title={soundsMuted ? 'Sounds off' : 'Sounds on'}
+                    onClick={() => {
+                      const next = !soundsMuted;
+                      setChatSoundMuted(next);
+                      setSoundsMuted(next);
+                    }}
                   >
-                    <X className="h-4 w-4" />
+                    {soundsMuted ? (
+                      <VolumeX className="h-4 w-4" />
+                    ) : (
+                      <Volume2 className="h-4 w-4" />
+                    )}
                   </Button>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'tabular-nums',
+                      totalUnread > 0
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-sky-200 bg-sky-50 text-sky-700',
+                    )}
+                  >
+                    {totalUnread} unread
+                  </Badge>
                 </div>
-
-                {ownersError && (
-                  <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs text-rose-700">
-                    {ownersError}
-                  </div>
-                )}
-
-                <div className="grid gap-2">
-                  <div className="flex gap-2">
-                    <Input
-                      value={ownerFilter}
-                      onChange={(ev) => setOwnerFilter(ev.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          workshopSelectTriggerRef.current?.click();
-                        }
-                      }}
-                      placeholder="Filter workshops…"
-                      className="h-9 min-w-0 flex-1 bg-white text-sm"
-                      disabled={ownersLoading || startingChat}
-                      autoComplete="off"
-                    />
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
+              {startChatOpen && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-700">Open workshop chat</p>
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
                       size="icon"
-                      className="h-9 w-9 shrink-0 bg-white"
-                      disabled={ownersLoading || startingChat}
-                      aria-label="Search workshops"
-                      onClick={() => workshopSelectTriggerRef.current?.click()}
+                      className="h-7 w-7 text-slate-500 hover:text-slate-900"
+                      onClick={closeStartChat}
+                      aria-label="Close"
                     >
-                      <Search className="h-4 w-4" />
+                      <X className="h-4 w-4" />
                     </Button>
                   </div>
 
-                  <Select
-                    value={selectedOwnerUid}
-                    onValueChange={(uid) => {
-                      setSelectedOwnerUid(uid);
-                      void handleStartChat(uid);
-                    }}
-                    disabled={ownersLoading || startingChat}
-                  >
-                    <SelectTrigger
-                      ref={workshopSelectTriggerRef}
-                      className="h-9 bg-white text-sm"
-                    >
-                      <SelectValue placeholder={ownersLoading ? 'Loading…' : 'Select workshop'} />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-60">
-                      {filteredOwners.length === 0 ? (
-                        <div className="px-2 py-4 text-center text-xs text-muted-foreground">
-                          {ownersLoading ? 'Fetching workshops…' : 'No matches found.'}
-                        </div>
-                      ) : (
-                        filteredOwners.map((o) => (
-                          <SelectItem key={o.ownerUid} value={o.ownerUid}>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-medium">{o.name}</span>
-                              <span className="text-[10px] text-muted-foreground">
-                                {o.state} {o.contactPhone ? `• ${o.contactPhone}` : ''}
-                              </span>
-                            </div>
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
+                  {ownersError && (
+                    <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs text-rose-700">
+                      {ownersError}
+                    </div>
+                  )}
 
-            {loading ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading conversations…
-              </div>
-            ) : error ? (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
-              </div>
-            ) : allConversations.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">
-                No conversations found.
-              </div>
+                  <div className="grid gap-2">
+                    <div className="flex gap-2">
+                      <Input
+                        value={ownerFilter}
+                        onChange={(ev) => setOwnerFilter(ev.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            workshopSelectTriggerRef.current?.click();
+                          }
+                        }}
+                        placeholder="Filter workshops…"
+                        className="h-9 min-w-0 flex-1 bg-white text-sm"
+                        disabled={ownersLoading || startingChat}
+                        autoComplete="off"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 shrink-0 bg-white"
+                        disabled={ownersLoading || startingChat}
+                        aria-label="Search workshops"
+                        onClick={() => workshopSelectTriggerRef.current?.click()}
+                      >
+                        <Search className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <Select
+                      value={selectedOwnerUid}
+                      onValueChange={(uid) => {
+                        setSelectedOwnerUid(uid);
+                        void handleStartChat(uid);
+                      }}
+                      disabled={ownersLoading || startingChat}
+                    >
+                      <SelectTrigger
+                        ref={workshopSelectTriggerRef}
+                        className="h-9 bg-white text-sm"
+                      >
+                        <SelectValue
+                          placeholder={
+                            ownersLoading
+                              ? 'Loading workshops…'
+                              : startingChat
+                                ? 'Opening…'
+                                : 'Select workshop'
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {filteredOwners.map((o) => {
+                          const unread = unreadByOwnerUid[o.ownerUid] ?? 0;
+                          return (
+                            <SelectItem key={o.ownerUid} value={o.ownerUid}>
+                              <div className="flex items-center gap-2">
+                                <div className="h-9 w-9 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                                  {o.logoUrl?.trim() ? (
+                                    <img
+                                      src={o.logoUrl}
+                                      alt={`${o.name} logo`}
+                                      className="h-full w-full object-cover"
+                                      loading="lazy"
+                                      referrerPolicy="no-referrer"
+                                      onError={(ev) => {
+                                        const img = ev.currentTarget;
+                                        img.style.display = 'none';
+                                      }}
+                                    />
+                                  ) : null}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span
+                                      className={cn(
+                                        'truncate text-sm leading-5 text-slate-900',
+                                        unread > 0 ? 'font-bold' : 'font-semibold',
+                                      )}
+                                    >
+                                      {o.name}
+                                    </span>
+                                    <div className="flex shrink-0 items-center gap-1.5">
+                                      {unread > 0 ? (
+                                        <Badge className="h-4 min-w-[1rem] justify-center bg-amber-500 px-1 text-[10px] leading-4 text-white">
+                                          {unread > 99 ? '99+' : unread}
+                                        </Badge>
+                                      ) : null}
+                                      {o.state ? (
+                                        <span className="text-[10px] font-semibold text-slate-500">
+                                          {o.state}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+
+                    <div className="flex items-center justify-end gap-2">
+                      <Button type="button" variant="ghost" className="h-8" onClick={closeStartChat}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {loading ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading conversations…
+                </div>
+              ) : error ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {error}
+                </div>
+              ) : allConversations.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  No conversations found.
+                </div>
+              ) : (
+                <>
+                  {mine.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        Mine
+                      </p>
+                      {mine.map((c) => (
+                        <ConversationRow
+                          key={c.conversationId}
+                          conversation={c}
+                          workshopName={c.ownerUid ? (workshopNameMap[c.ownerUid] ?? null) : null}
+                          selected={selectedId === c.conversationId}
+                          onSelect={() => void handleSelectConversation(c.conversationId)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {queue.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        Queue
+                      </p>
+                      {queue.map((c) => (
+                        <ConversationRow
+                          key={c.conversationId}
+                          conversation={c}
+                          workshopName={c.ownerUid ? (workshopNameMap[c.ownerUid] ?? null) : null}
+                          selected={selectedId === c.conversationId}
+                          onSelect={() => void handleSelectConversation(c.conversationId)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card
+            className={cn(
+              'flex min-h-0 flex-1 flex-col overflow-hidden border-border/80 bg-white shadow-sm',
+              !selectedId && 'max-lg:hidden',
+            )}
+          >
+            {!selectedId ? (
+              <CardContent className="flex min-h-0 flex-1 flex-col items-center justify-center py-16 text-center text-sm text-muted-foreground">
+                <MessageSquare className="mb-2 h-10 w-10 text-slate-300" />
+                Select a conversation to view messages and reply.
+              </CardContent>
             ) : (
               <>
-                {mine.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      Mine
-                    </p>
-                    {mine.map((c) => (
-                      <ConversationRow
-                        key={c.conversationId}
-                        conversation={c}
-                        workshopName={c.ownerUid ? (workshopNameMap[c.ownerUid] ?? null) : null}
-                        selected={selectedId === c.conversationId}
-                        onSelect={() => void handleSelectConversation(c.conversationId)}
-                      />
-                    ))}
-                  </div>
-                )}
-                {queue.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      Queue
-                    </p>
-                    {queue.map((c) => (
-                      <ConversationRow
-                        key={c.conversationId}
-                        conversation={c}
-                        workshopName={c.ownerUid ? (workshopNameMap[c.ownerUid] ?? null) : null}
-                        selected={selectedId === c.conversationId}
-                        onSelect={() => void handleSelectConversation(c.conversationId)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card
-          className={cn(
-            'flex min-h-0 flex-1 flex-col overflow-hidden border-border/80 bg-white shadow-sm',
-            !selectedId && 'max-lg:hidden',
-          )}
-        >
-          {!selectedId ? (
-            <CardContent className="flex min-h-0 flex-1 flex-col items-center justify-center py-16 text-center text-sm text-muted-foreground">
-              <MessageSquare className="mb-2 h-10 w-10 text-slate-300" />
-              Select a conversation to view messages and reply.
-            </CardContent>
-          ) : (
-            <>
-              <CardHeader className="shrink-0 space-y-0 border-b border-slate-100 pb-3">
-                <div className="flex items-start gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="mt-0.5 shrink-0 lg:hidden"
-                    onClick={() => setSelectedId(null)}
-                    aria-label="Back to inbox"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                  </Button>
-                  <div className="min-w-0 flex-1">
-                    <CardTitle className="truncate text-base">
-                      {selectedConversation?.userName || 'Chat'}
-                    </CardTitle>
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <User className="h-3 w-3" />
-                        {selectedConversation?.userName || '—'}
-                      </span>
-                      {workshopName && (
-                        <span className="flex items-center gap-1">
-                          <Building2 className="h-3 w-3" />
-                          {workshopName}
-                        </span>
-                      )}
-
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          'text-[10px]',
-                          selectedConversation?.status === 'waiting'
-                            ? 'border-amber-200 bg-amber-50 text-amber-700'
-                            : 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                <CardHeader className="shrink-0 space-y-0 border-b border-slate-100 pb-3">
+                  <div className="flex items-start gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="mt-0.5 shrink-0 lg:hidden"
+                      onClick={() => setSelectedId(null)}
+                      aria-label="Back to inbox"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </Button>
+                    {activeWorkshopOwner?.logoUrl?.trim() ? (
+                      <div className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                        <img
+                          src={activeWorkshopOwner.logoUrl}
+                          alt={`${activeWorkshopOwner.name} logo`}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                          onError={(ev) => {
+                            const img = ev.currentTarget;
+                            img.style.display = 'none';
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    <div className="min-w-0 flex-1">
+                      <CardTitle className="truncate text-base">
+                        {activeWorkshopOwner?.name || selectedConversation?.userName || 'Chat'}
+                      </CardTitle>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        {activeWorkshopOwner ? (
+                          <>
+                            <span className="flex items-center gap-1">
+                              <Building2 className="h-3 w-3" />
+                              {activeWorkshopOwner.slug}
+                            </span>
+                            {activeWorkshopOwner.email && (
+                              <span className="flex items-center gap-1">
+                                <User className="h-3 w-3" />
+                                {activeWorkshopOwner.email}
+                              </span>
+                            )}
+                            {activeWorkshopOwner.contactPhone && (
+                              <span className="flex items-center gap-1">
+                                <User className="h-3 w-3" />
+                                {activeWorkshopOwner.contactPhone}
+                              </span>
+                            )}
+                            {(activeWorkshopOwner.state || activeWorkshopOwner.timezone) && (
+                              <span className="flex items-center gap-1">
+                                <Clock3 className="h-3 w-3" />
+                                {[activeWorkshopOwner.state, activeWorkshopOwner.timezone]
+                                  .filter(Boolean)
+                                  .join(' • ')}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="flex items-center gap-1">
+                            <User className="h-3 w-3" />
+                            {selectedConversation?.userName || '—'}
+                          </span>
                         )}
-                      >
-                        {selectedConversation?.status ?? '—'}
-                      </Badge>
-                      {!isMine && (
-                        <Badge variant="outline" className="border-slate-200 text-[10px] text-slate-500">
-                          Queue
+                        {workshopName && (
+                          <span className="flex items-center gap-1">
+                            <Building2 className="h-3 w-3" />
+                            {workshopName}
+                          </span>
+                        )}
+
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            'text-[10px]',
+                            selectedConversation?.status === 'waiting'
+                              ? 'border-amber-200 bg-amber-50 text-amber-700'
+                              : 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                          )}
+                        >
+                          {activeWorkshopOwner?.accountStatus || selectedConversation?.status || '—'}
                         </Badge>
-                      )}
-                      {claiming && (
-                        <Badge className="flex items-center gap-1 border-sky-200 bg-sky-100 text-[10px] text-sky-700">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Claiming conversation…
-                        </Badge>
-                      )}
+                        {!isMine && (
+                          <Badge variant="outline" className="border-slate-200 text-[10px] text-slate-500">
+                            Queue
+                          </Badge>
+                        )}
+                        {claiming && (
+                          <Badge className="flex items-center gap-1 border-sky-200 bg-sky-100 text-[10px] text-sky-700">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Claiming conversation…
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardHeader>
+                </CardHeader>
 
-              <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-0 px-4 pb-4 pt-3">
-                {threadError && (
-                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                    {threadError}
-                  </div>
-                )}
+                <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-0 px-4 pb-4 pt-3">
+                  {threadError && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {threadError}
+                    </div>
+                  )}
 
-                <div
-                  ref={threadScrollRef}
-                  className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain rounded-lg border border-slate-100 bg-slate-50/50 p-3"
-                >
-                  {threadLoading ? (
-                    <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading messages…
-                    </div>
-                  ) : sortedMessages.length === 0 ? (
-                    <div className="flex flex-1 items-center justify-center text-center text-sm text-muted-foreground">
-                      No messages yet. Send the first reply below.
-                    </div>
-                  ) : (
-                    <ul className="space-y-3">
-                      {sortedMessages.map((m, idx) => {
-                        const mineMsg = isAgentMessage(m);
-                        return (
-                          <li
-                            key={m.messageId?.trim() || `msg-${idx}-${m.createdAt}`}
-                            className={cn('flex', mineMsg ? 'justify-end' : 'justify-start')}
-                          >
-                            <div
-                              className={cn(
-                                'max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow-sm',
-                                mineMsg
-                                  ? 'rounded-br-md bg-sky-600 text-white'
-                                  : 'rounded-bl-md border border-slate-200 bg-white text-slate-800',
-                              )}
+                  <div
+                    ref={threadScrollRef}
+                    className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain rounded-lg border border-slate-100 bg-slate-50/50 p-3"
+                  >
+                    {threadLoading ? (
+                      <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading messages…
+                      </div>
+                    ) : sortedMessages.length === 0 ? (
+                      <div className="flex flex-1 items-center justify-center text-center text-sm text-muted-foreground">
+                        No messages yet.
+                      </div>
+                    ) : (
+                      <ul className="space-y-3">
+                        {sortedMessages.map((m, idx) => {
+                          const mineMsg = isAgentMessage(m);
+                          return (
+                            <li
+                              key={m.messageId?.trim() || `msg-${idx}-${m.createdAt}`}
+                              className={cn('flex', mineMsg ? 'justify-end' : 'justify-start')}
                             >
-                              <p className="whitespace-pre-wrap break-words">{m.text}</p>
                               <div
                                 className={cn(
-                                  'mt-1 flex items-center gap-1 text-[10px]',
-                                  mineMsg ? 'text-sky-100' : 'text-slate-400',
+                                  'max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow-sm',
+                                  mineMsg
+                                    ? 'rounded-br-md bg-sky-600 text-white'
+                                    : 'rounded-bl-md border border-slate-200 bg-white text-slate-800',
                                 )}
                               >
-                                <Clock3 className="h-3 w-3" />
-                                {formatTime(m.createdAt) || 'Just now'}
+                                <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                                <div
+                                  className={cn(
+                                    'mt-1 flex items-center gap-1 text-[10px]',
+                                    mineMsg ? 'text-sky-100' : 'text-slate-400',
+                                  )}
+                                >
+                                  <Clock3 className="h-3 w-3" />
+                                  {formatTime(m.createdAt) || 'Just now'}
+                                </div>
                               </div>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                  <div ref={messagesBottomRef} />
-                </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                    <div ref={messagesBottomRef} />
+                  </div>
 
-                <form
-                  onSubmit={(e) => void handleSend(e)}
-                  className="flex shrink-0 gap-2 border-t border-slate-100 pt-2"
-                >
-                  <Input
-                    value={draft}
-                    onChange={(ev) => setDraft(ev.target.value)}
-                    placeholder="Type a message…"
-                    disabled={sending || threadLoading || claiming}
-                    className="flex-1"
-                    autoComplete="off"
-                  />
-                  <Button
-                    type="submit"
-                    disabled={sending || threadLoading || claiming || !draft.trim()}
-                    className="shrink-0 gap-1.5 bg-sky-600 hover:bg-sky-700"
+                  <form
+                    onSubmit={(e) => void handleSend(e)}
+                    className="flex shrink-0 gap-2 border-t border-slate-100 pt-2"
                   >
-                    {sending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                    <span className="hidden sm:inline">Send</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    disabled={closing || sending || claiming}
-                    onClick={() => void handleClose()}
-                    className="shrink-0 gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
-                  >
-                    {closing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <X className="h-4 w-4" />
-                    )}
-                    <span className="hidden sm:inline">Close</span>
-                  </Button>
-                </form>
-              </CardContent>
-            </>
-          )}
-        </Card>
-      </div>
+                    <Input
+                      value={draft}
+                      onChange={(ev) => setDraft(ev.target.value)}
+                      placeholder="Type a message…"
+                      disabled={sending || threadLoading || claiming}
+                      className="flex-1"
+                      autoComplete="off"
+                    />
+                    <Button
+                      type="submit"
+                      disabled={sending || threadLoading || claiming || !draft.trim()}
+                      className="shrink-0 gap-1.5 bg-sky-600 hover:bg-sky-700"
+                    >
+                      {sending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      <span className="hidden sm:inline">Send</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={closing || sending || claiming}
+                      onClick={() => void handleClose()}
+                      className="shrink-0 gap-1.5 bg-rose-600 text-white hover:bg-rose-700"
+                    >
+                      {closing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <X className="h-4 w-4" />
+                      )}
+                      <span className="hidden sm:inline">Close</span>
+                    </Button>
+                  </form>
+                </CardContent>
+              </>
+            )}
+          </Card>
+        </div>
       )}
     </div>
   );
