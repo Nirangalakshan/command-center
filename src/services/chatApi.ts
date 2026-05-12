@@ -1,5 +1,6 @@
 import { getFirebaseOnlyBmsBearerToken } from '@/services/bmsAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { Agent } from "./types";
 
 const BASE_URL =
   (import.meta.env.VITE_BMS_SUPPORT_CHAT_API_URL as string) ??
@@ -133,15 +134,6 @@ async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Re
   }
   headers.set('Authorization', `Bearer ${token}`);
   const url = `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
-
-  // const tokenMasked =
-  //   token && token.length >= 32 ? `${token.slice(0, 10)}...${token.slice(-10)}` : '(empty)';
-  // console.log('[chatApi.authorizedFetch]', {
-  //   path,
-  //   firebaseUid: firebaseUser?.uid ?? null,
-  //   firebaseEmail: firebaseUser?.email ?? null,
-  //   tokenMasked,
-  // });
 
   return fetch(url, { ...init, headers });
 }
@@ -547,4 +539,207 @@ export async function postChatClose(
     const detail = await readHttpErrorDetail(res);
     throw new Error(`postChatClose failed: ${res.status}${detail ? ` - ${detail}` : ''}`);
   }
+}
+
+// ── INTERNAL AGENT CHAT (Agent-to-Agent) ──────────────────────────────────
+
+export interface InternalChatConversation {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  participant_a: string;
+  participant_b: string;
+  last_message: string | null;
+  last_message_at: string | null;
+  otherParticipant?: Agent;
+  unreadCount?: number;
+}
+
+export interface InternalChatMessage {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  content: string;
+  created_at: string;
+  is_read: boolean;
+}
+
+export async function fetchInternalConversations(currentAgentId: string): Promise<InternalChatConversation[]> {
+  const { data, error } = await supabase
+    .from('agent_conversations')
+    .select(`
+      *,
+      agent_a:participant_a(id, name, extension, status),
+      agent_b:participant_b(id, name, extension, status)
+    `)
+    .or(`participant_a.eq.${currentAgentId},participant_b.eq.${currentAgentId}`)
+    .order('updated_at', { ascending: false });
+
+  if (error) throw error;
+
+  return (data || []).map(conv => {
+    const isParticipantA = conv.participant_a === currentAgentId;
+    const otherAgent = isParticipantA ? conv.agent_b : conv.agent_a;
+    
+    return {
+      ...conv,
+      otherParticipant: otherAgent as unknown as Agent
+    };
+  });
+}
+
+/**
+ * Fetch all conversations for Super Admin
+ */
+export async function fetchAllInternalConversations(): Promise<InternalChatConversation[]> {
+  const { data, error } = await supabase
+    .from('agent_conversations')
+    .select(`
+      *,
+      agent_a:participant_a(id, name, extension, status),
+      agent_b:participant_b(id, name, extension, status)
+    `)
+    .order('updated_at', { ascending: false });
+
+  if (error) throw error;
+
+  return (data || []).map(conv => ({
+    ...conv,
+    agentA: conv.agent_a as unknown as Agent,
+    agentB: conv.agent_b as unknown as Agent
+  }));
+}
+
+export async function fetchInternalMessages(conversationId: string): Promise<InternalChatMessage[]> {
+  const { data, error } = await supabase
+    .from('agent_messages')
+    .select('*')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function fetchInternalUnreadCount(agentId: string): Promise<number> {
+  // First get conversation IDs
+  const { data: convs, error: convError } = await supabase
+    .from('agent_conversations')
+    .select('id')
+    .or(`participant_a.eq.${agentId},participant_b.eq.${agentId}`);
+
+  if (convError || !convs || convs.length === 0) return 0;
+  const ids = convs.map(c => c.id);
+
+  const { count, error } = await supabase
+    .from('agent_messages')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_read', false)
+    .neq('sender_id', agentId)
+    .in('conversation_id', ids);
+
+  if (error) return 0;
+  return count || 0;
+}
+
+/**
+ * Fetch a global count of all unread internal messages for Super Admin oversight.
+ */
+export async function fetchGlobalInternalUnreadCount(): Promise<number> {
+  const { count, error } = await supabase
+    .from('agent_messages')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_read', false);
+
+  if (error) return 0;
+  return count || 0;
+}
+
+export async function markInternalMessagesAsRead(conversationId: string, readerId: string): Promise<void> {
+  const { error } = await supabase
+    .from('agent_messages')
+    .update({ is_read: true })
+    .eq('conversation_id', conversationId)
+    .neq('sender_id', readerId)
+    .eq('is_read', false);
+
+  if (error) {
+    console.warn('[chatApi] markInternalMessagesAsRead failed:', error.message);
+  }
+}
+
+export async function sendInternalMessage(conversationId: string, senderId: string, content: string): Promise<void> {
+  const { error } = await supabase
+    .from('agent_messages')
+    .insert({
+      conversation_id: conversationId,
+      sender_id: senderId,
+      content
+    });
+
+  if (error) throw error;
+}
+
+export async function getOrCreateInternalConversation(agentIdA: string, agentIdB: string): Promise<string> {
+  // Ensure consistent order for unique constraint
+  const [p1, p2] = agentIdA < agentIdB ? [agentIdA, agentIdB] : [agentIdB, agentIdA];
+
+  // Try to find existing
+  const { data: existing, error: fetchError } = await supabase
+    .from('agent_conversations')
+    .select('id')
+    .eq('participant_a', p1)
+    .eq('participant_b', p2)
+    .maybeSingle();
+
+  if (fetchError) throw fetchError;
+  if (existing) return existing.id;
+
+  // Create new
+  const { data: created, error: createError } = await supabase
+    .from('agent_conversations')
+    .insert({
+      participant_a: p1,
+      participant_b: p2
+    })
+    .select('id')
+    .single();
+
+  if (createError) throw createError;
+  return created.id;
+}
+
+export function subscribeToInternalMessages(conversationId: string, onMessage: (message: InternalChatMessage) => void) {
+  const channel = supabase
+    .channel(`chat:internal:${conversationId}`)
+    .on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'agent_messages',
+      filter: `conversation_id=eq.${conversationId}`
+    }, payload => {
+      onMessage(payload.new as InternalChatMessage);
+    })
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}
+
+export function subscribeToAllInternalConversations(onUpdate: () => void) {
+  const channel = supabase
+    .channel('agent_conversations_all_internal')
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'agent_conversations'
+    }, () => {
+      onUpdate();
+    })
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }

@@ -591,52 +591,30 @@ async function handleIncomingCall(body: Record<string, unknown>) {
   // caller number, the call is truly over and we fire CallHangup immediately
   // (rather than waiting up to 2 minutes for the stale eviction or the CDR).
   if (memberStatus === 'BYE') {
+    // If an agent leg ended, mark them available. We do NOT broadcast CallHangup here
+    // because the call might still be alive (e.g. routing to another agent or an IVR).
+    // The definitive end-of-call signal is the NewCdr event.
     await updateAgentLiveCallState(extension, memberStatus, callfrom);
-
-    // Give the PBX ~500 ms to update agent states before we check.
-    // (Yeastar usually updates ExtensionStatus before sending BYE.)
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    // Check if any agent is still ringing for this caller — if so, the queue
-    // is routing the call to another agent and we must NOT broadcast CallHangup.
-    let stillRinging = false;
-    if (callfrom) {
-      const { data: ringingAgents } = await supabase
-        .from('agents')
-        .select('id')
-        .in('status', ['ringing', 'on-call'])
-        .eq('current_caller', callfrom)
-        .limit(1);
-      stillRinging = (ringingAgents?.length ?? 0) > 0;
-    }
-
-    if (!stillRinging) {
-      // No agent is ringing for this caller → caller hung up. Remove card immediately.
-      await supabase.channel('yeastar-incoming-calls').send({
-        type: 'broadcast',
-        event: 'CallHangup',
-        payload: { id: `incoming-${callid}`, callerNumber: callfrom },
-      });
-      // console.log(`[yeastar-webhook] IncomingCall BYE — caller hung up, CallHangup broadcast: ${callfrom}`);
-    } else {
-      // console.log(`[yeastar-webhook] IncomingCall BYE — queue routing to next agent: ${callfrom}`);
-    }
     return;
   }
 
-  // ANSWER/ANSWERED: the call has been picked up by an agent. Broadcast
-  // CallAnswered immediately so the dashboard stops ringing and removes the
-  // floating card — we do NOT wait for the CDR (which only arrives after the
-  // full call ends, potentially minutes later).
+  // ANSWER/ANSWERED: the call has been picked up. Broadcast CallAnswered ONLY if 
+  // it was picked up by a real agent (extension). If answered by an IVR/CFD, 
+  // we keep the notification card visible so the user knows the call is still live.
   const isAnswered = memberStatus === 'ANSWER' || memberStatus === 'ANSWERED';
   if (isAnswered) {
-    await updateAgentLiveCallState(extension, memberStatus, callfrom);
-    await supabase.channel('yeastar-incoming-calls').send({
-      type: 'broadcast',
-      event: 'CallAnswered',
-      payload: { id: `incoming-${callid}`, callerNumber: callfrom },
-    });
-    // console.log(`[yeastar-webhook] IncomingCall ANSWERED — CallAnswered broadcast: ${callfrom} → ${did}`);
+    const wasAgent = await updateAgentLiveCallState(extension, memberStatus, callfrom);
+    
+    if (wasAgent) {
+      await supabase.channel('yeastar-incoming-calls').send({
+        type: 'broadcast',
+        event: 'CallAnswered',
+        payload: { id: `incoming-${callid}`, callerNumber: callfrom },
+      });
+      // console.log(`[yeastar-webhook] IncomingCall ANSWERED by agent — CallAnswered broadcast: ${callfrom} → ${extension}`);
+    } else {
+      // console.log(`[yeastar-webhook] IncomingCall ANSWERED by non-agent (IVR/CFD) — keeping card: ${callfrom} → ${extension}`);
+    }
     return;
   }
 
@@ -745,8 +723,8 @@ async function updateAgentLiveCallState(
   extension: string,
   memberStatus: string,
   callerNumber: string,
-): Promise<void> {
-  if (!extension) return;
+): Promise<boolean> {
+  if (!extension) return false;
 
   const s = memberStatus.toUpperCase();
   const isRinging = s === 'ALERT' || s === 'RING';
@@ -757,9 +735,6 @@ async function updateAgentLiveCallState(
 
   if (isRinging) {
     update = { status: 'ringing' };
-    // Only set caller fields when we actually have a number — re-ring events
-    // from Yeastar often arrive without callfrom and must not erase the value
-    // that was written by the first RING event.
     if (callerNumber) {
       update.current_caller = callerNumber;
       update.call_start_time = Date.now();
@@ -777,17 +752,21 @@ async function updateAgentLiveCallState(
       call_start_time: null,
     };
   } else {
-    return;
+    return false;
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('agents')
     .update(update)
-    .eq('extension', extension);
+    .eq('extension', extension)
+    .select('id');
 
   if (error) {
     // console.error(`[yeastar-webhook] Failed to sync live caller for ext ${extension}: ${error.message}`);
+    return false;
   }
+
+  return (data?.length ?? 0) > 0;
 }
 
 function buildPhoneLookupVariants(phone: string): string[] {

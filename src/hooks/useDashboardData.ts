@@ -54,6 +54,9 @@ export interface DashboardData {
   callDate: string;
   setCallDate: (ymd: string) => void;
   refresh: () => void;
+  pendingInternalChatAgentId: string | null;
+  setPendingInternalChatAgentId: (id: string | null) => void;
+  startInternalChat: (agentId: string) => void;
 }
 
 const POLL_INTERVAL = 8000;
@@ -73,6 +76,7 @@ export function useDashboardData({
   const [selectedTab, setSelectedTab] = useState("overview");
   const [callDate, setCallDate] = useState<string>(() => getAustralianDateKey(Date.now()));
   const [now, setNow] = useState(Date.now());
+  const [pendingInternalChatAgentId, setPendingInternalChatAgentId] = useState<string | null>(null);
 
   // Set tenant from session
   useEffect(() => {
@@ -272,6 +276,11 @@ export function useDashboardData({
     queryClient.invalidateQueries();
   }, [queryClient]);
 
+  const startInternalChat = useCallback((agentId: string) => {
+    setPendingInternalChatAgentId(agentId);
+    setSelectedTab("chat");
+  }, []);
+
   // Derive loading and error states
   const isInitialLoading = !session || (isPendingTenants && isPendingAgents && isPendingQueues);
   const error = (tenantsErr || agentsErr || queuesErr || callsErr || summaryErr)?.toString() || null;
@@ -298,5 +307,8 @@ export function useDashboardData({
     callDate,
     setCallDate,
     refresh,
+    pendingInternalChatAgentId,
+    setPendingInternalChatAgentId,
+    startInternalChat,
   };
 }

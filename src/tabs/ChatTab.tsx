@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Send,
   User,
+  Users,
   Volume2,
   VolumeX,
   X,
@@ -49,6 +50,8 @@ import {
   AUDIT_ACTION_CHAT_REPLY,
   AUDIT_RESOURCE_BMS_CHAT,
 } from '@/services/auditLogApi';
+import { InternalChatTab } from '@/tabs/InternalChatTab';
+import { useDashboard } from '@/context/DashboardDataContext';
 
 interface ChatTabProps {
   session: UserSession;
@@ -56,7 +59,10 @@ interface ChatTabProps {
   listTenantId?: string | null;
   workshopOwnerUid?: string | null;
   onInboxStatsChange?: (stats: { unreadCount: number }) => void;
+  internalUnreadCount?: number;
 }
+
+type ChatMode = 'support' | 'internal';
 
 function formatDateTime(iso: string): string {
   if (!iso) return 'N/A';
@@ -111,8 +117,10 @@ export function ChatTab({
   listTenantId = null,
   workshopOwnerUid = null,
   onInboxStatsChange,
+  internalUnreadCount = 0,
 }: ChatTabProps) {
   const { firebaseUser } = useFirebaseAuth();
+  const { pendingInternalChatAgentId } = useDashboard();
 
   const [queue, setQueue] = useState<Conversation[]>([]);
   const [mine, setMine] = useState<Conversation[]>([]);
@@ -136,10 +144,17 @@ export function ChatTab({
   const allRef = useRef<Conversation[]>([]);
 
   const [soundsMuted, setSoundsMuted] = useState(() => isChatSoundMuted());
+  const [chatMode, setChatMode] = useState<ChatMode>('support');
   const skipInboxChimesRef = useRef(true);
   const prevInboxSnapshotRef = useRef<Map<string, string>>(new Map());
   const threadMessageSigRef = useRef<string>('');
   const skipThreadChimeRef = useRef(true);
+
+  useEffect(() => {
+    if (pendingInternalChatAgentId) {
+      setChatMode('internal');
+    }
+  }, [pendingInternalChatAgentId]);
 
   const chatListScope = useMemo(
     () => ({
@@ -491,7 +506,45 @@ export function ChatTab({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,360px)_1fr] lg:items-stretch">
+      {/* Sub-tab Navigation */}
+      <div className="flex items-center gap-1 self-start rounded-2xl bg-slate-100 p-1">
+        <Button
+          variant={chatMode === 'support' ? 'secondary' : 'ghost'}
+          size="sm"
+          onClick={() => setChatMode('support')}
+          className={cn(
+            "h-9 px-4 rounded-xl font-bold transition-all",
+            chatMode === 'support' ? "bg-white text-sky-600 shadow-sm" : "text-slate-500 hover:text-slate-900"
+          )}
+        >
+          <MessageSquare className="mr-2 h-4 w-4" />
+          Support Chat
+        </Button>
+        <Button
+          variant={chatMode === 'internal' ? 'secondary' : 'ghost'}
+          size="sm"
+          onClick={() => setChatMode('internal')}
+          className={cn(
+            "h-9 px-4 rounded-xl font-bold transition-all",
+            chatMode === 'internal' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-900"
+          )}
+        >
+          <Users className="mr-2 h-4 w-4" />
+          Internal Chat
+          {internalUnreadCount > 0 && (
+            <Badge 
+              className="ml-2 bg-emerald-500 text-white border-none h-5 min-w-[20px] px-1 flex items-center justify-center text-[10px] animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.4)]"
+            >
+              {internalUnreadCount}
+            </Badge>
+          )}
+        </Button>
+      </div>
+
+      {chatMode === 'internal' ? (
+        <InternalChatTab session={session} permissions={permissions} />
+      ) : (
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,360px)_1fr] lg:items-stretch">
         <Card
           className={cn(
             'flex min-h-0 flex-col overflow-hidden border-border/80 bg-white shadow-sm',
@@ -758,6 +811,7 @@ export function ChatTab({
           )}
         </Card>
       </div>
+      )}
     </div>
   );
 }

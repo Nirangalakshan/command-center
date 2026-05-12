@@ -27,7 +27,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { updateDashboardAgent, deleteDashboardAgent } from '@/services/dashboardApi';
 import { fetchBmsWorkshopOptions } from '@/services/didMappingsApi';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Trash2, MessageSquare } from 'lucide-react';
+import { useDashboard } from '@/context/DashboardDataContext';
 
 const AGENT_ROLES: Agent['role'][] = ['agent', 'senior-agent', 'team-lead'];
 const ROLE_LABELS: Record<Agent['role'], string> = {
@@ -48,6 +49,7 @@ interface AgentsTabProps {
 type AgentGroupTab = 'command-centre' | 'workshop';
 
 export function AgentsTab({ agents, queues, tenants, permissions, now, onRefresh }: AgentsTabProps) {
+  const { startInternalChat } = useDashboard();
   const [agentGroupTab, setAgentGroupTab] = useState<AgentGroupTab>('command-centre');
   const [filterWorkshopOwnerUid, setFilterWorkshopOwnerUid] = useState('all');
   const [filterQueue, setFilterQueue] = useState('all');
@@ -413,6 +415,18 @@ export function AgentsTab({ agents, queues, tenants, permissions, now, onRefresh
                       </div>
                     </div>
                     <div className="flex shrink-0 items-start gap-2">
+                      {!isWorkshopAgent && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                          aria-label={`Message ${a.name}`}
+                          onClick={() => startInternalChat(a.id)}
+                        >
+                          <MessageSquare className="h-4 w-4" />
+                        </Button>
+                      )}
                       {canManage && (
                         <>
                           <Button

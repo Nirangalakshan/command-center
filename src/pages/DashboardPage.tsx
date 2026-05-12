@@ -22,6 +22,7 @@ import { AgentOnboardingTab as RawAgentOnboardingTab } from '@/tabs/AgentOnboard
 import { AttendanceTab as RawAttendanceTab } from '@/tabs/AttendanceTab';
 import { AuditLogsTab as RawAuditLogsTab } from '@/tabs/AuditLogsTab';
 import { ChatTab as RawChatTab } from '@/tabs/ChatTab';
+import { InternalChatTab as RawInternalChatTab } from '@/tabs/InternalChatTab';
 import { DIDMappingsTab as RawDIDMappingsTab } from '@/tabs/DIDMappingsTab';
 import {
   SalesAgentSuburbAssignmentTab as RawSalesAgentSuburbAssignmentTab,
@@ -48,6 +49,7 @@ const AgentOnboardingTab = memo(RawAgentOnboardingTab);
 const AttendanceTab = memo(RawAttendanceTab);
 const AuditLogsTab = memo(RawAuditLogsTab);
 const ChatTab = memo(RawChatTab);
+const InternalChatTab = memo(RawInternalChatTab);
 const DIDMappingsTab = memo(RawDIDMappingsTab);
 const SalesAgentSuburbAssignmentTab = memo(RawSalesAgentSuburbAssignmentTab);
 const SalesCallProgressTab = memo(RawSalesCallProgressTab);
@@ -193,6 +195,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
   );
 
   const [chatNavUnreadCount, setChatNavUnreadCount] = useState(0);
+  const [internalChatUnreadCount, setInternalChatUnreadCount] = useState(0);
   const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
 
   useEffect(() => {
@@ -227,6 +230,40 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     effectiveChatTenantId,
     chatWorkshopOwnerUid,
   ]);
+
+  // Handle Internal Chat unread count
+  useEffect(() => {
+    if (!permissions.canViewInternalChat) return;
+    if (d.selectedTab === 'chat') return; // We'll handle this inside ChatTab if it's open
+
+    let cancelled = false;
+    const fetchUnread = async () => {
+      try {
+        const { fetchInternalUnreadCount, fetchGlobalInternalUnreadCount } = await import('@/services/chatApi');
+        
+        let count = 0;
+        if (session.role === 'super-admin' && !currentAgentDbId) {
+          count = await fetchGlobalInternalUnreadCount();
+        } else if (currentAgentDbId) {
+          count = await fetchInternalUnreadCount(currentAgentDbId);
+        }
+        
+        if (!cancelled) setInternalChatUnreadCount(count);
+      } catch { /* ignore */ }
+    };
+
+    fetchUnread();
+    const id = setInterval(fetchUnread, 30_000);
+
+    const handleReadEvent = () => fetchUnread();
+    window.addEventListener('internal-chat-read', handleReadEvent);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      window.removeEventListener('internal-chat-read', handleReadEvent);
+    };
+  }, [permissions.canViewInternalChat, currentAgentDbId, d.selectedTab, session.role]);
 
   useEffect(() => {
     if (session.role !== 'super-admin') return;
@@ -320,7 +357,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
         displayName={session.displayName}
         currentRole={session.role}
         onSignOut={onSignOut}
-        chatNavUnreadCount={chatNavUnreadCount}
+        chatNavUnreadCount={chatNavUnreadCount + internalChatUnreadCount}
         pendingLeaveCount={pendingLeaveCount}
         isCCAgent={
           session.role === 'agent' &&
@@ -346,7 +383,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
         {/* Tab content: chat fills height and scrolls internally; other tabs scroll the main area */}
         <main
           className={
-            d.selectedTab === 'chat'
+            d.selectedTab === 'chat' || d.selectedTab === 'internal-chat'
               ? 'flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-6 sm:px-6 lg:px-8'
               : 'min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8'
           }
@@ -433,6 +470,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                     onInboxStatsChange={({ unreadCount }) =>
                       setChatNavUnreadCount(unreadCount)
                     }
+                    internalUnreadCount={internalChatUnreadCount}
                   />
                 </div>
               )}
