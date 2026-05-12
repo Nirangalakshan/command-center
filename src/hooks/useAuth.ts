@@ -338,6 +338,9 @@ export function useAuth(): AuthState {
     await firebaseSignOut(auth).catch(() => {});
     setUser(null);
     setSession(null);
+    
+    // Force a clean reload to clear all context/state and show login page
+    window.location.href = '/';
   }, [session]);
 
   return { user, session, permissions, loading, signIn, signOut };

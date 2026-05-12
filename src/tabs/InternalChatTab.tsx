@@ -109,6 +109,10 @@ export function InternalChatTab({ session, permissions }: InternalChatTabProps) 
         // Mark as read
         if (currentAgent) {
           await markInternalMessagesAsRead(selectedConvId, currentAgent.id);
+          // Immediately clear badge in local state
+          setConversations(prev => prev.map(c => 
+            c.id === selectedConvId ? { ...c, unreadCount: 0 } : c
+          ));
           // Dispatch event to refresh global unread count in DashboardPage
           window.dispatchEvent(new CustomEvent('internal-chat-read'));
         }
@@ -292,14 +296,24 @@ export function InternalChatTab({ session, permissions }: InternalChatTabProps) 
                     </div>
                     <div className="flex-1 min-w-0 text-left">
                       <div className="flex items-center justify-between gap-2 mb-0.5">
-                        <span className="font-bold text-slate-900 truncate text-sm">
+                        <span className={cn(
+                          "font-bold text-slate-900 truncate text-sm",
+                          conv.unreadCount && conv.unreadCount > 0 && "text-emerald-700"
+                        )}>
                           {other?.name}
                         </span>
-                        {conv.last_message_at && (
-                          <span className="text-[10px] text-slate-400 tabular-nums">
-                            {formatDistanceToNow(new Date(conv.last_message_at), { addSuffix: false })}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {conv.unreadCount && conv.unreadCount > 0 && (
+                            <Badge className="bg-emerald-500 text-white border-none h-4 min-w-[16px] px-1 flex items-center justify-center text-[9px] animate-pulse">
+                              {conv.unreadCount}
+                            </Badge>
+                          )}
+                          {conv.last_message_at && (
+                            <span className="text-[10px] text-slate-400 tabular-nums">
+                              {formatDistanceToNow(new Date(conv.last_message_at), { addSuffix: false })}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <p className={cn(
                         "text-xs truncate",
