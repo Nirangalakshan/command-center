@@ -12,6 +12,7 @@ import {
   Clock3,
   Loader2,
   MessageSquare,
+  Search,
   Send,
   User,
   Users,
@@ -29,12 +30,18 @@ import { useFirebaseAuth } from '@/integrations/firebase/useFirebaseAuth';
 import {
   fetchConversations,
   fetchConversationMessages,
+  fetchCallCenterChatMessages,
   postConversationMessage,
+  postCallCenterChatMessage,
   postConversationRead,
   postConversationClaim,
   postConversationClose,
+  postCallCenterChatClose,
   fetchWorkshopName,
   fetchWorkshopNames,
+  fetchCallCenterWorkshopOwners,
+  startCallCenterChatWithOwner,
+  type CallCenterWorkshopOwner,
   type Conversation,
   type ChatMessage,
 } from '@/services/chatApi';
@@ -52,6 +59,13 @@ import {
 } from '@/services/auditLogApi';
 import { InternalChatTab } from '@/tabs/InternalChatTab';
 import { useDashboard } from '@/context/DashboardDataContext';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface ChatTabProps {
   session: UserSession;
@@ -63,6 +77,10 @@ interface ChatTabProps {
 }
 
 type ChatMode = 'support' | 'internal';
+
+/** Sent automatically when opening a workshop thread from the picker (POST start-with-owner `text`). */
+const WORKSHOP_AUTO_OPEN_MESSAGE =
+  "Hello — we're contacting you from the call center. Please let us know how we can help.";
 
 function formatDateTime(iso: string): string {
   if (!iso) return 'N/A';
@@ -127,6 +145,17 @@ export function ChatTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [startChatOpen, setStartChatOpen] = useState(false);
+  const [ownersLoading, setOwnersLoading] = useState(false);
+  const [ownersError, setOwnersError] = useState<string | null>(null);
+  const [owners, setOwners] = useState<CallCenterWorkshopOwner[]>([]);
+  const [ownerFilter, setOwnerFilter] = useState<string>('');
+  const [selectedOwnerUid, setSelectedOwnerUid] = useState<string>('');
+  const [startingChat, setStartingChat] = useState(false);
+  const [activeWorkshopOwner, setActiveWorkshopOwner] = useState<CallCenterWorkshopOwner | null>(
+    null,
+  );
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -140,8 +169,13 @@ export function ChatTab({
 
   const threadScrollRef = useRef<HTMLDivElement>(null);
   const messagesBottomRef = useRef<HTMLDivElement>(null);
+  const workshopSelectTriggerRef = useRef<HTMLButtonElement>(null);
   const lastChatViewAuditRef = useRef<{ chatId: string; at: number } | null>(null);
   const allRef = useRef<Conversation[]>([]);
+  /** Until the new thread appears in `fetchConversations`, match workshop header from picker. */
+  const pendingWorkshopOwnerUidRef = useRef<string | null>(null);
+  /** Thread ids created via call-center `start-with-owner` — use call-center APIs, not support-chat. */
+  const callCenterThreadIdsRef = useRef<Set<string>>(new Set());
 
   const [soundsMuted, setSoundsMuted] = useState(() => isChatSoundMuted());
   const [chatMode, setChatMode] = useState<ChatMode>('support');
@@ -206,7 +240,9 @@ export function ChatTab({
 
   const refreshThreadMessages = useCallback(async (conversationId: string) => {
     try {
-      const rows = await fetchConversationMessages(conversationId);
+      const rows = callCenterThreadIdsRef.current.has(conversationId)
+        ? await fetchCallCenterChatMessages(conversationId)
+        : await fetchConversationMessages(conversationId);
       setMessages(rows);
     } catch {
       /* keep existing */
@@ -288,6 +324,50 @@ export function ChatTab({
       setThreadLoading(true);
       setThreadError(null);
       try {
+        if (callCenterThreadIdsRef.current.has(selectedId)) {
+          let rows = await fetchCallCenterChatMessages(selectedId);
+          if (cancelled) return;
+          if (rows.length === 0) {
+            const uid = firebaseUser?.uid?.trim() || session.userId;
+            rows = [
+              {
+                messageId: '',
+                conversationId: selectedId,
+                chatId: selectedId,
+                senderId: uid,
+                text: WORKSHOP_AUTO_OPEN_MESSAGE,
+                createdAt: new Date().toISOString(),
+              },
+            ];
+          }
+          setMessages(rows);
+
+          if (cancelled) return;
+
+          const now = Date.now();
+          const prevAudit = lastChatViewAuditRef.current;
+          const skipDuplicate =
+            prevAudit && prevAudit.chatId === selectedId && now - prevAudit.at < 2500;
+          if (!skipDuplicate) {
+            lastChatViewAuditRef.current = { chatId: selectedId, at: now };
+            const meta = allRef.current.find((c) => c.conversationId === selectedId);
+            void logSystemActivity(
+              session,
+              AUDIT_ACTION_CHAT_VIEWED,
+              AUDIT_RESOURCE_BMS_CHAT,
+              selectedId,
+              {
+                tenantName: meta?.userName ?? null,
+                workshopDisplayName: null,
+                readReceiptPosted: false,
+              },
+            ).catch(() => {});
+          }
+
+          if (!cancelled) void loadConversations();
+          return;
+        }
+
         const rows = await fetchConversationMessages(selectedId);
         if (cancelled) return;
         setMessages(rows);
@@ -341,19 +421,30 @@ export function ChatTab({
 
   useEffect(() => {
     if (!selectedId) {
+      pendingWorkshopOwnerUidRef.current = null;
       setWorkshopName(null);
+      setActiveWorkshopOwner(null);
       return;
     }
     const conv = allConversations.find((c) => c.conversationId === selectedId);
     void fetchWorkshopName(conv?.ownerUid ?? null).then(setWorkshopName);
-  }, [selectedId, allConversations]);
+    const ouFromConv = conv?.ownerUid?.trim() || '';
+    const ou = ouFromConv || pendingWorkshopOwnerUidRef.current || '';
+    if (ou) {
+      const owner = owners.find((o) => o.ownerUid === ou) ?? null;
+      setActiveWorkshopOwner(owner);
+      if (ouFromConv) pendingWorkshopOwnerUidRef.current = null;
+    } else {
+      setActiveWorkshopOwner(null);
+    }
+  }, [selectedId, allConversations, owners]);
 
   useEffect(() => {
     if (!selectedId) return;
     const id = selectedId;
     const interval = setInterval(() => {
       void refreshThreadMessages(id);
-    }, 30_000);
+    }, 5_000);
     return () => clearInterval(interval);
   }, [selectedId, refreshThreadMessages]);
 
@@ -421,6 +512,9 @@ export function ChatTab({
   const handleSelectConversation = useCallback(
     async (conversationId: string) => {
       setSelectedId(conversationId);
+      if (callCenterThreadIdsRef.current.has(conversationId)) {
+        return;
+      }
       const isInQueue = queue.some((c) => c.conversationId === conversationId);
       if (isInQueue) {
         setClaiming(true);
@@ -439,9 +533,15 @@ export function ChatTab({
 
   const handleClose = async () => {
     if (!selectedId || closing) return;
+    const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
     setClosing(true);
     try {
-      await postConversationClose(selectedId);
+      if (isCallCenterThread) {
+        await postCallCenterChatClose(selectedId);
+        callCenterThreadIdsRef.current.delete(selectedId);
+      } else {
+        await postConversationClose(selectedId);
+      }
       setSelectedId(null);
       await loadConversations();
     } catch (err) {
@@ -459,7 +559,10 @@ export function ChatTab({
     setSending(true);
     setThreadError(null);
     try {
-      const created = await postConversationMessage(selectedId, text);
+      const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
+      const created = isCallCenterThread
+        ? await postCallCenterChatMessage(selectedId, text)
+        : await postConversationMessage(selectedId, text);
       setDraft('');
 
       if (created) {
@@ -474,7 +577,9 @@ export function ChatTab({
           return [...prev, msg];
         });
       } else {
-        const rows = await fetchConversationMessages(selectedId);
+        const rows = isCallCenterThread
+          ? await fetchCallCenterChatMessages(selectedId)
+          : await fetchConversationMessages(selectedId);
         setMessages(rows);
       }
 
@@ -493,6 +598,76 @@ export function ChatTab({
       setSending(false);
     }
   };
+
+  const openStartChat = useCallback(async () => {
+    setStartChatOpen(true);
+    setOwnersError(null);
+    if (ownersLoading || owners.length > 0) return;
+
+    setOwnersLoading(true);
+    try {
+      const rows = await fetchCallCenterWorkshopOwners();
+      setOwners(rows);
+    } catch (e) {
+      setOwnersError(e instanceof Error ? e.message : 'Failed to load workshop owners.');
+    } finally {
+      setOwnersLoading(false);
+    }
+  }, [ownersLoading, owners.length]);
+
+  const closeStartChat = useCallback(() => {
+    setStartChatOpen(false);
+    setOwnersError(null);
+    setSelectedOwnerUid('');
+    setOwnerFilter('');
+  }, []);
+
+  const filteredOwners = useMemo(() => {
+    const q = ownerFilter.trim().toLowerCase();
+    if (!q) return owners;
+    return owners.filter((o) =>
+      [o.name, o.slug, o.contactPhone, o.email, o.state]
+        .filter(Boolean)
+        .some((v) => v.toLowerCase().includes(q)),
+    );
+  }, [owners, ownerFilter]);
+
+  const handleStartChat = useCallback(
+    async (ownerUidOverride?: string) => {
+      const ownerUid = (ownerUidOverride ?? selectedOwnerUid).trim();
+      if (!ownerUid || startingChat) return;
+
+      setStartingChat(true);
+      setOwnersError(null);
+      pendingWorkshopOwnerUidRef.current = ownerUid;
+      try {
+        const owner = owners.find((o) => o.ownerUid === ownerUid) ?? null;
+        const started = await startCallCenterChatWithOwner(ownerUid, WORKSHOP_AUTO_OPEN_MESSAGE);
+        setActiveWorkshopOwner(owner);
+        closeStartChat();
+        await loadConversations();
+        if (started.chatId) {
+          callCenterThreadIdsRef.current.add(started.chatId);
+          await handleSelectConversation(started.chatId);
+        } else {
+          pendingWorkshopOwnerUidRef.current = null;
+        }
+      } catch (e) {
+        pendingWorkshopOwnerUidRef.current = null;
+        setOwnersError(e instanceof Error ? e.message : 'Failed to open chat.');
+      } finally {
+        setStartingChat(false);
+      }
+    },
+    [
+      selectedOwnerUid,
+      startingChat,
+      closeStartChat,
+      loadConversations,
+      handleSelectConversation,
+      owners,
+    ],
+  );
 
   if (!permissions.canViewChatTab && session.role !== 'super-admin') {
     return (
@@ -560,6 +735,14 @@ export function ChatTab({
               <div className="flex shrink-0 items-center gap-1.5">
                 <Button
                   type="button"
+                  variant="outline"
+                  className="h-8 border-sky-200 bg-sky-50 px-2.5 text-xs text-sky-700 hover:bg-sky-100"
+                  onClick={() => void openStartChat()}
+                >
+                  Chat with owner
+                </Button>
+                <Button
+                  type="button"
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8 text-muted-foreground hover:text-slate-900"
@@ -592,6 +775,94 @@ export function ChatTab({
             </CardTitle>
           </CardHeader>
           <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
+            {startChatOpen && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-700">Open workshop chat</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-slate-500 hover:text-slate-900"
+                    onClick={closeStartChat}
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {ownersError && (
+                  <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs text-rose-700">
+                    {ownersError}
+                  </div>
+                )}
+
+                <div className="grid gap-2">
+                  <div className="flex gap-2">
+                    <Input
+                      value={ownerFilter}
+                      onChange={(ev) => setOwnerFilter(ev.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          workshopSelectTriggerRef.current?.click();
+                        }
+                      }}
+                      placeholder="Filter workshops…"
+                      className="h-9 min-w-0 flex-1 bg-white text-sm"
+                      disabled={ownersLoading || startingChat}
+                      autoComplete="off"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 bg-white"
+                      disabled={ownersLoading || startingChat}
+                      aria-label="Search workshops"
+                      onClick={() => workshopSelectTriggerRef.current?.click()}
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <Select
+                    value={selectedOwnerUid}
+                    onValueChange={(uid) => {
+                      setSelectedOwnerUid(uid);
+                      void handleStartChat(uid);
+                    }}
+                    disabled={ownersLoading || startingChat}
+                  >
+                    <SelectTrigger
+                      ref={workshopSelectTriggerRef}
+                      className="h-9 bg-white text-sm"
+                    >
+                      <SelectValue placeholder={ownersLoading ? 'Loading…' : 'Select workshop'} />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-60">
+                      {filteredOwners.length === 0 ? (
+                        <div className="px-2 py-4 text-center text-xs text-muted-foreground">
+                          {ownersLoading ? 'Fetching workshops…' : 'No matches found.'}
+                        </div>
+                      ) : (
+                        filteredOwners.map((o) => (
+                          <SelectItem key={o.ownerUid} value={o.ownerUid}>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-medium">{o.name}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {o.state} {o.contactPhone ? `• ${o.contactPhone}` : ''}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />

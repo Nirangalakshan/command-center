@@ -8,6 +8,9 @@ const BASE_URL =
 
 const AGENT_PREFIX = '/agent/conversations';
 
+const CALL_CENTER_BASE_URL =
+  (import.meta.env.VITE_CALL_CENTER_API_URL as string) ?? 'https://black.bmspros.com.au';
+
 // ── Row from GET /agent/conversations (queue | mine) ──────────────────────
 
 export interface Conversation {
@@ -135,6 +138,20 @@ async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Re
   headers.set('Authorization', `Bearer ${token}`);
   const url = `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
 
+  return fetch(url, { ...init, headers });
+}
+
+async function authorizedFetchCallCenter(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = await getFirebaseOnlyBmsBearerToken();
+  const headers = new Headers(init.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  headers.set('Authorization', `Bearer ${token}`);
+  const url = `${CALL_CENTER_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
   return fetch(url, { ...init, headers });
 }
 
@@ -460,6 +477,189 @@ export async function fetchWorkshopNames(ownerUids: string[]): Promise<Record<st
     }
   }
   return map;
+}
+
+// ── Public API (call-center chats) ─────────────────────────────────────────
+
+export type CallCenterWorkshopOwner = {
+  ownerUid: string;
+  name: string;
+  slug: string;
+  logoUrl: string;
+  contactPhone: string;
+  email: string;
+  timezone: string;
+  state: string;
+  accountStatus: string;
+};
+
+function collectWorkshopOwnersArray(json: unknown): unknown[] {
+  if (Array.isArray(json)) return json;
+  if (json && typeof json === 'object') {
+    const o = json as Record<string, unknown>;
+    if (Array.isArray(o.workshopOwners)) return o.workshopOwners;
+    const data = o.data;
+    if (data && typeof data === 'object') {
+      const d = data as Record<string, unknown>;
+      if (Array.isArray(d.workshopOwners)) return d.workshopOwners;
+    }
+  }
+  return [];
+}
+
+function toCallCenterWorkshopOwner(raw: unknown): CallCenterWorkshopOwner {
+  const r = asRecord(raw);
+  return {
+    ownerUid: String(r.ownerUid ?? ''),
+    name: String(r.name ?? ''),
+    slug: String(r.slug ?? ''),
+    logoUrl: String(r.logoUrl ?? ''),
+    contactPhone: String(r.contactPhone ?? ''),
+    email: String(r.email ?? ''),
+    timezone: String(r.timezone ?? ''),
+    state: String(r.state ?? ''),
+    accountStatus: String(r.accountStatus ?? ''),
+  };
+}
+
+export async function fetchCallCenterWorkshopOwners(): Promise<CallCenterWorkshopOwner[]> {
+  const res = await authorizedFetchCallCenter('/api/call-center/chats/workshop-owners');
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `fetchCallCenterWorkshopOwners failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+  const json = (await res.json()) as unknown;
+  return collectWorkshopOwnersArray(json).map(toCallCenterWorkshopOwner);
+}
+
+export type StartCallCenterChatResponse = {
+  chatId: string;
+  conversationId?: string;
+};
+
+function extractChatId(json: unknown): string {
+  const seen = new Set<unknown>();
+
+  const walk = (v: unknown, depth: number): string => {
+    if (!v || depth > 6) return '';
+    if (typeof v === 'string') return v.trim();
+    if (typeof v !== 'object') return '';
+    if (seen.has(v)) return '';
+    seen.add(v);
+
+    const r = v as Record<string, unknown>;
+    for (const k of ['chatId', 'conversationId', 'id'] as const) {
+      const direct = r[k];
+      if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    }
+
+    for (const wrap of ['chat', 'conversation', 'thread', 'data', 'result', 'payload'] as const) {
+      const inner = walk(r[wrap], depth + 1);
+      if (inner) return inner;
+    }
+
+    // fallback: scan a few top-level object values
+    for (const value of Object.values(r)) {
+      const inner = walk(value, depth + 1);
+      if (inner) return inner;
+    }
+    return '';
+  };
+
+  return walk(json, 0);
+}
+
+export async function startCallCenterChatWithOwner(
+  workshopOwnerUid: string,
+  text?: string,
+): Promise<StartCallCenterChatResponse> {
+  const body: Record<string, unknown> = { workshopOwnerUid };
+  if (text != null && text.trim()) body.text = text.trim();
+
+  const res = await authorizedFetchCallCenter('/api/call-center/chats/start-with-owner', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `startCallCenterChatWithOwner failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+
+  const rawText = await res.text();
+  const parsed: unknown = rawText.trim() ? (JSON.parse(rawText) as unknown) : rawText;
+  const chatId = extractChatId(parsed);
+  return { chatId, conversationId: chatId || undefined };
+}
+
+export async function postCallCenterChatMessage(
+  chatId: string,
+  text: string,
+): Promise<ChatMessage | null> {
+  const res = await authorizedFetchCallCenter(
+    `/api/call-center/chats/${encodeURIComponent(chatId)}/messages`,
+    { method: 'POST', body: JSON.stringify({ text }) },
+  );
+
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `postCallCenterChatMessage failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+
+  const rawText = await res.text();
+  const fallback: ChatMessage = {
+    messageId: '',
+    conversationId: chatId,
+    chatId: chatId,
+    senderId: '',
+    text,
+    createdAt: new Date().toISOString(),
+  };
+
+  if (!rawText.trim()) return fallback;
+
+  try {
+    const parsed = JSON.parse(rawText) as Record<string, unknown>;
+    const payload = parsed.message ?? parsed.data ?? parsed;
+    return toMessage(payload, chatId);
+  } catch {
+    return fallback;
+  }
+}
+
+export async function fetchCallCenterChatMessages(chatId: string): Promise<ChatMessage[]> {
+  const res = await authorizedFetchCallCenter(
+    `/api/call-center/chats/${encodeURIComponent(chatId)}/messages`,
+  );
+  if (res.status === 404) return [];
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `fetchCallCenterChatMessages failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+  const json = (await res.json()) as unknown;
+  const rows = collectMessagesArray(json);
+  return rows.map((row) => toMessage(row, chatId));
+}
+
+export async function postCallCenterChatClose(chatId: string): Promise<void> {
+  const res = await authorizedFetchCallCenter(
+    `/api/call-center/chats/${encodeURIComponent(chatId)}/close`,
+    { method: 'POST', body: '{}' },
+  );
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `postCallCenterChatClose failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
 }
 
 // ── Compatibility wrappers (Dashboard sidebar + older hooks) ────────────────
