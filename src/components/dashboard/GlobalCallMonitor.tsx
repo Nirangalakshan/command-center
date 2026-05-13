@@ -14,10 +14,6 @@ import { Button } from '@/components/ui/button';
 export function GlobalCallMonitor() {
   const { incomingCalls, now, agents, queues, tenants, selectedTab } = useDashboard();
   const { selectedCall, setSelectedCall } = useCallNotification();
-  const [audioEnabled, setAudioEnabled] = useState(false);
-  const ringtoneRef = useRef<AudioContext | null>(null);
-  const oscillatorRef = useRef<OscillatorNode | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
 
   // Position state for the draggable card
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -49,93 +45,6 @@ export function GlobalCallMonitor() {
   const handlePointerUp = (e: React.PointerEvent) => {
     setIsDragging(false);
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-  };
-
-  // Audio Unlock Logic
-  useEffect(() => {
-    const unlock = () => setAudioEnabled(true);
-    window.addEventListener('pointerdown', unlock, { once: true });
-    window.addEventListener('keydown', unlock, { once: true });
-    return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
-  }, []);
-
-  // Ringtone Logic
-  useEffect(() => {
-    if (!audioEnabled || incomingCalls.length === 0) {
-      stopRingtone();
-      return;
-    }
-
-    startRingtone();
-
-    return () => stopRingtone();
-  }, [audioEnabled, incomingCalls.length]);
-
-  const startRingtone = () => {
-    if (ringtoneRef.current) return;
-
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioCtx();
-      ringtoneRef.current = ctx;
-
-      const masterGain = ctx.createGain();
-      masterGain.connect(ctx.destination);
-      gainRef.current = masterGain;
-
-      const playPulse = () => {
-        if (!ringtoneRef.current || ringtoneRef.current.state === 'closed') return;
-        
-        const now = ringtoneRef.current.currentTime;
-        
-        const ring = (time: number) => {
-          const osc1 = ringtoneRef.current!.createOscillator();
-          const osc2 = ringtoneRef.current!.createOscillator();
-          const g = ringtoneRef.current!.createGain();
-          
-          osc1.type = 'sine';
-          osc2.type = 'sine';
-          osc1.frequency.setValueAtTime(440, time);
-          osc2.frequency.setValueAtTime(480, time);
-          
-          g.gain.setValueAtTime(0, time);
-          g.gain.linearRampToValueAtTime(0.15, time + 0.05);
-          g.gain.linearRampToValueAtTime(0, time + 0.4);
-          
-          osc1.connect(g);
-          osc2.connect(g);
-          g.connect(masterGain);
-          
-          osc1.start(time);
-          osc1.stop(time + 0.5);
-          osc2.start(time);
-          osc2.stop(time + 0.5);
-        };
-
-        ring(now);
-        ring(now + 0.6);
-      };
-
-      const interval = setInterval(playPulse, 3000);
-      (ringtoneRef.current as any)._intervalId = interval;
-      playPulse();
-
-    } catch (e) {
-      console.error('Failed to start ringtone:', e);
-    }
-  };
-
-  const stopRingtone = () => {
-    if (ringtoneRef.current) {
-      const intervalId = (ringtoneRef.current as any)._intervalId;
-      if (intervalId) clearInterval(intervalId);
-      
-      ringtoneRef.current.close();
-      ringtoneRef.current = null;
-    }
   };
 
   // Show the card if there are incoming calls. 
