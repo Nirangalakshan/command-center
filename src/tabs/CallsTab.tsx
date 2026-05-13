@@ -34,6 +34,7 @@ import {
   addAustralianCalendarDays,
   formatAustralianDayHeading 
 } from '@/utils/australianTime';
+import { CallRecordingPlayer } from '@/components/dashboard/CallRecordingPlayer';
 
 interface CallsTabProps {
   calls: Call[];
@@ -461,6 +462,7 @@ export function CallsTab({
                   <TableHead>Agent</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Recording</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -539,6 +541,13 @@ export function CallsTab({
                       </TableCell>
                       <TableCell>
                         <CallStatusBadge result={c.result} />
+                      </TableCell>
+                      <TableCell>
+                        {c.recordingUrl ? (
+                          <CallRecordingPlayer recordingPath={c.recordingUrl} />
+                        ) : (
+                          <span className="text-muted-foreground text-[10px]">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   );

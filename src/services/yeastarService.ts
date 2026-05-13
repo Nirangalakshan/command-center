@@ -1,17 +1,14 @@
 /**
  * ═══════════════════════════════════════════════════════════
- * Yeastar PBX Service — Frontend REST API Client
- * Yeastar P-Series / S-Series OAuth 2.0 integration
+ * Yeastar PBX Service — Proxy-based API Client
  *
- * Use for:
- *  - Click-to-call (agent dials caller from dashboard)
- *  - Querying live extension status (fallback polling)
- *  - Fetching CDRs on demand
- *
- * Note: Real-time events come via the yeastar-webhook edge
- * function, NOT this service. This is for outbound API calls.
+ * This service calls a Supabase Edge Function proxy ('yeastar-api')
+ * instead of calling the PBX directly. This solves CORS errors
+ * and keeps sensitive credentials on the server.
  * ═══════════════════════════════════════════════════════════
  */
+
+import { supabase } from "@/integrations/supabase/client";
 
 const PBX_BASE_URL = import.meta.env.VITE_YEASTAR_API_URL ?? '';
 const CLIENT_ID = import.meta.env.VITE_YEASTAR_CLIENT_ID ?? '';
@@ -30,65 +27,53 @@ export function isYeastarConfigured(): boolean {
 export async function getYeastarToken(): Promise<string> {
   if (_token && Date.now() < _tokenExpiry) return _token;
 
-  const res = await fetch(`${PBX_BASE_URL}/v1.0/get_token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'CommandCentre/1.0',
-    },
-    body: JSON.stringify({ username: CLIENT_ID, password: CLIENT_SECRET }),
+  const { data, error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/v1.0/get_token',
+      method: 'POST',
+      body: { username: CLIENT_ID, password: CLIENT_SECRET }
+    }
   });
 
-  if (!res.ok) throw new Error(`Yeastar auth HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json.token) throw new Error(`Yeastar auth failed: ${JSON.stringify(json)}`);
+  if (error) throw new Error(`Yeastar auth failed: ${error.message}`);
+  if (!data?.token) throw new Error(`Yeastar auth failed: ${JSON.stringify(data)}`);
 
-  _token = json.token as string;
+  _token = data.token as string;
   _tokenExpiry = Date.now() + 25 * 60 * 1000; // 25 min (token lives 30 min)
   return _token;
 }
 
 // ─── Call Control ──────────────────────────────────────────
 
-/**
- * Click-to-call: PBX calls the agent extension first,
- * then bridges to the callerNumber when answered.
- */
 export async function clickToCall(agentExtension: string, callerNumber: string): Promise<void> {
   if (!isYeastarConfigured()) throw new Error('Yeastar not configured');
   const token = await getYeastarToken();
 
-  const res = await fetch(`${PBX_BASE_URL}/v1.0/call/dial`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'CommandCentre/1.0',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ caller: agentExtension, callee: callerNumber }),
+  const { error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/v1.0/call/dial',
+      method: 'POST',
+      body: { caller: agentExtension, callee: callerNumber },
+      headers: { Authorization: `Bearer ${token}` }
+    }
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Click-to-call failed: ${err}`);
+  if (error) {
+    throw new Error(`Click-to-call failed: ${error.message}`);
   }
 }
 
-/**
- * Hang up an active call by extension
- */
 export async function hangupCall(extension: string): Promise<void> {
   if (!isYeastarConfigured()) return;
   const token = await getYeastarToken();
 
-  await fetch(`${PBX_BASE_URL}/v1.0/call/hangup`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'CommandCentre/1.0',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ extension }),
+  await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/v1.0/call/hangup',
+      method: 'POST',
+      body: { extension },
+      headers: { Authorization: `Bearer ${token}` }
+    }
   });
 }
 
@@ -104,35 +89,33 @@ export async function fetchExtensionList(): Promise<YeastarExtension[]> {
   if (!isYeastarConfigured()) return [];
   const token = await getYeastarToken();
 
-  const res = await fetch(`${PBX_BASE_URL}/v1.0/extensionlist/query`, {
-    headers: {
-      'User-Agent': 'CommandCentre/1.0',
-      Authorization: `Bearer ${token}`,
-    },
+  const { data, error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/v1.0/extensionlist/query',
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` }
+    }
   });
 
-  if (!res.ok) return [];
-  const json = await res.json();
-  return (json.extlist ?? []) as YeastarExtension[];
+  if (error || !data) return [];
+  return (data.extlist ?? []) as YeastarExtension[];
 }
 
 export async function fetchExtensionStatus(extension: string): Promise<string> {
   if (!isYeastarConfigured()) return 'unknown';
   const token = await getYeastarToken();
 
-  const res = await fetch(
-    `${PBX_BASE_URL}/v1.0/extension/query?extension=${encodeURIComponent(extension)}`,
-    {
-      headers: {
-        'User-Agent': 'CommandCentre/1.0',
-        Authorization: `Bearer ${token}`,
-      },
+  const { data, error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/v1.0/extension/query',
+      method: 'GET',
+      params: { extension },
+      headers: { Authorization: `Bearer ${token}` }
     }
-  );
+  });
 
-  if (!res.ok) return 'unknown';
-  const json = await res.json();
-  return String(json.status ?? 'unknown');
+  if (error || !data) return 'unknown';
+  return String(data.status ?? 'unknown');
 }
 
 // ─── CDR Queries ───────────────────────────────────────────
@@ -158,22 +141,21 @@ export async function fetchCdrList(params?: {
   if (!isYeastarConfigured()) return [];
   const token = await getYeastarToken();
 
-  const qs = new URLSearchParams({
-    limit: String(params?.limit ?? 50),
-    ...(params?.dateFrom ? { date_from: params.dateFrom } : {}),
-    ...(params?.dateTo ? { date_to: params.dateTo } : {}),
+  const { data, error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/v1.0/cdr/query',
+      method: 'GET',
+      params: {
+        limit: String(params?.limit ?? 50),
+        ...(params?.dateFrom ? { date_from: params.dateFrom } : {}),
+        ...(params?.dateTo ? { date_to: params.dateTo } : {}),
+      },
+      headers: { Authorization: `Bearer ${token}` }
+    }
   });
 
-  const res = await fetch(`${PBX_BASE_URL}/v1.0/cdr/query?${qs}`, {
-    headers: {
-      'User-Agent': 'CommandCentre/1.0',
-      Authorization: `Bearer ${token}`,
-    },
-  });
-
-  if (!res.ok) return [];
-  const json = await res.json();
-  return (json.cdrlist ?? []) as YeastarCdr[];
+  if (error || !data) return [];
+  return (data.cdrlist ?? []) as YeastarCdr[];
 }
 
 // ─── PBX Info ──────────────────────────────────────────────
@@ -182,12 +164,46 @@ export async function fetchPbxInfo(): Promise<{ firmware?: string; model?: strin
   if (!isYeastarConfigured()) return null;
   try {
     const token = await getYeastarToken();
-    const res = await fetch(`${PBX_BASE_URL}/v1.0/deviceinfo/query`, {
-      headers: { 'User-Agent': 'CommandCentre/1.0', Authorization: `Bearer ${token}` },
+    const { data, error } = await supabase.functions.invoke('yeastar-api', {
+      body: {
+        endpoint: '/v1.0/deviceinfo/query',
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` }
+      }
     });
-    if (!res.ok) return null;
-    return await res.json();
+    if (error) return null;
+    return data;
   } catch {
     return null;
   }
+}
+
+// ─── Recording Access ──────────────────────────────────────
+
+/**
+ * Returns a full authenticated URL to download or play a call recording.
+ * Format: {PBX_URL}/v1.0/recording/download?recording={path}&token={token}
+ */
+export async function getRecordingDownloadUrl(recordingPath: string): Promise<string> {
+  if (!isYeastarConfigured()) throw new Error('Yeastar not configured');
+  const token = await getYeastarToken();
+  
+  // Handle both full URLs (from webhook) and raw paths
+  let path = recordingPath;
+  if (path.includes('recording=')) {
+    const url = new URL(path);
+    path = url.searchParams.get('recording') || path;
+  } else if (path.includes('/')) {
+    // If it's a full URL but not a standard Yeastar one, extract the path if possible
+    try {
+      const url = new URL(path);
+      path = url.searchParams.get('recording') || url.pathname.split('/').pop() || path;
+    } catch {
+      // Not a valid URL, treat as raw path
+    }
+  }
+
+  // Note: For the actual audio element src, we still need the PBX URL,
+  // but we append the token obtained via the proxy.
+  return `${PBX_BASE_URL}/v1.0/recording/download?recording=${encodeURIComponent(path)}&token=${token}`;
 }

@@ -253,7 +253,7 @@ export async function appendLinkusCallToSupabase(entry: Call): Promise<void> {
     end_time: entry.endTime ?? null,
     duration_seconds: entry.duration_seconds ?? 0,
     result: entry.result,
-    recording_url: entry.recording_url ?? null,
+    recording_url: entry.recordingUrl ?? null,
     transcript_status: entry.transcriptStatus,
     summary_status: entry.summaryStatus,
   };
@@ -299,6 +299,7 @@ function mergeLinkusIntoServer(s: Call, l: Call): Call {
     agentName: linkusAgentKnown ? l.agentName : (s.agentName && s.agentName !== '—' ? s.agentName : l.agentName),
     dialedNumber: s.dialedNumber ?? l.dialedNumber,
     callerName: s.callerName ?? l.callerName,
+    recordingUrl: s.recordingUrl ?? l.recordingUrl,
   };
 }
 

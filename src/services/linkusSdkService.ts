@@ -2,20 +2,13 @@
  * ═══════════════════════════════════════════════════════════
  * Linkus SDK Service — Yeastar ys-webrtc-sdk-core integration
  *
- * Sign generation runs entirely in the browser (requests come
- * from the agent's IP, not a Supabase server).
- *
- * The generated sign is cached in localStorage so that future
- * loads work from any IP without calling the Yeastar API again
- * (the sign has expire_time=0 — it never expires).
- *
- * If the Yeastar PBX returns 70087 IP FORBIDDEN, the agent must
- * connect once from a Yeastar-whitelisted IP to generate and
- * cache the sign.  After that, any IP works.
- *
- * LINKUS_PBX_URL → base PBX URL used to initialise the SDK.
+ * Sign generation and extension list queries are proxied via
+ * the 'yeastar-api' Supabase Edge Function to resolve CORS
+ * issues and improve security.
  * ═══════════════════════════════════════════════════════════
  */
+
+import { supabase } from "@/integrations/supabase/client";
 
 const PBX_BASE = (
   (import.meta.env.VITE_YEASTAR_PBX_URL as string) ?? ''
@@ -74,24 +67,19 @@ let _pbxTokenExpiresAt = 0;
 async function getPbxAccessToken(): Promise<string> {
   if (_pbxToken && Date.now() < _pbxTokenExpiresAt) return _pbxToken;
 
-  const res = await fetch(`${PBX_BASE}/openapi/v1.0/get_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: SDK_ACCESS_ID,
-      password: SDK_ACCESS_KEY,
-    }),
+  const { data, error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/openapi/v1.0/get_token',
+      method: 'POST',
+      body: {
+        username: SDK_ACCESS_ID,
+        password: SDK_ACCESS_KEY,
+      }
+    }
   });
 
-  if (!res.ok) throw new Error(`PBX token endpoint HTTP ${res.status}`);
-
-  const data: {
-    errcode: number;
-    errmsg: string;
-    access_token?: string;
-    access_token_expire_time?: number;
-  } = await res.json();
-
+  if (error) throw new Error(`PBX token proxy error: ${error.message}`);
+  
   if (data.errcode !== 0 || !data.access_token) {
     throw new Error(`PBX token error ${data.errcode}: ${data.errmsg}`);
   }
@@ -130,7 +118,6 @@ function getExtListCredentialCandidates(): ExtListCredential[] {
     });
   }
 
-  // Keep order, but avoid retrying the exact same pair twice.
   const seen = new Set<string>();
   return raw.filter((c) => {
     const k = `${c.id}::${c.key}`;
@@ -145,20 +132,15 @@ async function getPbxAccessTokenWithCreds(c: ExtListCredential): Promise<string>
   const hit = _extListTokenCache.get(cacheKey);
   if (hit && Date.now() < hit.expiresAt) return hit.token;
 
-  const res = await fetch(`${PBX_BASE}/openapi/v1.0/get_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: c.id, password: c.key }),
+  const { data, error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/openapi/v1.0/get_token',
+      method: 'POST',
+      body: { username: c.id, password: c.key }
+    }
   });
 
-  if (!res.ok) throw new Error(`PBX token (${c.label}) HTTP ${res.status}`);
-
-  const data: {
-    errcode: number;
-    errmsg: string;
-    access_token?: string;
-    access_token_expire_time?: number;
-  } = await res.json();
+  if (error) throw new Error(`PBX token (${c.label}) proxy error: ${error.message}`);
 
   if (data.errcode !== 0 || !data.access_token) {
     throw new Error(`PBX token (${c.label}) error ${data.errcode}: ${data.errmsg}`);
@@ -174,21 +156,10 @@ async function getPbxAccessTokenWithCreds(c: ExtListCredential): Promise<string>
 
 // ─── Public API ────────────────────────────────────────────
 
-/**
- * Returns a Linkus SDK sign for the given agent email.
- *
- * Flow:
- *   1. Return cached sign from localStorage (survives any IP).
- *   2. Otherwise call Yeastar API to generate a new sign and cache it.
- *   3. On IP FORBIDDEN (error 70087): throw IP_FORBIDDEN error with
- *      clear instructions so the UI can display actionable guidance.
- */
 export async function fetchSdkSign(email: string): Promise<string> {
-  // 1 — localStorage hit (works from any IP)
   const cached = getCachedSdkSign(email);
   if (cached) return cached;
 
-  // 2 — Generate fresh from Yeastar (needs whitelisted IP)
   if (!PBX_BASE || !SDK_ACCESS_ID || !SDK_ACCESS_KEY) {
     throw new Error(
       'Linkus SDK env vars missing. Check VITE_YEASTAR_PBX_URL, ' +
@@ -205,22 +176,17 @@ export async function fetchSdkSign(email: string): Promise<string> {
     throw err;
   }
 
-  const res = await fetch(
-    `${PBX_BASE}/openapi/v1.0/sign/create?access_token=${encodeURIComponent(accessToken)}`,
-    {
+  const { data, error } = await supabase.functions.invoke('yeastar-api', {
+    body: {
+      endpoint: '/openapi/v1.0/sign/create',
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: email, sign_type: 'sdk', expire_time: 0 }),
+      params: { access_token: accessToken },
+      body: { username: email, sign_type: 'sdk', expire_time: 0 },
+      headers: { Authorization: `Bearer ${accessToken}` }
     }
-  );
+  });
 
-  if (!res.ok) throw new Error(`PBX sign endpoint HTTP ${res.status}`);
-
-  const data: {
-    errcode: number;
-    errmsg: string;
-    data?: { sign?: string };
-  } = await res.json();
+  if (error) throw new Error(`PBX sign proxy error: ${error.message}`);
 
   if (data.errcode !== 0 || !data.data?.sign) {
     const msg = `PBX sign error ${data.errcode}: ${data.errmsg}`;
@@ -229,10 +195,7 @@ export async function fetchSdkSign(email: string): Promise<string> {
   }
 
   const sign = data.data.sign;
-
-  // Cache so future loads work from any IP
   cacheSdkSign(email, sign);
-
   return sign;
 }
 
@@ -250,11 +213,6 @@ export class IpForbiddenError extends Error {
   }
 }
 
-/**
- * Raised when the PBX returns 10005 ACCESS_DENIED. Means the API app's
- * permission list doesn't include the resource we're trying to query — the
- * fix is to edit the app on the PBX and grant the missing scope.
- */
 export class ApiAccessDeniedError extends Error {
   readonly isApiAccessDenied = true;
   constructor(public resource: string) {
@@ -267,26 +225,6 @@ export class ApiAccessDeniedError extends Error {
 }
 
 // ─── Extension directory ───────────────────────────────────
-//
-// API reference:
-//   https://help.yeastar.com/en/p-series-cloud-edition/developer-guide/query-extension-list.html
-//
-// IMPORTANT:
-//   * Method is GET (POST returns 10001 INTERFACE NOT EXISTED)
-//   * Parameters are in the query string, not a JSON body
-//   * `sort_by` must be one of: id | number | caller_id_name | email_addr |
-//     mobile_number | presence_status
-//
-// Presence values (Yeastar lower_snake): available | away | business_trip |
-// do_not_disturb | lunch | off_work
-//
-// online_status shape:
-//   {
-//     sip_phone:       { status: 0|1, ext_dev_type?: string, status_list?: [...] },
-//     linkus_desktop:  { status: 0|1, ext_dev_type?: string },
-//     linkus_mobile:   { status: 0|1, ext_dev_type?: string, status_list?: [...] },
-//     linkus_web:      { status: 0|1, ext_dev_type?: string }
-//   }
 
 export type PbxPresence =
   | 'available'
@@ -298,18 +236,13 @@ export type PbxPresence =
 
 export interface PbxExtension {
   id: number;
-  /** Dialable extension number, e.g. "1000". */
   number: string;
-  /** Display name (caller ID). Falls back to the number if empty. */
   name: string;
   email?: string;
   mobileNumber?: string;
   roleName?: string;
-  /** Presence, lowercased per Yeastar spec. Unknown values pass through as-is. */
   presence?: PbxPresence | string;
-  /** Free-text custom presence set by the user. */
   customPresence?: string;
-  /** True if extension is online on ANY endpoint (SIP / Linkus desktop / web / mobile). */
   online: boolean;
 }
 
@@ -357,21 +290,9 @@ function normaliseExtension(e: RawExtension): PbxExtension {
   };
 }
 
-// 5-minute in-memory cache so re-opens of the widget don't hammer the PBX.
 let _extCache: { at: number; data: PbxExtension[] } | null = null;
 const EXT_CACHE_TTL_MS = 5 * 60 * 1000;
 
-/**
- * Fetch the extension directory from Yeastar OpenAPI.
- *
- * Requires a PBX access token (we already cache it for the sign flow, so this
- * piggy-backs on `getPbxAccessToken()`). Results are cached for 5 minutes.
- *
- * Pass `{ force: true }` to bypass the cache (e.g. after a manual refresh).
- *
- * Auth: uses `VITE_YEASTAR_OPENAPI_ACCESS_ID` / `KEY` when both are set (PBX app
- * with Extension → Query Extension List); otherwise the Linkus SDK credentials.
- */
 export async function fetchExtensions(
   opts: { force?: boolean } = {}
 ): Promise<PbxExtension[]> {
@@ -394,32 +315,27 @@ export async function fetchExtensions(
     try {
       const accessToken = await getPbxAccessTokenWithCreds(cred);
 
-      // Yeastar P-Series paginates; 500 is well above most deployments.
-      const params = new URLSearchParams({
-        access_token: accessToken,
-        page: '1',
-        page_size: '500',
-        sort_by: 'number',
-        order_by: 'asc',
+      const { data, error } = await supabase.functions.invoke('yeastar-api', {
+        body: {
+          endpoint: '/openapi/v1.0/extension/list',
+          method: 'GET',
+          params: {
+            access_token: accessToken,
+            page: '1',
+            page_size: '500',
+            sort_by: 'number',
+            order_by: 'asc',
+          },
+          headers: { Authorization: `Bearer ${accessToken}` }
+        }
       });
 
-      const res = await fetch(
-        `${PBX_BASE}/openapi/v1.0/extension/list?${params.toString()}`,
-        { method: 'GET' }
-      );
-      if (!res.ok) throw new Error(`PBX extension/list (${cred.label}) HTTP ${res.status}`);
+      if (error) throw new Error(`PBX extension/list proxy error: ${error.message}`);
 
-      const json: {
-        errcode: number;
-        errmsg: string;
-        total_number?: number;
-        data?: RawExtension[];
-      } = await res.json();
-
-      if (json.errcode !== 0) {
-        const msg = `PBX extension/list (${cred.label}) error ${json.errcode}: ${json.errmsg}`;
+      if (data.errcode !== 0) {
+        const msg = `PBX extension/list (${cred.label}) error ${data.errcode}: ${data.errmsg}`;
         if (isIpForbidden(msg)) throw new IpForbiddenError();
-        if (json.errcode === 10005) {
+        if (data.errcode === 10005) {
           sawAccessDenied = true;
           lastErr = new Error(msg);
           continue;
@@ -427,10 +343,10 @@ export async function fetchExtensions(
         throw new Error(msg);
       }
 
-      const raw = Array.isArray(json.data) ? json.data : [];
+      const raw = Array.isArray(data.data) ? data.data : [];
       const extensions = raw
         .map(normaliseExtension)
-        .filter((e) => e.number); // ignore any entries without a dialable number
+        .filter((e) => e.number);
 
       _extCache = { at: Date.now(), data: extensions };
       return extensions;
