@@ -9,15 +9,11 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
-<<<<<<< HEAD
 import {
   IpForbiddenError,
   isYeastarEdgeIpBlocked,
   markYeastarEdgeIpBlocked,
 } from "@/services/linkusSdkService";
-=======
-import { IpForbiddenError } from "@/services/linkusSdkService";
->>>>>>> 8811a70753fbc3d7d7d1e5ab6534b76634f8a28e
 
 /** Yeastar REST surface (incl. cloud RAS) is `/openapi/v1.0/*`, not bare `/v1.0/*`. */
 const OPENAPI = "/openapi/v1.0";
@@ -200,7 +196,6 @@ async function tryFetchAccessTokenFromBrowser(
   }
 }
 
-<<<<<<< HEAD
 /**
  * Used only by recording helpers — tries Edge proxy first, then browser (your office IP).
  *
@@ -209,9 +204,6 @@ async function tryFetchAccessTokenFromBrowser(
  * 70087 hits on the PBX — those hits otherwise rate-limit Supabase egress and break
  * other Edge calls (extension/list, click-to-call) for several minutes.
  */
-=======
-/** Used only by recording helpers — tries Edge proxy first, then browser (your office IP). */
->>>>>>> 8811a70753fbc3d7d7d1e5ab6534b76634f8a28e
 async function getYeastarTokenForRecordings(): Promise<string> {
   if (_recordingAuth && Date.now() < _recordingAuth.expiresAt) {
     return _recordingAuth.token;
@@ -222,7 +214,6 @@ async function getYeastarTokenForRecordings(): Promise<string> {
     throw new Error('Yeastar not configured — no client id/secret in .env');
   }
 
-<<<<<<< HEAD
   const failures: string[] = [];
   let sawIpForbidden = false;
 
@@ -282,63 +273,6 @@ async function getYeastarTokenForRecordings(): Promise<string> {
     );
   }
   throw new Error(`Yeastar recording auth failed — ${failures.join('; ')}`);
-=======
-  const edgeFailures: string[] = [];
-
-  for (const c of candidates) {
-    let result: Awaited<ReturnType<typeof tryFetchAccessToken>>;
-    try {
-      result = await tryFetchAccessToken(c);
-    } catch (e) {
-      edgeFailures.push(
-        `${c.label}: ${e instanceof Error ? e.message : String(e)}`
-      );
-      continue;
-    }
-    if ('ipForbidden' in result) {
-      edgeFailures.push(`${c.label}: IP forbidden (70087)`);
-      continue;
-    }
-    _recordingAuth = {
-      token: result.token,
-      expiresAt: Date.now() + Math.max(60, result.ttlSec - 60) * 1000,
-      browserTransport: false,
-    };
-    return result.token;
-  }
-
-  const browserFailures: string[] = [];
-  for (const c of candidates) {
-    let result: Awaited<ReturnType<typeof tryFetchAccessTokenFromBrowser>>;
-    try {
-      result = await tryFetchAccessTokenFromBrowser(c);
-    } catch (e) {
-      browserFailures.push(
-        `${c.label}: ${e instanceof Error ? e.message : String(e)}`
-      );
-      continue;
-    }
-    if (result === null) {
-      browserFailures.push(`${c.label}: blocked or no JSON (often CORS)`);
-      continue;
-    }
-    if ('ipForbidden' in result) {
-      browserFailures.push(`${c.label}: IP forbidden (70087)`);
-      continue;
-    }
-    _recordingAuth = {
-      token: result.token,
-      expiresAt: Date.now() + Math.max(60, result.ttlSec - 60) * 1000,
-      browserTransport: true,
-    };
-    return result.token;
-  }
-
-  throw new IpForbiddenError(
-    `${YEASTAR_API_IP_RESTRICTION_HINT} Edge: ${edgeFailures.join('; ') || 'no attempts'}. ` +
-      `Browser get_token: ${browserFailures.join('; ') || 'no attempts'}.`
-  );
->>>>>>> 8811a70753fbc3d7d7d1e5ab6534b76634f8a28e
 }
 
 export async function getYeastarToken(): Promise<string> {
@@ -350,7 +284,6 @@ export async function getYeastarToken(): Promise<string> {
   }
 
   const ipForbiddenLabels: string[] = [];
-<<<<<<< HEAD
   const skippedLabels: string[] = [];
   for (const c of candidates) {
     if (isYeastarEdgeIpBlocked(c.id)) {
@@ -363,29 +296,17 @@ export async function getYeastarToken(): Promise<string> {
       ipForbiddenLabels.push(result.label);
       continue;
     }
-=======
-  for (const c of candidates) {
-    const result = await tryFetchAccessToken(c);
-    if ('ipForbidden' in result) {
-      ipForbiddenLabels.push(result.label);
-      continue;
-    }
->>>>>>> 8811a70753fbc3d7d7d1e5ab6534b76634f8a28e
     _token = result.token;
     _tokenExpiry = Date.now() + Math.max(60, result.ttlSec - 60) * 1000;
     return _token;
   }
 
   throw new IpForbiddenError(
-<<<<<<< HEAD
     `${YEASTAR_API_IP_RESTRICTION_HINT} (tried: ${ipForbiddenLabels.join(', ') || 'none'}` +
       (skippedLabels.length
         ? `; skipped recently-blocked: ${skippedLabels.join(', ')}`
         : '') +
       `)`,
-=======
-    `${YEASTAR_API_IP_RESTRICTION_HINT} (tried: ${ipForbiddenLabels.join(', ')})`
->>>>>>> 8811a70753fbc3d7d7d1e5ab6534b76634f8a28e
   );
 }
 
