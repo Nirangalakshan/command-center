@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchTenants,
@@ -12,6 +12,7 @@ import {
   subscribeToCalls,
   subscribeToIncomingCalls,
 } from "@/services/dashboardApi";
+import { DASHBOARD_DISMISS_INCOMING_CALLER_EVENT } from "@/services/linkusCallLog";
 import { fetchAgentOnboarding } from "@/services/agentOnboardingApi";
 import { isValidCallerNumber } from "@/utils/formatters";
 import { 
@@ -48,6 +49,10 @@ export interface DashboardData {
   agentGroups: AgentGroup[];
   agentOnboarding: AgentOnboarding[];
   incomingCalls: IncomingCall[];
+  /** Same as `incomingCalls` plus calls that recently left that list, kept ~40s for queue cards only. */
+  incomingCallsWithQueueLinger: IncomingCall[];
+  /** Call id → epoch ms when the call dropped out of `incomingCalls` (queue card “ended” badge). */
+  queueIncomingLingerEndedAt: ReadonlyMap<string, number>;
   loading: boolean;
   error: string | null;
   now: number;
@@ -63,6 +68,10 @@ const POLL_INTERVAL = 8000;
 const POLL_INTERVAL_AGENT_MS = 15000;
 const INCOMING_CALLS_STORAGE_KEY = "cc_incoming_calls_v1";
 const DASHBOARD_REFRESH_REQUEST_EVENT = "cc-dashboard-refresh-request";
+/** Keep ended / cleared incoming rows visible on overview queue cards only (not the floating monitor). */
+const QUEUE_CARD_INCOMING_LINGER_MS = 40_000;
+/** Ignore duplicate dismiss events for the same Linkus leg (reject + deleteSession). */
+const LINKUS_DISMISS_DEDUP_MS = 3500;
 
 interface UseDashboardDataProps {
   session: UserSession | null;
@@ -77,6 +86,7 @@ export function useDashboardData({
   const [callDate, setCallDate] = useState<string>(() => getAustralianDateKey(Date.now()));
   const [now, setNow] = useState(Date.now());
   const [pendingInternalChatAgentId, setPendingInternalChatAgentId] = useState<string | null>(null);
+  const linkusDismissDedupeRef = useRef<Map<string, number>>(new Map());
 
   // Set tenant from session
   useEffect(() => {
@@ -167,6 +177,86 @@ export function useDashboardData({
     return [];
   });
 
+  const [endedIncomingLinger, setEndedIncomingLinger] = useState<
+    Map<string, { call: IncomingCall; endedAt: number }>
+  >(() => new Map());
+  const queueLingerInitRef = useRef(false);
+  const prevIncomingByIdRef = useRef<Map<string, IncomingCall>>(new Map());
+
+  const incomingCallsWithQueueLinger = useMemo(() => {
+    const activeIds = new Set(incomingCalls.map((c) => c.id));
+    const extra: IncomingCall[] = [];
+    for (const [id, v] of endedIncomingLinger) {
+      if (activeIds.has(id)) continue;
+      if (now - v.endedAt >= QUEUE_CARD_INCOMING_LINGER_MS) continue;
+      extra.push(v.call);
+    }
+    return [...incomingCalls, ...extra];
+  }, [incomingCalls, endedIncomingLinger, now]);
+
+  const queueIncomingLingerEndedAt = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [id, v] of endedIncomingLinger) {
+      if (now - v.endedAt < QUEUE_CARD_INCOMING_LINGER_MS) m.set(id, v.endedAt);
+    }
+    return m;
+  }, [endedIncomingLinger, now]);
+
+  useEffect(() => {
+    queueLingerInitRef.current = false;
+    prevIncomingByIdRef.current = new Map();
+    setEndedIncomingLinger(new Map());
+  }, [session?.userId, effectiveTenant]);
+
+  useEffect(() => {
+    const activeIds = new Set(incomingCalls.map((c) => c.id));
+    const idToCall = new Map(incomingCalls.map((c) => [c.id, c] as const));
+
+    if (!queueLingerInitRef.current) {
+      queueLingerInitRef.current = true;
+      prevIncomingByIdRef.current = idToCall;
+      setEndedIncomingLinger((lingerPrev) => {
+        const next = new Map(lingerPrev);
+        for (const id of [...next.keys()]) {
+          if (activeIds.has(id)) next.delete(id);
+        }
+        return next;
+      });
+      return;
+    }
+
+    const prev = prevIncomingByIdRef.current;
+
+    setEndedIncomingLinger((lingerPrev) => {
+      const next = new Map(lingerPrev);
+      for (const id of [...next.keys()]) {
+        if (activeIds.has(id)) next.delete(id);
+      }
+      for (const [id, call] of prev) {
+        if (!activeIds.has(id)) {
+          next.set(id, { call, endedAt: Date.now() });
+        }
+      }
+      return next;
+    });
+
+    prevIncomingByIdRef.current = idToCall;
+  }, [incomingCalls]);
+
+  useEffect(() => {
+    setEndedIncomingLinger((prev) => {
+      let dirty = false;
+      const next = new Map(prev);
+      for (const [id, v] of prev) {
+        if (now - v.endedAt >= QUEUE_CARD_INCOMING_LINGER_MS) {
+          next.delete(id);
+          dirty = true;
+        }
+      }
+      return dirty ? next : prev;
+    });
+  }, [now]);
+
   useEffect(() => {
     try {
       if (incomingCalls.length > 0) {
@@ -224,6 +314,107 @@ export function useDashboardData({
       return fresh.length === prev.length ? prev : fresh;
     });
   }, [now]);
+
+  // Optimistic clear when this workstation rejects inbound on Linkus (CallHangup
+  // from the server often waits on NewCdr).
+  useEffect(() => {
+    if (!session) return;
+
+    const normalizeDigits = (p: string) => p.replace(/\D/g, "");
+    const phonesMatch = (a: string, b: string): boolean => {
+      const ca = normalizeDigits(a);
+      const cb = normalizeDigits(b);
+      if (!ca || !cb) return false;
+      if (ca === cb) return true;
+      return ca.endsWith(cb) || cb.endsWith(ca);
+    };
+
+    const onDismissCaller: EventListener = (ev) => {
+      const ce = ev as CustomEvent<{
+        callerNumber?: string;
+        tenantId?: string;
+        linkusCallId?: string;
+      }>;
+      const raw = ce.detail?.callerNumber?.trim();
+      const linkusRaw = ce.detail?.linkusCallId?.trim();
+      const baseFromLinkus = linkusRaw
+        ? linkusRaw.split("@")[0]?.trim() || linkusRaw
+        : "";
+      const tid = ce.detail?.tenantId;
+      if (!raw && !baseFromLinkus) return;
+
+      const dispatchedAt = Date.now();
+      for (const [k, exp] of linkusDismissDedupeRef.current) {
+        if (exp <= dispatchedAt) linkusDismissDedupeRef.current.delete(k);
+      }
+      if (baseFromLinkus) {
+        const until = linkusDismissDedupeRef.current.get(baseFromLinkus);
+        if (until !== undefined && until > dispatchedAt) return;
+      }
+
+      setIncomingCalls((prev) => {
+        // Re-check dedup inside the updater. React batches setState updaters and
+        // runs them in order during commit. Multiple dismiss events for the same
+        // Linkus leg (reject + deleteSession + session 'ended') can fire before
+        // any updater commits, so the outer check above sees no dedup for all of
+        // them. The first updater to run sets the dedup, and every following
+        // updater bails here — preventing the heuristics from touching a row
+        // that belongs to a different call.
+        if (baseFromLinkus) {
+          const until = linkusDismissDedupeRef.current.get(baseFromLinkus);
+          if (until !== undefined && until > Date.now()) return prev;
+        }
+
+        const matchesTenant = (c: { tenantId: string }) =>
+          !tid || c.tenantId === tid;
+
+        const idsToRemove = new Set<string>();
+
+        // 1) Strict id match (Yeastar `incoming-<callid>` vs Linkus SIP Call-ID base).
+        if (baseFromLinkus) {
+          for (const c of prev) {
+            if (!matchesTenant(c)) continue;
+            const rowBase = c.id.replace(/^incoming-/, "");
+            if (rowBase === baseFromLinkus) idsToRemove.add(c.id);
+          }
+        }
+
+        // 2) Phone fallback — only when *exactly one* row matches the caller number
+        //    AND the dismissal looks like it refers to a recent ring. We deliberately
+        //    do NOT remove anything if multiple rows share that number, and we no
+        //    longer fall through to "remove the only remaining row" — that was
+        //    evicting live calls when duplicate dismiss events arrived after the
+        //    intended row had already been removed.
+        if (idsToRemove.size === 0 && raw) {
+          const candidates = prev.filter(
+            (c) => matchesTenant(c) && phonesMatch(c.callerNumber, raw),
+          );
+          if (candidates.length === 1) {
+            const c = candidates[0];
+            const ageMs = dispatchedAt - c.waitingSince;
+            if (ageMs >= 0 && ageMs < 30 * 60_000) {
+              idsToRemove.add(c.id);
+            }
+          }
+        }
+
+        if (idsToRemove.size === 0) return prev;
+
+        const next = prev.filter((c) => !idsToRemove.has(c.id));
+        if (next.length < prev.length && baseFromLinkus) {
+          linkusDismissDedupeRef.current.set(
+            baseFromLinkus,
+            Date.now() + LINKUS_DISMISS_DEDUP_MS,
+          );
+        }
+        return next.length === prev.length ? prev : next;
+      });
+    };
+
+    window.addEventListener(DASHBOARD_DISMISS_INCOMING_CALLER_EVENT, onDismissCaller);
+    return () =>
+      window.removeEventListener(DASHBOARD_DISMISS_INCOMING_CALLER_EVENT, onDismissCaller);
+  }, [session]);
 
   // --- Subscriptions ---
 
@@ -301,6 +492,8 @@ export function useDashboardData({
     agentGroups,
     agentOnboarding,
     incomingCalls,
+    incomingCallsWithQueueLinger,
+    queueIncomingLingerEndedAt,
     loading: isInitialLoading,
     error,
     now,

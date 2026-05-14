@@ -897,6 +897,19 @@ export async function markInternalMessagesAsRead(conversationId: string, readerI
   }
 }
 
+/** Mark every unread message in a conversation read (e.g. super-admin oversight with no agent row). */
+export async function markInternalConversationAllRead(conversationId: string): Promise<void> {
+  const { error } = await (supabase
+    .from('agent_messages') as any)
+    .update({ is_read: true })
+    .eq('conversation_id', conversationId)
+    .eq('is_read', false);
+
+  if (error) {
+    console.warn('[chatApi] markInternalConversationAllRead failed:', error.message);
+  }
+}
+
 export async function sendInternalMessage(conversationId: string, senderId: string, content: string): Promise<void> {
   const { error } = await (supabase
     .from('agent_messages') as any)

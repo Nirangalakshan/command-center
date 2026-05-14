@@ -97,6 +97,7 @@ interface CallDetailsSheetProps {
 export function buildIncomingCallSnapshot(
   call: IncomingCall,
   now: number,
+  opts?: { showAsEnded?: boolean },
 ): CallDetailSnapshot {
   return {
     id: call.id,
@@ -113,7 +114,9 @@ export function buildIncomingCallSnapshot(
     branchName: call.branchName ?? "",
     mappingWorkshopName: call.mappingWorkshopName ?? "",
     ownerId: call.ownerId ?? "",
-    callStatusText: `Incoming for ${formatDuration(now - call.waitingSince)}`,
+    callStatusText: opts?.showAsEnded
+      ? "This call has ended; details stay available on the queue card briefly."
+      : `Incoming for ${formatDuration(now - call.waitingSince)}`,
   };
 }
 

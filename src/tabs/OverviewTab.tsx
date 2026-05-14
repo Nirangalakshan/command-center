@@ -24,7 +24,6 @@ import { formatTimeAu } from "@/utils/australianTime";
 import {
   buildIncomingCallSnapshot,
   buildLiveCallSnapshot,
-  CallDetailsSheet,
   restoreCallDetailFromSession,
   clearCallDetailSession,
   type CallDetailSnapshot,
@@ -59,6 +58,9 @@ interface OverviewTabProps {
   session?: UserSession | null;
   agentGroups?: AgentGroup[];
   incomingCalls?: IncomingCall[];
+  /** Merged list for queue cards only (includes ~40s post-end linger). Defaults to `incomingCalls`. */
+  incomingCallsForQueueCards?: IncomingCall[];
+  queueIncomingLingerEndedAt?: ReadonlyMap<string, number>;
   callDate?: string;
 }
 
@@ -73,9 +75,13 @@ export function OverviewTab({
   session,
   agentGroups,
   incomingCalls,
+  incomingCallsForQueueCards,
+  queueIncomingLingerEndedAt,
   callDate,
 }: OverviewTabProps) {
   const isAgentOverview = session?.role === "agent";
+  const queueCardIncoming =
+    incomingCallsForQueueCards ?? incomingCalls ?? [];
   const { selectedCall, setSelectedCall } = useCallNotification();
   const restoredFromSession = useRef(false);
 
@@ -112,7 +118,8 @@ export function OverviewTab({
 
     const isStillActive =
       selectedCall.mode === "incoming"
-        ? (incomingCalls || []).some((call) => call.id === selectedCall.id)
+        ? (incomingCalls || []).some((call) => call.id === selectedCall.id) ||
+          Boolean(queueIncomingLingerEndedAt?.has(selectedCall.id))
         : agents.some(
             (agent) =>
               agent.id === selectedCall.id &&
@@ -122,7 +129,13 @@ export function OverviewTab({
     if (!isStillActive) {
       setSelectedCall(null);
     }
-  }, [selectedCall, incomingCalls, agents, setSelectedCall]);
+  }, [
+    selectedCall,
+    incomingCalls,
+    queueIncomingLingerEndedAt,
+    agents,
+    setSelectedCall,
+  ]);
 
   const queueCallDetails = useMemo(() => {
     const map = new Map<
@@ -132,11 +145,13 @@ export function OverviewTab({
         hint: string;
         isIncoming: boolean;
         isLive: boolean;
+        showEndedCallerRecall?: boolean;
         incomingCallers: Array<{
           number: string;
           name: string | null;
           waitingSince?: number | null;
           detail?: CallDetailSnapshot;
+          endedAt?: number | null;
         }>;
       }
     >();
@@ -152,28 +167,50 @@ export function OverviewTab({
         );
       }
 
-      const allIncomingForQueue = (incomingCalls || []).filter(
+      const allIncomingForQueue = queueCardIncoming.filter(
         (call) => call.queueId === queue.id && call.callerNumber,
       );
       const unansweredIncoming = allIncomingForQueue.filter(
         (call) =>
           !answeredNumbersForQueue.has(normalizeNumber(call.callerNumber)),
       );
-      const incomingCallers = unansweredIncoming.map((c) => ({
-        number: c.callerNumber,
-        name: c.callerName || null,
-        waitingSince: c.waitingSince,
-        detail: buildIncomingCallSnapshot(c, now),
-      }));
+      // Split active (still ringing) from "ended but lingering" rows. We want
+      // active rings to drive the queue card; lingered rows alone must NOT hide
+      // a live agent that's currently on another call.
+      const activeUnansweredIncoming = unansweredIncoming.filter(
+        (c) => !queueIncomingLingerEndedAt?.has(c.id),
+      );
+      const lingerUnansweredIncoming = unansweredIncoming.filter(
+        (c) => Boolean(queueIncomingLingerEndedAt?.has(c.id)),
+      );
 
-      if (unansweredIncoming.length > 0) {
+      const buildRow = (c: typeof unansweredIncoming[number]) => {
+        const showAsEnded = Boolean(queueIncomingLingerEndedAt?.has(c.id));
+        return {
+          number: c.callerNumber,
+          name: c.callerName || null,
+          waitingSince: c.waitingSince,
+          detail: buildIncomingCallSnapshot(c, now, { showAsEnded }),
+          endedAt: queueIncomingLingerEndedAt?.get(c.id) ?? null,
+        };
+      };
+
+      // Real incoming present — show as incoming, with any linger rows appended
+      // below so a freshly-ended call still appears for the 40 s linger window.
+      if (activeUnansweredIncoming.length > 0) {
+        const head = activeUnansweredIncoming[0];
+        const incomingCallers = [
+          ...activeUnansweredIncoming.map(buildRow),
+          ...lingerUnansweredIncoming.map(buildRow),
+        ];
         map.set(queue.id, {
-          detail: buildIncomingCallSnapshot(unansweredIncoming[0], now),
+          detail: buildIncomingCallSnapshot(head, now),
           hint:
-            unansweredIncoming.length > 1
+            activeUnansweredIncoming.length > 1
               ? "Click a caller below to see their details."
               : "Click to open the incoming caller details.",
           isIncoming: true,
+          showEndedCallerRecall: false,
           isLive: false,
           incomingCallers,
         });
@@ -198,7 +235,7 @@ export function OverviewTab({
           ringingAgentForQueue,
           queues,
           tenants,
-          incomingCalls || [],
+          queueCardIncoming,
           now,
         );
         map.set(queue.id, {
@@ -206,6 +243,7 @@ export function OverviewTab({
           hint: "Click to open the incoming caller details.",
           isIncoming: true,
           isLive: false,
+          showEndedCallerRecall: false,
           incomingCallers: cPhone
             ? [{ number: cPhone, name: null, waitingSince: null, detail }]
             : [],
@@ -220,12 +258,12 @@ export function OverviewTab({
           liveAgentForQueue,
           queues,
           tenants,
-          incomingCalls || [],
+          queueCardIncoming,
           now,
         );
         const incomingMatch = findIncomingCallForAgent(
           liveAgentForQueue,
-          incomingCalls || [],
+          queueCardIncoming,
         );
         const cPhone =
           liveAgentForQueue.currentCaller ||
@@ -239,6 +277,7 @@ export function OverviewTab({
           hint: "Click to open the live caller details.",
           isIncoming: false,
           isLive: true,
+          showEndedCallerRecall: false,
           incomingCallers: [
             { number: cPhone, name: cName, waitingSince: null, detail },
           ],
@@ -246,7 +285,23 @@ export function OverviewTab({
         continue;
       }
 
-      const anyBroadcastForQueue = (incomingCalls || []).find(
+      // Linger-only fallback: no real incoming and no live/ringing agent — show
+      // the recently-ended caller(s) in the recall treatment so the queue card
+      // keeps the row visible for ~40 s after the call ends.
+      if (lingerUnansweredIncoming.length > 0) {
+        const head = lingerUnansweredIncoming[0];
+        map.set(queue.id, {
+          detail: buildIncomingCallSnapshot(head, now, { showAsEnded: true }),
+          hint: "Recently ended — this row clears automatically.",
+          isIncoming: false,
+          showEndedCallerRecall: true,
+          isLive: false,
+          incomingCallers: lingerUnansweredIncoming.map(buildRow),
+        });
+        continue;
+      }
+
+      const anyBroadcastForQueue = queueCardIncoming.find(
         (call) => call.queueId === queue.id,
       );
       if (anyBroadcastForQueue) {
@@ -257,19 +312,28 @@ export function OverviewTab({
             null,
             queues,
             tenants,
-            incomingCalls || [],
+            queueCardIncoming,
             now,
           ),
           hint: "Click to open the incoming caller details.",
           isIncoming: true,
           isLive: false,
+          showEndedCallerRecall: false,
           incomingCallers: [],
         });
       }
     }
 
     return map;
-  }, [incomingCalls, liveAgents, ringingAgents, now, queues, tenants]);
+  }, [
+    queueCardIncoming,
+    queueIncomingLingerEndedAt,
+    liveAgents,
+    ringingAgents,
+    now,
+    queues,
+    tenants,
+  ]);
 
   const visibleQueues = useMemo(
     () =>
@@ -280,9 +344,13 @@ export function OverviewTab({
             permissions.allowedQueueIds.includes(q.id),
         )
         .sort((a, b) => {
-          const aIncoming = Boolean(queueCallDetails.get(a.id)?.isIncoming);
-          const bIncoming = Boolean(queueCallDetails.get(b.id)?.isIncoming);
-          if (aIncoming !== bIncoming) return bIncoming ? 1 : -1;
+          const aPri =
+            Boolean(queueCallDetails.get(a.id)?.isIncoming) ||
+            Boolean(queueCallDetails.get(a.id)?.showEndedCallerRecall);
+          const bPri =
+            Boolean(queueCallDetails.get(b.id)?.isIncoming) ||
+            Boolean(queueCallDetails.get(b.id)?.showEndedCallerRecall);
+          if (aPri !== bPri) return bPri ? 1 : -1;
 
           const waitDelta = b.avgWaitSeconds - a.avgWaitSeconds;
           if (waitDelta !== 0) return waitDelta;
@@ -310,7 +378,9 @@ export function OverviewTab({
               (c) => c.detail,
             ).length;
             const multipleIncomingPickers =
-              Boolean(queueDetail?.isIncoming) && selectableIncomingCount > 1;
+              (Boolean(queueDetail?.isIncoming) ||
+                Boolean(queueDetail?.showEndedCallerRecall)) &&
+              selectableIncomingCount > 1;
 
             return (
               <QueueSummaryCard
@@ -321,6 +391,7 @@ export function OverviewTab({
                 interactive={Boolean(queueDetail) && !multipleIncomingPickers}
                 isIncoming={queueDetail?.isIncoming}
                 isLive={queueDetail?.isLive}
+                showEndedCallerRecall={queueDetail?.showEndedCallerRecall}
                 incomingCallers={queueDetail?.incomingCallers}
                 now={now}
                 callHint={queueDetail?.hint}

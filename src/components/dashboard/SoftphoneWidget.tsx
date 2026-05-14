@@ -32,7 +32,11 @@ import {
   LINKUS_CALL_STATUS_LABELS,
 } from '@/hooks/useLinkusSDK';
 import type { MicPermission } from '@/hooks/useLinkusSDK';
-import { clearCachedSdkSign, type PbxExtension } from '@/services/linkusSdkService';
+import {
+  clearCachedSdkSign,
+  seedSdkSign,
+  type PbxExtension,
+} from '@/services/linkusSdkService';
 import {
   appendLinkusCallLog,
   appendLinkusCallToSupabase,
@@ -661,6 +665,10 @@ export function SoftphoneWidget({
   const [dialInput, setDialInput] = useState('');
   const [now, setNow] = useState(Date.now());
   const [tab, setTab] = useState<WidgetTab>('dialpad');
+  /** Workaround for super-admin "no cached sign + PBX blocking" — paste a sign generated elsewhere. */
+  const [pasteSignOpen, setPasteSignOpen] = useState(false);
+  const [pasteSignValue, setPasteSignValue] = useState('');
+  const [pasteSignError, setPasteSignError] = useState<string | null>(null);
 
   const callLogContextRef = useRef(callLogContext);
   callLogContextRef.current = callLogContext;
@@ -831,11 +839,15 @@ export function SoftphoneWidget({
                     once — the sign is cached locally and all future logins
                     will work from any IP
                   </li>
+                  <li>
+                    Or paste a sign generated on a working machine (use
+                    <em> Paste sign manually </em> below)
+                  </li>
                 </ol>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="w-full border-orange-300 text-orange-700 hover:bg-orange-100"
+                  className="mb-2 w-full border-orange-300 text-orange-700 hover:bg-orange-100"
                   onClick={() => {
                     if (agentEmail) clearCachedSdkSign(agentEmail);
                     window.location.reload();
@@ -844,6 +856,70 @@ export function SoftphoneWidget({
                   <RefreshCw className="mr-1 h-3 w-3" />
                   Retry
                 </Button>
+
+                {sdk.error && (
+                  <details className="mb-2 text-[11px] text-orange-700">
+                    <summary className="cursor-pointer select-none font-medium">
+                      Technical details
+                    </summary>
+                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-md border border-orange-200 bg-white/60 p-2 font-mono text-[10px] leading-snug text-orange-800">
+                      {sdk.error}
+                    </pre>
+                  </details>
+                )}
+
+                <details
+                  open={pasteSignOpen}
+                  onToggle={(e) => setPasteSignOpen(e.currentTarget.open)}
+                  className="text-[11px] text-orange-700"
+                >
+                  <summary className="cursor-pointer select-none font-medium">
+                    Paste sign manually
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    <p className="text-[10px] leading-snug text-orange-700">
+                      On a machine that <em>can</em> connect (or in the Yeastar
+                      admin portal), generate a Linkus SDK sign for{' '}
+                      <code className="font-mono">{agentEmail}</code> and paste it here.
+                    </p>
+                    <textarea
+                      className="w-full resize-y rounded-md border border-orange-300 bg-white p-1.5 font-mono text-[10px] text-slate-800 focus:border-orange-500 focus:outline-none"
+                      rows={3}
+                      value={pasteSignValue}
+                      onChange={(e) => {
+                        setPasteSignValue(e.target.value);
+                        if (pasteSignError) setPasteSignError(null);
+                      }}
+                      placeholder="Paste sign token…"
+                    />
+                    {pasteSignError && (
+                      <p className="text-[10px] font-medium text-rose-600">
+                        {pasteSignError}
+                      </p>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full border-orange-300 text-orange-700 hover:bg-orange-100"
+                      onClick={() => {
+                        if (!agentEmail) {
+                          setPasteSignError('No agent email — log in first.');
+                          return;
+                        }
+                        const ok = seedSdkSign(agentEmail, pasteSignValue);
+                        if (!ok) {
+                          setPasteSignError(
+                            'That does not look like a valid Linkus sign (too short or empty).',
+                          );
+                          return;
+                        }
+                        window.location.reload();
+                      }}
+                    >
+                      Save sign &amp; reload
+                    </Button>
+                  </div>
+                </details>
               </div>
             )}
 

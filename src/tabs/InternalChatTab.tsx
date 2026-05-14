@@ -102,18 +102,22 @@ export function InternalChatTab({ session, permissions }: InternalChatTabProps) 
 
     const loadMessages = async () => {
       try {
-        const { markInternalMessagesAsRead } = await import('@/services/chatApi');
+        const { markInternalMessagesAsRead, markInternalConversationAllRead } =
+          await import('@/services/chatApi');
         const data = await fetchInternalMessages(selectedConvId);
         setMessages(data);
         
-        // Mark as read
         if (currentAgent) {
           await markInternalMessagesAsRead(selectedConvId, currentAgent.id);
-          // Immediately clear badge in local state
           setConversations(prev => prev.map(c => 
             c.id === selectedConvId ? { ...c, unreadCount: 0 } : c
           ));
-          // Dispatch event to refresh global unread count in DashboardPage
+          window.dispatchEvent(new CustomEvent('internal-chat-read'));
+        } else if (isSuperAdmin) {
+          await markInternalConversationAllRead(selectedConvId);
+          setConversations(prev => prev.map(c =>
+            c.id === selectedConvId ? { ...c, unreadCount: 0 } : c
+          ));
           window.dispatchEvent(new CustomEvent('internal-chat-read'));
         }
       } catch (error) {
@@ -137,7 +141,7 @@ export function InternalChatTab({ session, permissions }: InternalChatTabProps) 
     });
 
     return () => { unsub(); };
-  }, [selectedConvId, loadConversations]);
+  }, [selectedConvId, loadConversations, currentAgent, isSuperAdmin]);
 
   // Handle auto-starting a chat from the dashboard
   const { pendingInternalChatAgentId, setPendingInternalChatAgentId } = useDashboard();

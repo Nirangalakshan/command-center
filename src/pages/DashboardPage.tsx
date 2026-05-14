@@ -231,10 +231,10 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     chatWorkshopOwnerUid,
   ]);
 
-  // Handle Internal Chat unread count
+  // Handle Internal Chat unread count (keep polling + listener while Chat tab is open so
+  // sidebar badge clears after reading; InternalChatTab dispatches `internal-chat-read`.)
   useEffect(() => {
     if (!permissions.canViewInternalChat) return;
-    if (d.selectedTab === 'chat') return; // We'll handle this inside ChatTab if it's open
 
     let cancelled = false;
     const fetchUnread = async () => {
@@ -263,7 +263,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       clearInterval(id);
       window.removeEventListener('internal-chat-read', handleReadEvent);
     };
-  }, [permissions.canViewInternalChat, currentAgentDbId, d.selectedTab, session.role]);
+  }, [permissions.canViewInternalChat, currentAgentDbId, session.role]);
 
   useEffect(() => {
     if (session.role !== 'super-admin') return;
@@ -416,6 +416,8 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   session={session}
                   agentGroups={d.agentGroups}
                   incomingCalls={d.incomingCalls}
+                  incomingCallsForQueueCards={d.incomingCallsWithQueueLinger}
+                  queueIncomingLingerEndedAt={d.queueIncomingLingerEndedAt}
                   callDate={d.callDate}
                 />
               )}

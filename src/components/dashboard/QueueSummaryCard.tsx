@@ -10,6 +10,8 @@ export interface IncomingCallerContext {
   waitingSince?: number | null;
   /** When set, this row opens the details sheet for that specific call */
   detail?: CallDetailSnapshot;
+  /** Epoch ms when the call left the live incoming list (queue card linger only). */
+  endedAt?: number | null;
 }
 
 interface QueueSummaryCardProps {
@@ -21,6 +23,8 @@ interface QueueSummaryCardProps {
   isIncoming?: boolean;
   /** True when an agent in this queue is currently on a connected call. */
   isLive?: boolean;
+  /** Show caller rows for post-end queue linger without incoming/live chrome. */
+  showEndedCallerRecall?: boolean;
   incomingCallers?: IncomingCallerContext[];
   callHint?: string;
   onClick?: () => void;
@@ -35,6 +39,7 @@ export function QueueSummaryCard({
   interactive = false, 
   isIncoming = false, 
   isLive = false,
+  showEndedCallerRecall = false,
   incomingCallers, 
   callHint, 
   onClick,
@@ -68,6 +73,10 @@ export function QueueSummaryCard({
   // Only show the "live" treatment if there isn't also an incoming call
   // (incoming takes visual priority because it demands attention).
   const showLive = isLive && !isIncoming;
+
+  const showCallerRows =
+    Boolean(incomingCallers?.length) &&
+    (isIncoming || showLive || showEndedCallerRecall);
 
   const stats = [
     {
@@ -103,13 +112,15 @@ export function QueueSummaryCard({
     <Card
       className={`group relative overflow-hidden bg-white transition-all duration-300 ${
         interactive ? 'cursor-pointer hover:-translate-y-1 hover:shadow-xl' : 'shadow-sm'
-      } ${isIncoming || showLive ? 'ring-2 ring-offset-2 shadow-lg' : 'border-border/80'}`}
+      } ${isIncoming || showLive || showEndedCallerRecall ? 'ring-2 ring-offset-2 shadow-lg' : 'border-border/80'}`}
       style={
         isIncoming
           ? { borderColor: `${incomingTone}55`, boxShadow: `0 0 0 1px ${incomingTone}33` }
           : showLive
             ? { borderColor: `${liveTone}55`, boxShadow: `0 0 0 1px ${liveTone}33` }
-            : undefined
+            : showEndedCallerRecall
+              ? { borderColor: 'rgba(100,116,139,0.35)', boxShadow: '0 0 0 1px rgba(100,116,139,0.2)' }
+              : undefined
       }
       onClick={interactive ? onClick : undefined}
     >
@@ -130,6 +141,12 @@ export function QueueSummaryCard({
             className="pointer-events-none absolute inset-y-0 left-0 w-1.5"
             style={{ backgroundColor: liveTone }}
           />
+        </>
+      )}
+      {showEndedCallerRecall && !isIncoming && !showLive && (
+        <>
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-50/90 to-slate-100/50" />
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-slate-400/70" />
         </>
       )}
 
@@ -168,6 +185,12 @@ export function QueueSummaryCard({
                   On Call
                 </div>
               )}
+              {showEndedCallerRecall && !isIncoming && !showLive && (
+                <div className="mt-1.5 inline-flex items-center gap-2 rounded-full bg-slate-200/50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-600 ring-1 ring-slate-300/50">
+                  <PhoneIncoming className="h-3 w-3 opacity-70" />
+                  Recent
+                </div>
+              )}
             </div>
           </div>
           
@@ -189,32 +212,57 @@ export function QueueSummaryCard({
         </div>
 
         {/* Callers List (Incoming or Answered/Live) */}
-        {(isIncoming || showLive) && incomingCallers && incomingCallers.length > 0 && (
+        {showCallerRows && (
           <div className="flex flex-col gap-2">
             {incomingCallers.map((caller, i) => {
               const openDetail = caller.detail && onIncomingCallerClick;
               
               const isLiveCard = showLive;
+              const isEndedLinger = !isLiveCard && caller.endedAt != null;
               
-              const cardBg = isLiveCard 
-                ? 'bg-gradient-to-r from-emerald-50 to-emerald-100/50 ring-emerald-200/50' 
-                : 'bg-gradient-to-r from-amber-50 to-amber-100/50 ring-amber-200/50';
+              const cardBg = isLiveCard
+                ? 'bg-gradient-to-r from-emerald-50 to-emerald-100/50 ring-emerald-200/50'
+                : isEndedLinger
+                  ? 'bg-gradient-to-r from-slate-50 to-slate-100/50 ring-slate-200/50'
+                  : 'bg-gradient-to-r from-amber-50 to-amber-100/50 ring-amber-200/50';
               const hoverStyle = isLiveCard
                 ? 'hover:bg-emerald-100/90 hover:ring-emerald-300/80 focus-visible:outline-emerald-500'
-                : 'hover:bg-amber-100/90 hover:ring-amber-300/80 focus-visible:outline-amber-500';
-              const nonHoverStyle = isLiveCard ? 'hover:bg-emerald-100/70' : 'hover:bg-amber-100/70';
+                : isEndedLinger
+                  ? 'hover:bg-slate-100/90 hover:ring-slate-300/80 focus-visible:outline-slate-500'
+                  : 'hover:bg-amber-100/90 hover:ring-amber-300/80 focus-visible:outline-amber-500';
+              const nonHoverStyle = isLiveCard
+                ? 'hover:bg-emerald-100/70'
+                : isEndedLinger
+                  ? 'hover:bg-slate-100/70'
+                  : 'hover:bg-amber-100/70';
               
               const iconContainerStyle = isLiveCard
                 ? 'bg-emerald-100 text-emerald-600 ring-emerald-200'
-                : 'bg-amber-100 text-amber-600 ring-amber-200';
+                : isEndedLinger
+                  ? 'bg-slate-100 text-slate-600 ring-slate-200'
+                  : 'bg-amber-100 text-amber-600 ring-amber-200';
                 
-              const textColor = isLiveCard ? 'text-emerald-950' : 'text-amber-950';
-              const subTextColor = isLiveCard ? 'text-emerald-700/80' : 'text-amber-700/80';
-              const badgeStyle = isLiveCard 
+              const textColor = isLiveCard
+                ? 'text-emerald-950'
+                : isEndedLinger
+                  ? 'text-slate-950'
+                  : 'text-amber-950';
+              const subTextColor = isLiveCard
+                ? 'text-emerald-700/80'
+                : isEndedLinger
+                  ? 'text-slate-600/80'
+                  : 'text-amber-700/80';
+              const badgeStyle = isLiveCard
                 ? 'text-emerald-700 ring-emerald-200/60'
-                : 'text-amber-700 ring-amber-200/60';
-                
-              const chevronColor = isLiveCard ? 'text-emerald-700/60' : 'text-amber-700/60';
+                : isEndedLinger
+                  ? 'text-slate-600 ring-slate-200/60'
+                  : 'text-amber-700 ring-amber-200/60';
+
+              const chevronColor = isLiveCard
+                ? 'text-emerald-700/60'
+                : isEndedLinger
+                  ? 'text-slate-600/60'
+                  : 'text-amber-700/60';
 
               const Icon = isLiveCard ? PhoneCall : PhoneIncoming;
 
@@ -253,7 +301,9 @@ export function QueueSummaryCard({
                   </div>
                   <div className="relative flex items-center gap-3">
                     <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${iconContainerStyle} shadow-sm`}>
-                      <Icon className={`h-[14px] w-[14px] ${!isLiveCard ? 'animate-pulse' : ''}`} />
+                      <Icon
+                        className={`h-[14px] w-[14px] ${!isLiveCard && !isEndedLinger ? 'animate-pulse' : ''}`}
+                      />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className={`truncate text-[13px] font-bold ${textColor} leading-tight`}>
@@ -264,12 +314,19 @@ export function QueueSummaryCard({
                           {formatPhone(caller.number)}
                         </div>
                         <div className={`shrink-0 rounded-md bg-white/70 px-1.5 py-0.5 font-mono text-[10px] font-bold ${badgeStyle} ring-1`}>
-                          {isLiveCard ? 'Answered' : (
+                          {isLiveCard ? (
+                            'Answered'
+                          ) : isEndedLinger ? (
+                            'Ended'
+                          ) : (
                             <>
                               Waiting{" "}
                               {formatPhoneDurationLabel(
                                 caller.waitingSince
-                                  ? Math.max(0, now - caller.waitingSince)
+                                  ? Math.max(
+                                      0,
+                                      (now - caller.waitingSince) / 1000,
+                                    )
                                   : queue.avgWaitSeconds,
                               )}
                             </>
@@ -332,12 +389,10 @@ export function QueueSummaryCard({
   );
 }
 
-function formatPhoneDurationLabel(totalMsOrSeconds: number): string {
-  const normalizedSeconds =
-    totalMsOrSeconds > 9999
-      ? Math.floor(totalMsOrSeconds / 1000)
-      : Math.floor(totalMsOrSeconds);
-  const seconds = Math.max(0, normalizedSeconds);
+/** `MM:SS` from elapsed seconds (queue avg is seconds; live wait uses ms → s at call site). */
+function formatPhoneDurationLabel(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds)) return "—";
+  const seconds = Math.max(0, Math.floor(totalSeconds));
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
   return `${mm}:${ss}`;

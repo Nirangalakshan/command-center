@@ -32,6 +32,30 @@ export const LINKUS_CALL_LOG_EVENT = 'cc:linkus-call-log-updated';
 /** Ask `useDashboardData` to refetch (after softphone disposition write). */
 export const DASHBOARD_REFRESH_REQUEST_EVENT = 'cc:dashboard-refresh-request';
 
+/**
+ * Clears the dashboard incoming-call row immediately when the Linkus leg ends
+ * (reject/hangup before CDR / CallHangup). Detail matches {@link dismissIncomingCallOnDashboard}.
+ */
+export const DASHBOARD_DISMISS_INCOMING_CALLER_EVENT =
+  'cc-dashboard-dismiss-incoming-caller';
+
+export type DashboardDismissIncomingDetail = {
+  linkusCallId?: string;
+  callerNumber?: string;
+  tenantId?: string;
+};
+
+export function dismissIncomingCallOnDashboard(
+  detail: DashboardDismissIncomingDetail,
+): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent(DASHBOARD_DISMISS_INCOMING_CALLER_EVENT, {
+      detail,
+    }),
+  );
+}
+
 export type LinkusSessionEndPayload = {
   callId: string;
   direction: 'inbound' | 'outbound';

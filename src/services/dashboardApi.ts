@@ -733,6 +733,8 @@ export async function fetchCallerContext(
 
 /* ─── Incoming Calls — Yeastar Real-Time Integration ─── */
 
+export { DASHBOARD_DISMISS_INCOMING_CALLER_EVENT } from "@/services/linkusCallLog";
+
 /**
  * Kept for backwards compat — returns empty array.
  * Use subscribeToIncomingCalls() for live data.

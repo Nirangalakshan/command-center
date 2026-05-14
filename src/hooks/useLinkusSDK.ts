@@ -11,6 +11,7 @@ import type {
   LinkusCallDispositionPayload,
   LinkusSessionEndPayload,
 } from '@/services/linkusCallLog';
+import { dismissIncomingCallOnDashboard } from '@/services/linkusCallLog';
 
 export type { LinkusCallDispositionPayload, LinkusSessionEndPayload };
 
@@ -173,6 +174,8 @@ export function useLinkusSDK({
   );
   const [incomingCallIds, setIncomingCallIds] = useState<string[]>([]);
   const [isRegistered, setIsRegistered] = useState(false);
+  const incomingCallIdsRef = useRef<string[]>([]);
+  incomingCallIdsRef.current = incomingCallIds;
 
   const phoneRef = useRef<PhoneOperator | null>(null);
   const pbxRef = useRef<PBXOperator | null>(null);
@@ -440,6 +443,13 @@ export function useLinkusSDK({
           session.on('ended', () => {
             if (cancelled) return;
             console.log('[useLinkusSDK] session ended', callId);
+            const snap = mapLinkusCallStatus(session.status);
+            if (snap.direction === 'inbound') {
+              dismissIncomingCallOnDashboard({
+                linkusCallId: callId,
+                callerNumber: snap.number?.trim() || undefined,
+              });
+            }
             emitSessionEnd(callId, session.status);
             removeCall(callId);
             if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
@@ -448,6 +458,13 @@ export function useLinkusSDK({
           session.on('failed', (_info: unknown) => {
             if (cancelled) return;
             // console.log('[useLinkusSDK] session failed', callId, _info);
+            const snap = mapLinkusCallStatus(session.status);
+            if (snap.direction === 'inbound') {
+              dismissIncomingCallOnDashboard({
+                linkusCallId: callId,
+                callerNumber: snap.number?.trim() || undefined,
+              });
+            }
             emitSessionEnd(callId, session.status);
             removeCall(callId);
             if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
@@ -475,6 +492,17 @@ export function useLinkusSDK({
           if (cancelled) return;
           console.log('[useLinkusSDK] deleteSession', callId);
           const last = lastSdkStatusRef.current.get(callId);
+          const inbound =
+            incomingCallIdsRef.current.includes(callId) ||
+            (last && mapLinkusCallStatus(last).direction === 'inbound');
+          if (inbound) {
+            dismissIncomingCallOnDashboard({
+              linkusCallId: callId,
+              callerNumber: last
+                ? mapLinkusCallStatus(last).number?.trim() || undefined
+                : undefined,
+            });
+          }
           if (last) emitSessionEnd(callId, last);
           removeCall(callId);
           if ((phoneRef.current?.sessions.size ?? 0) === 0) detachAudio();
@@ -494,7 +522,10 @@ export function useLinkusSDK({
         if (cancelled) return;
         if (err instanceof IpForbiddenError) {
           setStatus('ip-forbidden');
-          setError(null);
+          /** Surface the diagnostic message (not the bare `IP_FORBIDDEN` sentinel)
+           *  so the softphone error panel can show the user what actually failed. */
+          const m = err.message;
+          setError(m && m !== 'IP_FORBIDDEN' ? m : null);
           return;
         }
 
@@ -592,6 +623,12 @@ export function useLinkusSDK({
       const pre =
         lastSdkStatusRef.current.get(callId) ??
         phoneRef.current?.sessions.get(callId)?.status;
+      dismissIncomingCallOnDashboard({
+        linkusCallId: callId,
+        callerNumber: pre
+          ? mapLinkusCallStatus(pre).number?.trim() || undefined
+          : undefined,
+      });
       // Call the SDK FIRST (while the session is still in a valid state),
       // THEN optimistically update local state. Doing it the other way around
       // can leave the session referenced but already-torn-down, which causes
@@ -614,6 +651,14 @@ export function useLinkusSDK({
           name: snap.name,
           direction: snap.direction,
         });
+      } else {
+        emitDisposition({
+          callId,
+          action: 'rejected',
+          number: '',
+          name: '',
+          direction: 'inbound',
+        });
       }
       dismissIncoming(callId);
       removeCall(callId);
@@ -624,6 +669,15 @@ export function useLinkusSDK({
   const hangup = useCallback(
     (callId: string) => {
       const phone = phoneRef.current;
+      const pre =
+        lastSdkStatusRef.current.get(callId) ??
+        phone?.sessions.get(callId)?.status;
+      if (pre && mapLinkusCallStatus(pre).direction === 'inbound') {
+        dismissIncomingCallOnDashboard({
+          linkusCallId: callId,
+          callerNumber: mapLinkusCallStatus(pre).number?.trim() || undefined,
+        });
+      }
       // Only invoke the SDK if the session is still alive on the SDK side.
       // If it's already gone (remote hung up, we already rejected, etc.),
       // calling phone.hangup() throws "Invalid status: 8" from JsSIP.
