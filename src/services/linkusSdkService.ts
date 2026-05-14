@@ -207,8 +207,12 @@ function isIpForbidden(msg: string): boolean {
 
 export class IpForbiddenError extends Error {
   readonly isIpForbidden = true;
-  constructor() {
-    super('IP_FORBIDDEN');
+
+  constructor(
+    /** Longer UX copy (e.g. server-side Open API vs browser). Omit to keep sentinel `IP_FORBIDDEN`. */
+    message?: string
+  ) {
+    super(message ?? 'IP_FORBIDDEN');
     this.name = 'IpForbiddenError';
   }
 }
