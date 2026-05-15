@@ -220,6 +220,49 @@ export async function deleteDashboardAgent(agentId: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** Link a super-admin (or any auth user) to an existing command-centre agent row. */
+export async function linkAgentToUser(
+  agentId: string,
+  userId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("agents")
+    .update({ user_id: userId })
+    .eq("id", agentId);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Create a minimal command-centre agent row for a super-admin so they can act as
+ * a chat sender. Returns the newly created agent id.
+ *
+ * Requires a tenant id (RLS on agents enforces tenant_id NOT NULL). Pass the
+ * first tenant from the dashboard if the super-admin has no tenant scope.
+ */
+export async function createSuperAdminAgent(opts: {
+  userId: string;
+  name: string;
+  tenantId: string;
+  email?: string | null;
+}): Promise<string> {
+  const agentId = `super-admin-${opts.userId.slice(0, 8)}-${Date.now()}`;
+  const payload: Record<string, unknown> = {
+    id: agentId,
+    user_id: opts.userId,
+    name: opts.name || "Super Admin",
+    extension: "ADMIN",
+    email: opts.email ?? null,
+    status: "offline",
+    role: "team-lead",
+    tenant_id: opts.tenantId,
+    queue_ids: [],
+  };
+
+  const { error } = await supabase.from("agents").insert(payload);
+  if (error) throw new Error(error.message);
+  return agentId;
+}
+
 /* ─── Calls ─── */
 
 /** PBX row direction, or infer outbound when `direction` column is absent / default but CDR shape matches outbound. */

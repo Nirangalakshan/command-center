@@ -752,7 +752,35 @@ export interface InternalChatConversation {
   last_message: string | null;
   last_message_at: string | null;
   otherParticipant?: Agent;
+  /** Populated when loading all conversations (super-admin oversight). */
+  agentA?: Agent;
+  agentB?: Agent;
   unreadCount?: number;
+}
+
+/** Command-centre agent (not linked to a BMS workshop owner). */
+export function isCommandCentreAgent(agent: Pick<Agent, "bmsOwnerUid">): boolean {
+  return !String(agent.bmsOwnerUid ?? "").trim();
+}
+
+/** Resolve the agent row a super-admin uses to send internal messages. */
+export function resolveSuperAdminMessagingAgentId(
+  agents: Agent[],
+  sessionUserId: string | undefined,
+): string | null {
+  const linked = agents.find(
+    (a) =>
+      isCommandCentreAgent(a) &&
+      a.userId &&
+      sessionUserId &&
+      a.userId === sessionUserId,
+  );
+  if (linked) return linked.id;
+
+  const fromEnv = import.meta.env.VITE_SUPER_ADMIN_AGENT_ID?.trim();
+  if (fromEnv && agents.some((a) => a.id === fromEnv)) return fromEnv;
+
+  return null;
 }
 
 export interface InternalChatMessage {
@@ -765,8 +793,8 @@ export interface InternalChatMessage {
 }
 
 export async function fetchInternalConversations(currentAgentId: string): Promise<InternalChatConversation[]> {
-  const { data, error } = await (supabase
-    .from('agent_conversations') as any)
+  const { data, error } = await ((supabase as any)
+    .from('agent_conversations'))
     .select(`
       *,
       agent_a:participant_a(id, name, extension, status),
@@ -779,8 +807,8 @@ export async function fetchInternalConversations(currentAgentId: string): Promis
   if (!data || data.length === 0) return [];
 
   // Fetch unread counts for these conversations
-  const { data: unreadData, error: unreadError } = await (supabase
-    .from('agent_messages') as any)
+  const { data: unreadData, error: unreadError } = await ((supabase as any)
+    .from('agent_messages'))
     .select('conversation_id')
     .eq('is_read', false)
     .neq('sender_id', currentAgentId)
@@ -807,8 +835,8 @@ export async function fetchInternalConversations(currentAgentId: string): Promis
  * Fetch all conversations for Super Admin
  */
 export async function fetchAllInternalConversations(): Promise<InternalChatConversation[]> {
-  const { data, error } = await (supabase
-    .from('agent_conversations') as any)
+  const { data, error } = await ((supabase as any)
+    .from('agent_conversations'))
     .select(`
       *,
       agent_a:participant_a(id, name, extension, status),
@@ -820,8 +848,8 @@ export async function fetchAllInternalConversations(): Promise<InternalChatConve
   if (!data || data.length === 0) return [];
 
   // Fetch all unread messages for these conversations
-  const { data: unreadData, error: unreadError } = await (supabase
-    .from('agent_messages') as any)
+  const { data: unreadData, error: unreadError } = await ((supabase as any)
+    .from('agent_messages'))
     .select('conversation_id')
     .eq('is_read', false)
     .in('conversation_id', data.map(c => c.id));
@@ -840,8 +868,8 @@ export async function fetchAllInternalConversations(): Promise<InternalChatConve
 }
 
 export async function fetchInternalMessages(conversationId: string): Promise<InternalChatMessage[]> {
-  const { data, error } = await (supabase
-    .from('agent_messages') as any)
+  const { data, error } = await ((supabase as any)
+    .from('agent_messages'))
     .select('*')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: true });
@@ -852,16 +880,16 @@ export async function fetchInternalMessages(conversationId: string): Promise<Int
 
 export async function fetchInternalUnreadCount(agentId: string): Promise<number> {
   // First get conversation IDs
-  const { data: convs, error: convError } = await (supabase
-    .from('agent_conversations') as any)
+  const { data: convs, error: convError } = await ((supabase as any)
+    .from('agent_conversations'))
     .select('id')
     .or(`participant_a.eq.${agentId},participant_b.eq.${agentId}`);
 
   if (convError || !convs || convs.length === 0) return 0;
   const ids = (convs as any[]).map((c: any) => c.id);
 
-  const { count, error } = await (supabase
-    .from('agent_messages') as any)
+  const { count, error } = await ((supabase as any)
+    .from('agent_messages'))
     .select('*', { count: 'exact', head: true })
     .eq('is_read', false)
     .neq('sender_id', agentId)
@@ -875,8 +903,8 @@ export async function fetchInternalUnreadCount(agentId: string): Promise<number>
  * Fetch a global count of all unread internal messages for Super Admin oversight.
  */
 export async function fetchGlobalInternalUnreadCount(): Promise<number> {
-  const { count, error } = await (supabase
-    .from('agent_messages') as any)
+  const { count, error } = await ((supabase as any)
+    .from('agent_messages'))
     .select('*', { count: 'exact', head: true })
     .eq('is_read', false);
 
@@ -885,8 +913,8 @@ export async function fetchGlobalInternalUnreadCount(): Promise<number> {
 }
 
 export async function markInternalMessagesAsRead(conversationId: string, readerId: string): Promise<void> {
-  const { error } = await (supabase
-    .from('agent_messages') as any)
+  const { error } = await ((supabase as any)
+    .from('agent_messages'))
     .update({ is_read: true })
     .eq('conversation_id', conversationId)
     .neq('sender_id', readerId)
@@ -899,8 +927,8 @@ export async function markInternalMessagesAsRead(conversationId: string, readerI
 
 /** Mark every unread message in a conversation read (e.g. super-admin oversight with no agent row). */
 export async function markInternalConversationAllRead(conversationId: string): Promise<void> {
-  const { error } = await (supabase
-    .from('agent_messages') as any)
+  const { error } = await ((supabase as any)
+    .from('agent_messages'))
     .update({ is_read: true })
     .eq('conversation_id', conversationId)
     .eq('is_read', false);
@@ -911,8 +939,8 @@ export async function markInternalConversationAllRead(conversationId: string): P
 }
 
 export async function sendInternalMessage(conversationId: string, senderId: string, content: string): Promise<void> {
-  const { error } = await (supabase
-    .from('agent_messages') as any)
+  const { error } = await ((supabase as any)
+    .from('agent_messages'))
     .insert({
       conversation_id: conversationId,
       sender_id: senderId,
@@ -927,8 +955,8 @@ export async function getOrCreateInternalConversation(agentIdA: string, agentIdB
   const [p1, p2] = agentIdA < agentIdB ? [agentIdA, agentIdB] : [agentIdB, agentIdA];
 
   // Try to find existing
-  const { data: existing, error: fetchError } = await (supabase
-    .from('agent_conversations') as any)
+  const { data: existing, error: fetchError } = await ((supabase as any)
+    .from('agent_conversations'))
     .select('id')
     .eq('participant_a', p1)
     .eq('participant_b', p2)
@@ -938,8 +966,8 @@ export async function getOrCreateInternalConversation(agentIdA: string, agentIdB
   if (existing) return (existing as any).id;
 
   // Create new
-  const { data: created, error: createError } = await (supabase
-    .from('agent_conversations') as any)
+  const { data: created, error: createError } = await ((supabase as any)
+    .from('agent_conversations'))
     .insert({
       participant_a: p1,
       participant_b: p2

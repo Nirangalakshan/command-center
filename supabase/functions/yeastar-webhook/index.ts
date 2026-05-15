@@ -587,14 +587,34 @@ async function handleIncomingCall(body: Record<string, unknown>) {
   //   (b) The CALLER hung up — the call is dead.
   //
   // We distinguish them by checking whether any agent is still actively ringing
-  // for this caller after the BYE. If no agent is in 'ringing' state with this
-  // caller number, the call is truly over and we fire CallHangup immediately
-  // (rather than waiting up to 2 minutes for the stale eviction or the CDR).
+  // or on-call for this caller after the BYE. If no agent is in 'ringing' or
+  // 'on-call' state with this caller number, the call is truly over and we
+  // broadcast CallHangup immediately (otherwise we'd wait for the NewCdr,
+  // which can lag well behind the actual hangup — especially when the caller
+  // disconnects before any agent's softphone even rings).
   if (memberStatus === 'BYE') {
-    // If an agent leg ended, mark them available. We do NOT broadcast CallHangup here
-    // because the call might still be alive (e.g. routing to another agent or an IVR).
-    // The definitive end-of-call signal is the NewCdr event.
     await updateAgentLiveCallState(extension, memberStatus, callfrom);
+
+    if (callid && callfrom && tenantId && tenantId !== 'unknown') {
+      const stillActive = await hasActiveLegForCaller(tenantId, callfrom);
+      if (!stillActive) {
+        await supabase.channel('yeastar-incoming-calls').send({
+          type: 'broadcast',
+          event: 'CallHangup',
+          payload: { id: `incoming-${callid}`, callerNumber: callfrom },
+        });
+        // console.log(`[yeastar-webhook] BYE — no active legs for ${callfrom}, CallHangup broadcast: incoming-${callid}`);
+      }
+    } else if (callid && !callfrom) {
+      // No callfrom on this BYE — best-effort: broadcast anyway. The dashboard
+      // dedupes by id, so a stale broadcast is harmless if the call is alive.
+      await supabase.channel('yeastar-incoming-calls').send({
+        type: 'broadcast',
+        event: 'CallHangup',
+        payload: { id: `incoming-${callid}`, callerNumber: '' },
+      });
+    }
+
     return;
   }
 
@@ -717,6 +737,47 @@ async function lookupCustomerName(tenantId: string, callerNumber: string): Promi
 
 function normalizePhoneNumber(phone: string): string {
   return phone.replace(/\D/g, '');
+}
+
+/**
+ * Returns true when at least one agent in the tenant currently has this caller
+ * as their live `current_caller` and is in `ringing` or `on-call` state. Used
+ * by the `BYE` handler to decide whether to immediately broadcast CallHangup
+ * (no live legs) or wait for the next routing event / NewCdr (call still alive).
+ */
+async function hasActiveLegForCaller(
+  tenantId: string,
+  callerNumber: string,
+): Promise<boolean> {
+  if (!tenantId || tenantId === 'unknown' || !callerNumber) return false;
+
+  const digits = normalizePhoneNumber(callerNumber);
+  const variants = new Set<string>([callerNumber]);
+  if (digits) variants.add(digits);
+  if (callerNumber.startsWith('+')) variants.add(callerNumber.slice(1));
+
+  const list = Array.from(variants).filter(Boolean);
+  if (list.length === 0) return false;
+
+  // Match either exact or via PostgREST `in()` against any variant.
+  try {
+    const { data, error } = await supabase
+      .from('agents')
+      .select('id, status, current_caller')
+      .eq('tenant_id', tenantId)
+      .in('status', ['ringing', 'on-call'])
+      .in('current_caller', list)
+      .limit(1);
+
+    if (error) {
+      // console.warn(`[yeastar-webhook] hasActiveLegForCaller query failed: ${error.message}`);
+      return true; // Fail open — don't drop the row if we can't verify.
+    }
+
+    return (data?.length ?? 0) > 0;
+  } catch {
+    return true; // Fail open on unexpected errors.
+  }
 }
 
 async function updateAgentLiveCallState(

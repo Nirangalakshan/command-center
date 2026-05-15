@@ -35,9 +35,12 @@ export function isSupabaseAuthUserId(id: string | null | undefined): boolean {
   return UUID_RE.test(id);
 }
 
-/** Returns the start and end of the Melbourne calendar day for a given browser Date. */
-export function attendanceDayRange(day: Date): { startIso: string; endIso: string } {
-  const ymd = getAustralianDateKey(day.getTime());
+/** Melbourne calendar day bounds from a Date instant or yyyy-MM-dd day key. */
+export function attendanceDayRange(
+  day: Date | string,
+): { startIso: string; endIso: string } {
+  const ymd =
+    typeof day === "string" ? day : getAustralianDateKey(day.getTime());
   return attendanceDayRangeAustralianYmd(ymd);
 }
 
@@ -248,7 +251,7 @@ export function buildAttendanceDaySegments(
 
 export async function fetchAttendanceEventsForDay(
   userId: string,
-  day: Date,
+  day: Date | string,
 ): Promise<AgentAttendanceEventRow[]> {
   const { startIso, endIso } = attendanceDayRange(day);
   const { data, error } = await supabase
@@ -266,7 +269,7 @@ export async function fetchAttendanceEventsForDay(
 }
 
 export async function fetchAllAttendanceEventsForDay(
-  day: Date,
+  day: Date | string,
 ): Promise<AgentAttendanceEventRow[]> {
   const { startIso, endIso } = attendanceDayRange(day);
   const { data, error } = await supabase
