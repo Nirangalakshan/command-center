@@ -32,6 +32,8 @@ import type { Permissions, UserRole } from '@/services/types';
 interface DashboardSidebarProps {
   selectedTab: string;
   onSelect: (tab: string) => void;
+  /** Best-effort React Query prefetch when hovering a nav destination (desktop). */
+  onPrefetchTab?: (tab: string) => void;
   permissions: Permissions;
   displayName: string;
   currentRole: UserRole;
@@ -116,6 +118,7 @@ const NAV_ITEMS: SidebarEntry[] = [
 export default function DashboardSidebar({
   selectedTab,
   onSelect,
+  onPrefetchTab,
   permissions,
   displayName,
   currentRole,
@@ -176,6 +179,7 @@ export default function DashboardSidebar({
                     key={key}
                     type="button"
                     onClick={() => onSelect(key)}
+                    onMouseEnter={() => onPrefetchTab?.(key)}
                     className={`ml-3 w-[calc(100%-0.75rem)] flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
                       active
                         ? 'bg-neutral-800 text-white'
@@ -250,6 +254,7 @@ export default function DashboardSidebar({
                             key={item.key}
                             type="button"
                             onClick={() => onSelect(item.key)}
+                            onMouseEnter={() => onPrefetchTab?.(item.key)}
                             className={`flex w-full items-center space-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
                               active
                                 ? 'bg-neutral-800 text-white'

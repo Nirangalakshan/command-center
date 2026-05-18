@@ -29,6 +29,7 @@ export function usePermissions(session: UserSession | null): Permissions {
         canViewAgentOnboarding: false,
         canViewAgentOnboardingTab: false,
         canViewAuditLogs: false,
+        canViewCallRecordings: false,
         canManageAgents: false,
         canManageDIDMappings: false,
         allowedTenantId: null,

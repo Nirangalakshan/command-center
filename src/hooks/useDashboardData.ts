@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   fetchTenants,
   fetchAgents,
@@ -30,9 +30,18 @@ import type {
   AgentOnboarding,
   IncomingCall,
   UserSession,
+  ConnectionStatus,
 } from "@/services/types";
+import {
+  callsFetchLimitForTab,
+  tabNeedsAgentGroups,
+  tabNeedsAgentOnboarding,
+  tabNeedsCalls,
+  tabNeedsQueues,
+  tabNeedsSip,
+} from "@/lib/dashboardQueryLimits";
 
-export type ConnectionStatus = "connected" | "disconnected" | "connecting";
+export type { ConnectionStatus } from "@/services/types";
 
 export interface DashboardData {
   selectedTenant: string | null;
@@ -73,6 +82,16 @@ const QUEUE_CARD_INCOMING_LINGER_MS = 40_000;
 /** Ignore duplicate dismiss events for the same Linkus leg (reject + deleteSession). */
 const LINKUS_DISMISS_DEDUP_MS = 3500;
 
+/**
+ * Tab→query gating lives in `@/lib/dashboardQueryLimits` (shared with hover prefetch).
+ *
+ * - `fetchTenants` + `fetchAgents` stay on for the whole session — `DashboardPage`
+ *   resolves chat tenant, workshop owner UID, leave badges, and sidebar `isCCAgent`
+ *   from these lists even when the heavy tabs are closed.
+ * - Queues / calls / SIP / onboarding / derived summary only run when a tab that
+ *   actually renders that data is selected (stops polling while you are elsewhere).
+ */
+
 interface UseDashboardDataProps {
   session: UserSession | null;
 }
@@ -105,6 +124,14 @@ export function useDashboardData({
   const isAgent = session?.role === "agent";
   const refreshInterval = isAgent ? POLL_INTERVAL_AGENT_MS : POLL_INTERVAL;
 
+  const needsQueues = tabNeedsQueues(selectedTab);
+  const needsCalls = tabNeedsCalls(selectedTab);
+  const needsAgentGroups = tabNeedsAgentGroups(selectedTab);
+  const needsSip = tabNeedsSip(selectedTab, isAgent);
+  const needsAgentOnboarding = tabNeedsAgentOnboarding(selectedTab, isAgent);
+  const needsSummary = selectedTab === "overview";
+  const callsFetchLimit = callsFetchLimitForTab(selectedTab);
+
   // --- React Query Definitions ---
 
   const { data: tenants = [], error: tenantsErr, isPending: isPendingTenants } = useQuery({
@@ -118,53 +145,63 @@ export function useDashboardData({
     queryKey: ["agents", effectiveTenant],
     queryFn: () => fetchAgents(effectiveTenant),
     enabled: !!session,
+    staleTime: 10_000,
     refetchInterval: refreshInterval,
   });
 
   const { data: queues = [], error: queuesErr, isPending: isPendingQueues } = useQuery({
     queryKey: ["queues", effectiveTenant],
     queryFn: () => fetchQueues(effectiveTenant),
-    enabled: !!session,
+    enabled: !!session && needsQueues,
+    staleTime: 8_000,
     refetchInterval: refreshInterval,
   });
 
-  const { data: calls = [], error: callsErr } = useQuery({
-    queryKey: ["calls", effectiveTenant, callDate],
+  const {
+    data: calls = [],
+    error: callsErr,
+    isPending: isPendingCalls,
+  } = useQuery({
+    queryKey: ["calls", effectiveTenant, callDate, callsFetchLimit],
     queryFn: () => {
       const { startIso, endIso } = attendanceDayRangeAustralianYmd(callDate);
-      return fetchCalls(effectiveTenant, 500, startIso, endIso);
+      return fetchCalls(effectiveTenant, callsFetchLimit, startIso, endIso);
     },
-    enabled: !!session,
+    enabled: !!session && needsCalls,
+    staleTime: 5_000,
+    placeholderData: keepPreviousData,
     refetchInterval: refreshInterval,
   });
 
   // Summary depends on agents, queues, and calls. 
   // We compute it using the already fetched data to avoid extra network requests.
   const { data: summary = null, error: summaryErr } = useQuery({
-    queryKey: ["summary", effectiveTenant, callDate],
+    queryKey: ["summary", effectiveTenant, callDate, callsFetchLimit],
     queryFn: () => fetchSummary(effectiveTenant, { agents, queues, calls }),
-    enabled: !!session && agents.length > 0,
+    enabled: !!session && needsSummary && agents.length > 0,
+    staleTime: 5_000,
   });
 
   const { data: sipLines = [], error: sipLinesErr } = useQuery({
     queryKey: ["sipLines", effectiveTenant],
     queryFn: () => fetchSipLines(effectiveTenant),
-    enabled: !!session && !isAgent,
+    enabled: !!session && needsSip,
+    staleTime: 15_000,
     refetchInterval: refreshInterval * 2,
   });
 
   const { data: agentGroups = [], error: agentGroupsErr } = useQuery({
     queryKey: ["agentGroups", effectiveTenant],
     queryFn: () => fetchAgentGroups(effectiveTenant),
-    enabled: !!session,
-    staleTime: 30000,
+    enabled: !!session && needsAgentGroups,
+    staleTime: 45_000,
   });
 
   const { data: agentOnboarding = [], error: onboardingErr } = useQuery({
     queryKey: ["agentOnboarding", effectiveTenant],
     queryFn: () => fetchAgentOnboarding(effectiveTenant),
-    enabled: !!session && !isAgent,
-    staleTime: 60000,
+    enabled: !!session && needsAgentOnboarding,
+    staleTime: 60_000,
   });
 
   // --- Incoming Calls Logic (Manual State) ---
@@ -437,44 +474,75 @@ export function useDashboardData({
     );
 
     const triggerRefetch = () => {
-      queryClient.invalidateQueries({ queryKey: ["agents", effectiveTenant] });
-      queryClient.invalidateQueries({ queryKey: ["calls", effectiveTenant] });
-      queryClient.invalidateQueries({ queryKey: ["queues", effectiveTenant] });
-      queryClient.invalidateQueries({ queryKey: ["summary", effectiveTenant] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["calls"] });
+      void queryClient.invalidateQueries({ queryKey: ["queues"] });
+      void queryClient.invalidateQueries({ queryKey: ["summary"] });
     };
 
     const unsubAgents = subscribeToAgents(effectiveTenant, triggerRefetch);
-    const unsubCallLog = subscribeToCalls(effectiveTenant, triggerRefetch);
+    /** Skip `calls` / softphone disposition CDC when neither calls nor queues tab data is loaded. */
+    const needsCallsTableCdc = needsCalls || needsQueues;
+    const unsubCallLog = needsCallsTableCdc
+      ? subscribeToCalls(effectiveTenant, triggerRefetch)
+      : () => {};
 
     return () => {
       unsubCalls();
       unsubAgents();
       unsubCallLog();
     };
-  }, [session, effectiveTenant, queryClient]);
+  }, [session, effectiveTenant, queryClient, needsCalls, needsQueues]);
+
+  const invalidateDashboardQueries = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["tenants"] });
+    void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    void queryClient.invalidateQueries({ queryKey: ["queues"] });
+    void queryClient.invalidateQueries({ queryKey: ["calls"] });
+    void queryClient.invalidateQueries({ queryKey: ["summary"] });
+    void queryClient.invalidateQueries({ queryKey: ["sipLines"] });
+    void queryClient.invalidateQueries({ queryKey: ["agentGroups"] });
+    void queryClient.invalidateQueries({ queryKey: ["agentOnboarding"] });
+  }, [queryClient]);
 
   // Handle manual refresh requests
   useEffect(() => {
     if (!session) return;
     const onRefresh = () => {
-      queryClient.invalidateQueries();
+      invalidateDashboardQueries();
     };
     window.addEventListener(DASHBOARD_REFRESH_REQUEST_EVENT, onRefresh);
     return () => window.removeEventListener(DASHBOARD_REFRESH_REQUEST_EVENT, onRefresh);
-  }, [session, queryClient]);
+  }, [session, invalidateDashboardQueries]);
 
   const refresh = useCallback(() => {
-    queryClient.invalidateQueries();
-  }, [queryClient]);
+    invalidateDashboardQueries();
+  }, [invalidateDashboardQueries]);
 
   const startInternalChat = useCallback((agentId: string) => {
     setPendingInternalChatAgentId(agentId);
     setSelectedTab("chat");
   }, []);
 
-  // Derive loading and error states
-  const isInitialLoading = !session || (isPendingTenants && isPendingAgents && isPendingQueues);
-  const error = (tenantsErr || agentsErr || queuesErr || callsErr || summaryErr)?.toString() || null;
+  // Derive loading and error states (wait for shell + whatever the active tab needs).
+  const isInitialLoading =
+    !session ||
+    isPendingTenants ||
+    isPendingAgents ||
+    (needsQueues && isPendingQueues) ||
+    (needsCalls && isPendingCalls);
+
+  const error =
+    (
+      tenantsErr ||
+      agentsErr ||
+      queuesErr ||
+      callsErr ||
+      summaryErr ||
+      sipLinesErr ||
+      agentGroupsErr ||
+      onboardingErr
+    )?.toString() || null;
   const connectionStatus: ConnectionStatus = error ? "disconnected" : "connected";
 
   return {

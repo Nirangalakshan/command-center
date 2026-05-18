@@ -58,7 +58,59 @@ let _recordingAuth: {
   token: string;
   expiresAt: number;
   browserTransport: boolean;
+  credentialLabel: string;
 } | null = null;
+
+/** Thrown when Open API reports an expired/invalid access token (errcode 10004). */
+class RecordingTokenExpiredError extends Error {
+  constructor() {
+    super('Yeastar access token expired');
+    this.name = 'RecordingTokenExpiredError';
+  }
+}
+
+/** Thrown when the current API app lacks Recording → Download (errcode 10005). */
+class RecordingAccessDeniedError extends Error {
+  readonly errcode = 10005;
+  constructor(
+    public credentialLabel?: string,
+    /** PBX labels from Edge when multiple tokens were tried */
+    public serverDenied?: string[],
+  ) {
+    super('ACCESS DENIED (10005)');
+    this.name = 'RecordingAccessDeniedError';
+  }
+}
+
+function isRecordingAccessDeniedError(err: unknown): boolean {
+  if (err instanceof RecordingAccessDeniedError) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return errcodeFromMessage(msg) === 10005 || /10005|ACCESS DENIED/i.test(msg);
+}
+
+function errcodeFromMessage(msg: string): number | undefined {
+  const m = msg.match(/\b(10005|10004)\b/);
+  return m ? Number(m[1]) : undefined;
+}
+
+function clearRecordingAuth(): void {
+  _recordingAuth = null;
+}
+
+function recordingAuthExpiresAtMs(ttlSec: number): number {
+  /** Refresh ≥2 min before PBX expiry — avoids 10004 mid-session on long dashboard tabs. */
+  return Date.now() + Math.max(60, ttlSec - 120) * 1000;
+}
+
+function isYeastarTokenExpiredErrcode(errcode: number, msg: string): boolean {
+  return errcode === 10004 || /token.*expir|access.?token.*invalid/i.test(msg);
+}
+
+function isRecordingRelayAuthError(msg: string): boolean {
+  return /non-audio|text\/html|bad token|non-audio body|PBX returned non-audio|token.?expir|10004/i.test(
+    msg
+  );
+}
 
 export function isYeastarConfigured(): boolean {
   return Boolean(
@@ -98,19 +150,19 @@ function getYeastarCredentialCandidates(): YeastarCredential[] {
 }
 
 /**
- * Recording flows prefer SDK/OpenAPI credentials first — integration CLIENT_* is often the one
- * with strict IP rules while Linkus SDK credentials match what agents already use.
+ * Recording needs **Recording → Download** on the API app. Linkus SDK apps often lack it;
+ * try dedicated Open API / integration apps before SDK.
  */
 function getYeastarCredentialCandidatesForRecordings(): YeastarCredential[] {
   const raw: YeastarCredential[] = [];
-  if (SDK_ACCESS_ID.trim() && SDK_ACCESS_KEY.trim()) {
-    raw.push({ label: 'VITE_YEASTAR_SDK_ACCESS_*', id: SDK_ACCESS_ID.trim(), key: SDK_ACCESS_KEY.trim() });
-  }
   if (OPENAPI_ACCESS_ID.trim() && OPENAPI_ACCESS_KEY.trim()) {
     raw.push({ label: 'VITE_YEASTAR_OPENAPI_ACCESS_*', id: OPENAPI_ACCESS_ID.trim(), key: OPENAPI_ACCESS_KEY.trim() });
   }
   if (CLIENT_ID.trim() && CLIENT_SECRET.trim()) {
     raw.push({ label: 'VITE_YEASTAR_CLIENT_ID/SECRET', id: CLIENT_ID.trim(), key: CLIENT_SECRET.trim() });
+  }
+  if (SDK_ACCESS_ID.trim() && SDK_ACCESS_KEY.trim()) {
+    raw.push({ label: 'VITE_YEASTAR_SDK_ACCESS_*', id: SDK_ACCESS_ID.trim(), key: SDK_ACCESS_KEY.trim() });
   }
   const seen = new Set<string>();
   return raw.filter((c) => {
@@ -197,12 +249,48 @@ async function tryFetchAccessTokenFromBrowser(
 }
 
 /**
+ * Obtain a token for one API app (Edge first, then browser). Used by recording playback
+ * so we can rotate apps when one returns 10005 ACCESS DENIED.
+ */
+async function fetchRecordingTokenForCredential(
+  c: YeastarCredential,
+): Promise<{ token: string; ttlSec: number; browserTransport: boolean } | null> {
+  if (!isYeastarEdgeIpBlocked(c.id)) {
+    try {
+      const edge = await tryFetchAccessToken(c);
+      if ('ipForbidden' in edge) {
+        markYeastarEdgeIpBlocked(c.id);
+      } else {
+        return { token: edge.token, ttlSec: edge.ttlSec, browserTransport: false };
+      }
+    } catch {
+      /* try browser */
+    }
+  }
+
+  try {
+    const browser = await tryFetchAccessTokenFromBrowser(c);
+    if (browser === null || 'ipForbidden' in browser) return null;
+    return { token: browser.token, ttlSec: browser.ttlSec, browserTransport: true };
+  } catch {
+    return null;
+  }
+}
+
+function cacheRecordingAuth(
+  c: YeastarCredential,
+  auth: { token: string; ttlSec: number; browserTransport: boolean },
+): void {
+  _recordingAuth = {
+    token: auth.token,
+    expiresAt: recordingAuthExpiresAtMs(auth.ttlSec),
+    browserTransport: auth.browserTransport,
+    credentialLabel: c.label,
+  };
+}
+
+/**
  * Used only by recording helpers — tries Edge proxy first, then browser (your office IP).
- *
- * Per credential, skips Edge entirely if a previous Edge call returned 70087 within
- * `EDGE_IP_BLOCK_MEMO_MS`. This stops the recording feature from cascading wasted
- * 70087 hits on the PBX — those hits otherwise rate-limit Supabase egress and break
- * other Edge calls (extension/list, click-to-call) for several minutes.
  */
 async function getYeastarTokenForRecordings(): Promise<string> {
   if (_recordingAuth && Date.now() < _recordingAuth.expiresAt) {
@@ -218,53 +306,13 @@ async function getYeastarTokenForRecordings(): Promise<string> {
   let sawIpForbidden = false;
 
   for (const c of candidates) {
-    /** Edge transport — skip if recently 70087'd for this credential. */
-    if (!isYeastarEdgeIpBlocked(c.id)) {
-      let edge: Awaited<ReturnType<typeof tryFetchAccessToken>>;
-      try {
-        edge = await tryFetchAccessToken(c);
-        if ('ipForbidden' in edge) {
-          markYeastarEdgeIpBlocked(c.id);
-          sawIpForbidden = true;
-          failures.push(`${c.label} via Edge: IP forbidden (70087)`);
-        } else {
-          _recordingAuth = {
-            token: edge.token,
-            expiresAt: Date.now() + Math.max(60, edge.ttlSec - 60) * 1000,
-            browserTransport: false,
-          };
-          return edge.token;
-        }
-      } catch (e) {
-        failures.push(
-          `${c.label} via Edge: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    } else {
-      failures.push(`${c.label} via Edge: skipped (recently 70087)`);
+    const auth = await fetchRecordingTokenForCredential(c);
+    if (auth) {
+      cacheRecordingAuth(c, auth);
+      return auth.token;
     }
-
-    /** Browser transport — uses the dashboard's IP (typically the whitelisted one). */
-    try {
-      const browser = await tryFetchAccessTokenFromBrowser(c);
-      if (browser === null) {
-        failures.push(`${c.label} via Browser: blocked or no JSON (often CORS)`);
-      } else if ('ipForbidden' in browser) {
-        sawIpForbidden = true;
-        failures.push(`${c.label} via Browser: IP forbidden (70087)`);
-      } else {
-        _recordingAuth = {
-          token: browser.token,
-          expiresAt: Date.now() + Math.max(60, browser.ttlSec - 60) * 1000,
-          browserTransport: true,
-        };
-        return browser.token;
-      }
-    } catch (e) {
-      failures.push(
-        `${c.label} via Browser: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+    failures.push(`${c.label}: no token (Edge 70087 or browser CORS)`);
+    if (isYeastarEdgeIpBlocked(c.id)) sawIpForbidden = true;
   }
 
   if (sawIpForbidden) {
@@ -484,8 +532,12 @@ async function fetchRecordingDownloadJsonViaBrowser(
   try {
     const qs = new URLSearchParams(params);
     const url = `${PBX_PUBLIC_BASE_URL}${OPENAPI}/recording/download?${qs}`;
+    const token = params.access_token ?? '';
     const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
     });
     return await res.json();
   } catch {
@@ -503,7 +555,12 @@ function parseRecordingDownloadResponse(
   if (typeof d.errcode === 'number' && d.errcode !== 0) {
     const msg = String(d.errmsg ?? '');
     throwIfYeastarIpForbidden(d.errcode, msg);
-    // Includes 10005 (no Recording scope) — still try `/cdr_recording/…` + relay below.
+    if (isYeastarTokenExpiredErrcode(d.errcode, msg)) {
+      throw new RecordingTokenExpiredError();
+    }
+    if (d.errcode === 10005) {
+      throw new RecordingAccessDeniedError(_recordingAuth?.credentialLabel);
+    }
     return null;
   }
 
@@ -520,7 +577,7 @@ function parseRecordingDownloadResponse(
  * Returns `null` on any API error or missing scope — caller falls back to `/cdr_recording/…`
  * when the relay can still stream WAV with Bearer + token.
  */
-async function tryRecordingDownloadViaOpenApi(
+async function requestRecordingDownloadUrl(
   recordingPath: string,
   token: string
 ): Promise<string | null> {
@@ -548,6 +605,7 @@ async function tryRecordingDownloadViaOpenApi(
       endpoint: `${OPENAPI}/recording/download`,
       method: 'GET',
       params,
+      headers: { Authorization: `Bearer ${token}` },
     },
   });
 
@@ -556,79 +614,110 @@ async function tryRecordingDownloadViaOpenApi(
   return parseRecordingDownloadResponse(data, token);
 }
 
-/**
- * RAS shortcut used when webhook stores full HTTPS paths under `/cdr_recording/recording/`.
- */
-function buildDirectCdrRecordingUrl(recordingPath: string, token: string): string {
-  const raw = recordingPath.trim();
-
-  if (/^https?:\/\//i.test(raw)) {
-    const u = new URL(raw);
-    u.searchParams.set('access_token', token);
-    u.searchParams.set('token', token);
-    return u.toString();
+async function tryRecordingDownloadViaOpenApi(
+  recordingPath: string,
+  token: string
+): Promise<string | null> {
+  try {
+    return await requestRecordingDownloadUrl(recordingPath, token);
+  } catch (e) {
+    if (e instanceof RecordingTokenExpiredError) {
+      clearRecordingAuth();
+      const fresh = await getYeastarTokenForRecordings();
+      return await requestRecordingDownloadUrl(recordingPath, fresh);
+    }
+    throw e;
   }
-
-  const filename = raw.replace(/^\/+/, '');
-  return `${PBX_PUBLIC_BASE_URL}/cdr_recording/recording/${filename}?access_token=${encodeURIComponent(token)}&token=${encodeURIComponent(token)}`;
 }
 
 /**
- * Recording playback/download URL for `<audio>` / new-tab download.
- *
- * 1. **OpenAPI**: `recording/download` when Recording scope is enabled.
- * 2. **Fallback**: `/cdr_recording/recording/…` + relay (Bearer + token) — used when OpenAPI returns 10005 or no link.
- *
- * Playback uses {@link getRecordingPlaybackObjectUrl} → Edge relay (avoids browser CORS on RAS).
+ * Recording download link for open-in-new-tab (Open API temporary URL only).
+ * Playback uses {@link getRecordingPlaybackObjectUrl} → `stream_recording` or browser pipeline.
  */
+function formatRecordingPermissionError(deniedLabels: string[]): string {
+  const uniq = [...new Set(deniedLabels)].filter(Boolean);
+  const apps = uniq.length > 0 ? uniq.join(', ') : 'your Yeastar API apps';
+  return (
+    `Recording → Download is disabled or denied (10005) for: ${apps}. ` +
+    'PBX admin → Integrations → API → each listed app → Permissions → enable **Recording → Download** → Save. ' +
+    'Use `VITE_YEASTAR_OPENAPI_ACCESS_*` or `CLIENT_ID`/`SECRET` for an app with that permission; Linkus SDK keys alone often fail. ' +
+    'Set matching `YEASTAR_*` secrets on Supabase so Edge can use the same Open API app.'
+  );
+}
+
+async function resolveRecordingDownloadUrl(recordingPath: string): Promise<string> {
+  const token = await getYeastarTokenForRecordings();
+  const viaOpenApi = await tryRecordingDownloadViaOpenApi(recordingPath, token);
+  if (viaOpenApi) return viaOpenApi;
+  throw new Error(formatRecordingPermissionError([_recordingAuth?.credentialLabel ?? 'unknown']));
+}
+
 export async function getRecordingDownloadUrl(recordingPath: string): Promise<string> {
   if (!isYeastarConfigured())
     throw new Error('Yeastar not configured');
 
-  const token = await getYeastarTokenForRecordings();
-
-  const viaOpenApi = await tryRecordingDownloadViaOpenApi(recordingPath, token);
-  if (viaOpenApi) return viaOpenApi;
-
-  return buildDirectCdrRecordingUrl(recordingPath, token);
-}
-
-/**
- * Same-origin playback URL for `<audio>`: streams the PBX file through `yeastar-api`.
- *
- * Always relays — including when `get_token` ran in the browser (Edge 70087). Direct
- * `fetch()` from the dashboard origin to `*.ras.yeastar.com` hits **CORS**; server-side relay does not.
- */
-export async function getRecordingPlaybackObjectUrl(
-  recordingPath: string
-): Promise<string> {
-  const load = async () => {
-    const directUrl = await getRecordingDownloadUrl(recordingPath);
-    return relayPbxRecordingThroughEdge(directUrl);
-  };
-
   try {
-    return await load();
+    return await resolveRecordingDownloadUrl(recordingPath);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const maybeStaleToken =
-      /non-audio|text\/html|bad token|non-audio body|PBX returned non-audio/i.test(
-        msg
-      );
-    if (!maybeStaleToken) throw e;
-    _recordingAuth = null;
-    return await load();
+    if (e instanceof RecordingTokenExpiredError) {
+      clearRecordingAuth();
+      return await resolveRecordingDownloadUrl(recordingPath);
+    }
+    throw e;
   }
 }
 
-function sniffAudioMimeFromUrl(url: string): string {
-  const path = url.split('?')[0] || url;
-  if (/\.mp3$/i.test(path)) return 'audio/mpeg';
-  if (/\.wav$/i.test(path)) return 'audio/wav';
-  return 'audio/wav';
+/**
+ * Browser OpenAPI metadata (`recording/download` JSON) + Edge relay for the binary URL.
+ * Attachment endpoints omit CORS headers — direct `fetch` from the dashboard origin fails.
+ */
+async function fetchRecordingViaBrowserPipeline(
+  recordingPath: string
+): Promise<{ buf: ArrayBuffer; mime: string }> {
+  const token = await getYeastarTokenForRecordings();
+  const fileKey = extractYeastarRecordingFileKey(recordingPath);
+  const params = /^\d+$/.test(fileKey)
+    ? { id: fileKey, access_token: token }
+    : { file: fileKey, access_token: token };
+
+  const data = await fetchRecordingDownloadJsonViaBrowser(params);
+  if (!data || typeof data !== 'object') {
+    throw new Error('Recording API unreachable from browser (CORS or network).');
+  }
+
+  const d = data as Record<string, unknown>;
+  if (typeof d.errcode === 'number' && d.errcode !== 0) {
+    const msg = String(d.errmsg ?? '');
+    throwIfYeastarIpForbidden(d.errcode, msg);
+    if (isYeastarTokenExpiredErrcode(d.errcode, msg)) {
+      throw new RecordingTokenExpiredError();
+    }
+    if (d.errcode === 10005) {
+      throw new RecordingAccessDeniedError(_recordingAuth?.credentialLabel);
+    }
+    throw new Error(`Yeastar recording/download ${d.errcode}: ${msg}`);
+  }
+
+  const relUrl = d.download_resource_url;
+  if (typeof relUrl !== 'string' || !relUrl) {
+    throw new Error('Yeastar recording/download returned no download_resource_url.');
+  }
+
+  const path = relUrl.startsWith('/') ? relUrl : `/${relUrl}`;
+  const sep = path.includes('?') ? '&' : '?';
+  const downloadUrl = `${PBX_PUBLIC_BASE_URL}${path}${sep}access_token=${encodeURIComponent(token)}`;
+
+  /** PBX attachment URLs do not send CORS headers — browser `fetch` fails after preflight (Authorization). */
+  return relayPbxDownloadThroughEdge(downloadUrl);
 }
 
-async function relayPbxRecordingThroughEdge(pbxDownloadUrl: string): Promise<string> {
+/**
+ * Stream a PBX `/api/downloadattachment/…` (or `/api/download/…`) URL via Supabase Edge.
+ * Same-origin to your app — avoids Yeastar RAS blocking cross-origin reads from localhost.
+ */
+async function relayPbxDownloadThroughEdge(
+  pbxDownloadUrl: string
+): Promise<{ buf: ArrayBuffer; mime: string }> {
   const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string).replace(/\/$/, '');
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
   const { data: sess } = await supabase.auth.getSession();
@@ -648,23 +737,24 @@ async function relayPbxRecordingThroughEdge(pbxDownloadUrl: string): Promise<str
 
   if (!res.ok || ct.includes('application/json')) {
     const raw = await res.text();
-    let parsed: { error?: string; detail?: string; pbx_status?: number } | undefined;
+    let parsed: { error?: string; hint?: string; pbx_status?: number; detail?: string } | undefined;
     try {
-      parsed = JSON.parse(raw) as { error?: string; detail?: string; pbx_status?: number };
+      parsed = JSON.parse(raw) as typeof parsed;
     } catch {
-      /* plain-text error body */
+      /* plain text */
     }
     if (parsed && typeof parsed === 'object') {
-      const hint = 'hint' in parsed ? String((parsed as { hint?: string }).hint) : '';
-      const msg = [
-        parsed.error ?? `Recording relay HTTP ${res.status}`,
-        hint ? hint.slice(0, 360) : '',
-        parsed.pbx_status != null ? `PBX ${parsed.pbx_status}` : '',
-        parsed.detail && !hint ? String(parsed.detail).slice(0, 200) : '',
-      ]
-        .filter(Boolean)
-        .join(' — ');
-      throw new Error(msg || raw.slice(0, 240));
+      const hint = parsed.hint ? String(parsed.hint).slice(0, 360) : '';
+      throw new Error(
+        [
+          parsed.error ?? `Recording relay HTTP ${res.status}`,
+          hint,
+          parsed.pbx_status != null ? `PBX ${parsed.pbx_status}` : '',
+          parsed.detail && !hint ? String(parsed.detail).slice(0, 200) : '',
+        ]
+          .filter(Boolean)
+          .join(' — ') || raw.slice(0, 240),
+      );
     }
     throw new Error(`Recording relay failed (${res.status}): ${raw.slice(0, 240)}`);
   }
@@ -679,6 +769,147 @@ async function relayPbxRecordingThroughEdge(pbxDownloadUrl: string): Promise<str
     mime = sniffAudioMimeFromUrl(pbxDownloadUrl);
   }
 
-  const blob = new Blob([buf], { type: mime });
-  return URL.createObjectURL(blob);
+  return { buf, mime };
 }
+
+async function streamRecordingThroughEdge(
+  recordingPath: string,
+  /** Optional token from browser auth — Edge uses its own server secrets first,
+   *  but if those aren't configured this lets the browser token act as a fallback. */
+  extraToken?: string,
+): Promise<{ buf: ArrayBuffer; mime: string }> {
+  const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string).replace(/\/$/, '');
+  const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+  const { data: sess } = await supabase.auth.getSession();
+  const bearer = sess.session?.access_token ?? anonKey;
+
+  const streamPayload: Record<string, string> = { recording_path: recordingPath };
+  if (extraToken) streamPayload.access_token = extraToken;
+
+  const res = await fetch(`${supabaseUrl}/functions/v1/yeastar-api`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${bearer}`,
+      apikey: anonKey,
+    },
+    body: JSON.stringify({ stream_recording: streamPayload }),
+  });
+
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+
+  if (!res.ok || ct.includes('application/json')) {
+    const raw = await res.text();
+    let parsed: {
+      error?: string;
+      hint?: string;
+      errcode?: number;
+      detail?: string;
+    } | undefined;
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      /* plain text */
+    }
+    if (parsed && typeof parsed === 'object') {
+      if (parsed.errcode === 10005) {
+        const deniedRaw = (parsed as { denied?: unknown }).denied;
+        const serverDenied = Array.isArray(deniedRaw)
+          ? deniedRaw.filter((x): x is string => typeof x === 'string')
+          : [];
+        throw new RecordingAccessDeniedError(_recordingAuth?.credentialLabel, serverDenied);
+      }
+      const hint = parsed.hint ? String(parsed.hint).slice(0, 360) : '';
+      throw new Error(
+        [parsed.error, hint, parsed.detail?.slice(0, 160)]
+          .filter(Boolean)
+          .join(' — ') || raw.slice(0, 240),
+      );
+    }
+    throw new Error(`Recording stream failed (${res.status}): ${raw.slice(0, 240)}`);
+  }
+
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength === 0) {
+    throw new Error('Recording stream returned empty body');
+  }
+
+  let mime = res.headers.get('content-type')?.split(';')[0].trim() || '';
+  if (!mime || mime === 'application/octet-stream') {
+    mime = sniffAudioMimeFromUrl(recordingPath);
+  }
+
+  return { buf, mime };
+}
+
+/**
+ * Same-origin playback URL for `<audio>` via Open API stream.
+ *
+ * Token acquisition uses the Edge proxy (supabase.functions.invoke → PBX get_token),
+ * which is server-to-server and not subject to CORS.  The token is then passed to
+ * stream_recording so Edge can use it even when no YEASTAR_* Supabase secrets are set.
+ * Edge's own server secrets (if set) are tried first, so the two complement each other.
+ */
+export async function getRecordingPlaybackObjectUrl(
+  recordingPath: string
+): Promise<string> {
+  const toBlobUrl = ({ buf, mime }: { buf: ArrayBuffer; mime: string }) =>
+    URL.createObjectURL(new Blob([buf], { type: mime }));
+
+  // ── get a client-side token (via Edge proxy get_token — no CORS) ─────────────
+  // Use the cache if still valid; otherwise try each credential through the Edge proxy.
+  let clientToken: string | null = null;
+  try {
+    clientToken = await getYeastarTokenForRecordings();
+  } catch {
+    // No token available — Edge will still try its own YEASTAR_* Supabase secrets
+  }
+
+  // ── 1. Edge stream ────────────────────────────────────────────────────────────
+  try {
+    return toBlobUrl(await streamRecordingThroughEdge(recordingPath, clientToken ?? undefined));
+  } catch (edgeErr) {
+    if (edgeErr instanceof RecordingAccessDeniedError) {
+      const denied = edgeErr.serverDenied?.length
+        ? edgeErr.serverDenied
+        : ['all configured apps'];
+      throw new Error(formatRecordingPermissionError(denied));
+    }
+    if (edgeErr instanceof IpForbiddenError) {
+      // Edge egress is blocked by PBX IP rules → fall through to browser pipeline
+    } else {
+      const msg = edgeErr instanceof Error ? edgeErr.message : String(edgeErr);
+      if (!isRecordingRelayAuthError(msg)) throw edgeErr;
+      // Auth-related Edge failure → try browser pipeline
+    }
+  }
+
+  // ── 2. Browser pipeline (office IP, WAV relay through Edge avoids CORS) ──────
+  // `fetchRecordingViaBrowserPipeline` calls recording/download JSON directly from
+  // the browser (PBX usually allows this from a whitelisted office IP), then relays
+  // the actual WAV bytes through the Edge function so the browser doesn't fetch
+  // cross-origin audio (which would CORS-fail).
+  try {
+    return toBlobUrl(await fetchRecordingViaBrowserPipeline(recordingPath));
+  } catch (browserErr) {
+    if (browserErr instanceof RecordingTokenExpiredError) {
+      clearRecordingAuth();
+      return toBlobUrl(await fetchRecordingViaBrowserPipeline(recordingPath));
+    }
+    if (browserErr instanceof RecordingAccessDeniedError) {
+      const denied = browserErr.serverDenied?.length
+        ? browserErr.serverDenied
+        : [browserErr.credentialLabel ?? 'unknown'];
+      throw new Error(formatRecordingPermissionError(denied));
+    }
+    throw browserErr;
+  }
+}
+
+function sniffAudioMimeFromUrl(url: string): string {
+  const path = url.split('?')[0] || url;
+  if (/\.mp3$/i.test(path)) return 'audio/mpeg';
+  if (/\.wav$/i.test(path)) return 'audio/wav';
+  return 'audio/wav';
+}
+

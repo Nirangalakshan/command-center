@@ -8,6 +8,10 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    /** Avoid Chrome ERR_CACHE_READ_FAILURE on lazy `import()` chunks in dev. */
+    headers: {
+      "Cache-Control": "no-store",
+    },
     hmr: {
       overlay: false,
     },

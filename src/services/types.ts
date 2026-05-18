@@ -463,6 +463,8 @@ export interface Permissions {
   canViewAgentOnboarding: boolean;
   canViewAgentOnboardingTab: boolean;
   canViewAuditLogs: boolean;
+  /** Super-admin only: play or download Yeastar call recordings on the Calls tab. */
+  canViewCallRecordings: boolean;
   /** Super-admin only: edit or remove agents from the Agents tab. */
   canManageAgents: boolean;
   /** Super-admin only: view & manage DID ↔ workshop/branch mappings. */

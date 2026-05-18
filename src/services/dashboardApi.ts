@@ -154,6 +154,82 @@ export async function fetchAllAgents(): Promise<Agent[]> {
   return fetchAgents(undefined);
 }
 
+function pickBestAgentByPhoneNumber(
+  agents: Agent[],
+  callerNumber: string,
+): Agent | null {
+  if (agents.length === 0) return null;
+
+  const normCaller = normalizePhoneNumber(callerNumber);
+  if (!normCaller) return null;
+
+  const variantSet = new Set(buildPhoneLookupVariants(callerNumber).map(normalizePhoneNumber));
+
+  const scored = agents
+    .map((a) => {
+      const p = normalizePhoneNumber(a.phone);
+      if (!p) return { a, score: 0 };
+      if (p === normCaller) return { a, score: 20 };
+      if (variantSet.has(p)) return { a, score: 15 };
+      return { a, score: 0 };
+    })
+    .filter((row) => row.score > 0);
+
+  if (scored.length === 0) return null;
+  scored.sort((x, y) => y.score - x.score || x.a.name.localeCompare(y.a.name));
+  return scored[0].a;
+}
+
+/**
+ * Query `public.agents` where `phone_number` matches any caller format variant.
+ */
+async function queryAgentsByPhoneNumber(
+  callerNumber: string,
+  tenantId?: string | null,
+): Promise<Agent[]> {
+  const variants = buildPhoneLookupVariants(callerNumber).filter(Boolean);
+  if (variants.length === 0) return [];
+
+  // PostgREST `in` supports up to ~30 values
+  const inValues = variants.slice(0, 30);
+
+  let query = supabase
+    .from("agents")
+    .select("*, tenants(name)")
+    .in("phone_number", inValues)
+    .order("name")
+    .limit(20);
+
+  if (tenantId && tenantId !== "unknown") {
+    query = query.eq("tenant_id", tenantId);
+  }
+
+  const { data, error } = await query;
+  if (error) return [];
+  return ((data || []) as Record<string, unknown>[]).map(mapAgent);
+}
+
+/**
+ * Match incoming CLI to `public.agents.phone_number` (Supabase roster mobile).
+ * Tries the call tenant first, then all tenants. Does not use extension.
+ */
+export async function fetchAgentByCallerNumber(
+  callerNumber: string,
+  preferredTenantId?: string | null,
+): Promise<Agent | null> {
+  const trimmed = String(callerNumber ?? "").trim();
+  if (!trimmed) return null;
+
+  if (preferredTenantId && preferredTenantId !== "unknown") {
+    const scoped = await queryAgentsByPhoneNumber(trimmed, preferredTenantId);
+    const hit = pickBestAgentByPhoneNumber(scoped, trimmed);
+    if (hit) return hit;
+  }
+
+  const global = await queryAgentsByPhoneNumber(trimmed, null);
+  return pickBestAgentByPhoneNumber(global, trimmed);
+}
+
 function parseWorkshopUserRole(raw: unknown): WorkshopUserRole | null {
   const v = String(raw ?? "").trim();
   if (v === "owner" || v === "branch_admin" || v === "staff") return v;

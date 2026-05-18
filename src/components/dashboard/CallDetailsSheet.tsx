@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { CalendarCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -7,7 +7,6 @@ import {
   History,
   Mail,
   MapPin,
-  MessageSquareText,
   UserRound,
   Wrench,
 } from "lucide-react";
@@ -19,10 +18,9 @@ import type {
   ServiceRecord,
   Tenant,
   VehicleRecord,
+  WorkshopUserRole,
 } from "@/services/types";
-import {
-  fetchLatestBookingByPhone,
-} from "@/services/dashboardApi";
+import { fetchAgentByCallerNumber } from "@/services/dashboardApi";
 import { fetchFirebaseCallerContext } from "@/services/customersApi";
 import {
   getServicesByBranch,
@@ -63,7 +61,7 @@ export interface CallDetailSnapshot {
   ownerId: string;
 }
 
-// ── SessionStorage persistence for call detail across page navigation ──
+// ?? SessionStorage persistence for call detail across page navigation ??
 const CALL_DETAIL_STORAGE_KEY = 'cc_active_call_detail';
 
 export function saveCallDetailToSession(detail: CallDetailSnapshot): void {
@@ -139,7 +137,7 @@ export function buildLiveCallSnapshot(args: {
     workshopName: tenant?.name || agent.tenantName || "Workshop",
     workshopColor: tenant?.brandColor || "var(--cc-color-cyan)",
     queueName: queue?.name || agent.queueName || "Live Queue",
-    agentOrGroupLabel: `Agent: ${agent.name}${agent.extension ? ` · Ext ${agent.extension}` : ""}`,
+    agentOrGroupLabel: `Agent: ${agent.name}${agent.extension ? ` ? Ext ${agent.extension}` : ""}`,
     customerPhone: activeNumber,
     customerName: incomingCall?.callerName ?? null,
     didLabel:
@@ -151,7 +149,7 @@ export function buildLiveCallSnapshot(args: {
     branchName: incomingCall?.branchName ?? "",
     mappingWorkshopName: incomingCall?.mappingWorkshopName ?? "",
     ownerId: incomingCall?.ownerId ?? "",
-    callStatusText: `Live for ${agent.callStartTime ? formatDuration(now - agent.callStartTime) : "—"}`,
+    callStatusText: `Live for ${agent.callStartTime ? formatDuration(now - agent.callStartTime) : "?"}`,
   };
 }
 
@@ -164,6 +162,8 @@ export function CallDetailsSheet({
   const [callerContext, setCallerContext] = useState<CallerContext | null>(
     null,
   );
+  /** Supabase `agents.phone_number` match for this caller (separate from Firebase customer). */
+  const [matchedAgent, setMatchedAgent] = useState<Agent | null>(null);
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
 
@@ -184,6 +184,7 @@ export function CallDetailsSheet({
 
     if (!open || !detail?.customerPhone) {
       setCallerContext(null);
+      setMatchedAgent(null);
       setContextError(null);
       setContextLoading(false);
       return () => {
@@ -194,25 +195,32 @@ export function CallDetailsSheet({
     setContextLoading(true);
     setContextError(null);
     setCallerContext(null);
+    setMatchedAgent(null);
 
-    // Always fetch caller context from Firebase bookings
     const ownerKey = detail.ownerId || detail.tenantId;
-    const contextPromise = ownerKey
+    const firebasePromise = ownerKey
       ? fetchFirebaseCallerContext(ownerKey, detail.customerPhone)
       : Promise.resolve(null);
+    const agentPromise = fetchAgentByCallerNumber(
+      detail.customerPhone,
+      detail.tenantId,
+    );
 
-    contextPromise
-      .then((context) => {
-        if (!cancelled) setCallerContext(context);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          // console.error('[CallDetailsSheet] Caller context fetch failed:', error);
+    Promise.allSettled([firebasePromise, agentPromise])
+      .then((results) => {
+        if (cancelled) return;
+        const [fbRes, agentRes] = results;
+        setCallerContext(fbRes.status === "fulfilled" ? fbRes.value : null);
+        setMatchedAgent(agentRes.status === "fulfilled" ? agentRes.value : null);
+        const fbFail = fbRes.status === "rejected" ? fbRes.reason : null;
+        const agFail = agentRes.status === "rejected" ? agentRes.reason : null;
+        if (fbFail && agFail) {
+          const err = fbFail ?? agFail;
           setContextError(
-            error instanceof Error
-              ? error.message
-              : "Failed to load caller context",
+            err instanceof Error ? err.message : "Failed to load caller context",
           );
+        } else {
+          setContextError(null);
         }
       })
       .finally(() => {
@@ -255,17 +263,31 @@ export function CallDetailsSheet({
 
 
   const resolvedCustomerName =
-    callerContext?.customer.name || normalizeCustomerName(detail?.customerName);
-  const resolvedCustomerEmail = callerContext?.customer.email || "";
+    callerContext?.customer.name ||
+    matchedAgent?.name ||
+    normalizeCustomerName(detail?.customerName);
+  const resolvedCustomerEmail =
+    callerContext?.customer.email || matchedAgent?.email || "";
   const availableVehicles = callerContext?.vehicles || [];
-  const statusTone = callerContext
+  const hasKnownProfile = Boolean(callerContext) || Boolean(matchedAgent);
+  const statusTone = hasKnownProfile
     ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
     : "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+  const matchedAgentWorkshop =
+    matchedAgent?.tenantName ||
+    detail?.mappingWorkshopName ||
+    detail?.workshopName ||
+    "";
+  const matchedAgentRoleLabel = matchedAgent
+    ? formatMatchedAgentRole(matchedAgent)
+    : "";
   const statusLabel = callerContext
     ? "Known Customer"
-    : contextLoading
-      ? "Searching..."
-      : "Unknown Caller";
+    : matchedAgent
+      ? "Command Centre Agent"
+      : contextLoading
+        ? "Searching..."
+        : "Unknown Caller";
   const canOpenBooking = detail?.mode === "live";
   // const canOpenBooking = true;
   if (!detail) return null;
@@ -307,6 +329,42 @@ export function CallDetailsSheet({
             </SheetHeader>
 
             <div className="space-y-6 p-6">
+              {matchedAgent ? (
+                <Card className="border-sky-200 bg-sky-50/40 shadow-sm ring-1 ring-sky-100">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base text-sky-950">
+                      Matched agent
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid gap-4 pt-0 text-sm text-slate-800 sm:grid-cols-3">
+                    <div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                        Name
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-slate-950">
+                        {matchedAgent.name}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                        Workshop
+                      </div>
+                      <div className="mt-1 font-semibold text-slate-950">
+                        {matchedAgentWorkshop || "-"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                        Role
+                      </div>
+                      <div className="mt-1 font-semibold text-slate-950">
+                        {matchedAgentRoleLabel || "-"}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+
               <Card className="border-slate-200 bg-white shadow-sm">
                 <CardContent className="grid gap-4 p-6 md:grid-cols-2">
                   <div>
@@ -393,6 +451,7 @@ export function CallDetailsSheet({
                   </CardContent>
                 </Card>
               )}
+
 
               <Card className="border-slate-200 bg-white shadow-sm">
                 <CardHeader className="pb-3">
@@ -528,9 +587,10 @@ export function CallDetailsSheet({
               </Tabs>
 
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm text-slate-600">
-                Quick context: this panel now uses workshop customer records
-                tied to the incoming caller number, so agents see real vehicles
-                and service history instead of generated placeholder data.
+                Quick context: workshop vehicles and history come from Firebase
+                bookings for this number. The command-centre agent roster in
+                Supabase is also checked so internal or team calls match by
+                extension or roster phone.
               </div>
             </div>
           </div>
@@ -538,6 +598,24 @@ export function CallDetailsSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+function workshopUserRoleLabel(role: WorkshopUserRole | null | undefined): string {
+  switch (role) {
+    case "owner":
+      return "Owner";
+    case "branch_admin":
+      return "Branch admin";
+    case "staff":
+      return "Staff";
+    default:
+      return "";
+  }
+}
+
+/** BMS workshop role from `agents.workshop_user_role` only. */
+function formatMatchedAgentRole(agent: Agent): string {
+  return workshopUserRoleLabel(agent.workshopUserRole);
 }
 
 function normalizeCustomerName(name?: string | null): string {
@@ -628,7 +706,7 @@ function VehicleCard({
                       formatAmount(service.amount),
                     ]
                       .filter(Boolean)
-                      .join(" · ")}
+                      .join(" ? ")}
                   </div>
                   {service.advisorNotes && (
                     <div className="mt-0.5 text-xs text-slate-500 italic">

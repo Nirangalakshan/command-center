@@ -1,6 +1,17 @@
 import '@/styles/dashboard.css';
 
-import { useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  lazy,
+  Suspense,
+  memo,
+  type ReactNode,
+} from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import type { TenantOnboarding, NewClientForm, UserSession, Permissions } from '@/services/types';
 import { useDashboard } from '@/context/DashboardDataContext';
@@ -9,67 +20,87 @@ import { useFirebaseAuth } from '@/integrations/firebase/useFirebaseAuth';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { AgentNavAttendanceActions } from '@/components/dashboard/AgentNavAttendanceActions';
 import { AgentAttendanceTodayProvider } from '@/context/AgentAttendanceTodayContext';
-import { SoftphoneWidget } from '@/components/dashboard/SoftphoneWidget';
 import DashboardSidebar from '@/tabs/DashboardSidebar';
 import { LoadingSkeleton } from '@/components/dashboard/LoadingSkeleton';
 import { OverviewTab as RawOverviewTab } from '@/tabs/OverviewTab';
-import { AgentsTab as RawAgentsTab } from '@/tabs/AgentsTab';
-import { AgentPerformanceTab as RawAgentPerformanceTab } from '@/tabs/AgentPerformanceTab';
-import { CallsTab as RawCallsTab } from '@/tabs/CallsTab';
-import { SipLinesTab as RawSipLinesTab } from '@/tabs/SipLinesTab';
-import { ClientsTab as RawClientsTab } from '@/tabs/ClientsTab';
-import { AgentOnboardingTab as RawAgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
-import { AttendanceTab as RawAttendanceTab } from '@/tabs/AttendanceTab';
-import { AuditLogsTab as RawAuditLogsTab } from '@/tabs/AuditLogsTab';
-import { ChatTab as RawChatTab } from '@/tabs/ChatTab';
-import { InternalChatTab as RawInternalChatTab } from '@/tabs/InternalChatTab';
-import { DIDMappingsTab as RawDIDMappingsTab } from '@/tabs/DIDMappingsTab';
-import {
-  SalesAgentSuburbAssignmentTab as RawSalesAgentSuburbAssignmentTab,
-  SalesCallProgressTab as RawSalesCallProgressTab,
-  SalesSuburbWorkshopsTab as RawSalesSuburbWorkshopsTab,
-} from '@/tabs/sales-workspace/SalesWorkspaceAdminTabs';
-import {
-  AgentFollowUpsTab as RawAgentFollowUpsTab,
-  AgentMyCallListTab as RawAgentMyCallListTab,
-  AgentSalesHomeTab as RawAgentSalesHomeTab,
-  AgentCompletedTab as RawAgentCompletedTab,
-} from '@/tabs/sales-workspace/SalesWorkspaceAgentTabs';
-import { memo } from 'react';
 
-// Memoize tab components to prevent re-renders when irrelevant state (like the 1s clock) changes
-// Note: OverviewTab still needs 'now', but other tabs might not.
 const OverviewTab = memo(RawOverviewTab);
-const AgentsTab = memo(RawAgentsTab);
-const AgentPerformanceTab = memo(RawAgentPerformanceTab);
-const CallsTab = memo(RawCallsTab);
-const SipLinesTab = memo(RawSipLinesTab);
-const ClientsTab = memo(RawClientsTab);
-const AgentOnboardingTab = memo(RawAgentOnboardingTab);
-const AttendanceTab = memo(RawAttendanceTab);
-const AuditLogsTab = memo(RawAuditLogsTab);
-const ChatTab = memo(RawChatTab);
-const InternalChatTab = memo(RawInternalChatTab);
-const DIDMappingsTab = memo(RawDIDMappingsTab);
-const SalesAgentSuburbAssignmentTab = memo(RawSalesAgentSuburbAssignmentTab);
-const SalesCallProgressTab = memo(RawSalesCallProgressTab);
-const SalesSuburbWorkshopsTab = memo(RawSalesSuburbWorkshopsTab);
-const AgentFollowUpsTab = memo(RawAgentFollowUpsTab);
-const AgentMyCallListTab = memo(RawAgentMyCallListTab);
-const AgentSalesHomeTab = memo(RawAgentSalesHomeTab);
-const AgentCompletedTab = memo(RawAgentCompletedTab);
+
+const AgentsTab = lazy(() =>
+  import('@/tabs/AgentsTab').then((m) => ({ default: m.AgentsTab })),
+);
+const AgentPerformanceTab = lazy(() =>
+  import('@/tabs/AgentPerformanceTab').then((m) => ({ default: m.AgentPerformanceTab })),
+);
+const CallsTab = lazy(() => import('@/tabs/CallsTab').then((m) => ({ default: m.CallsTab })));
+const SipLinesTab = lazy(() =>
+  import('@/tabs/SipLinesTab').then((m) => ({ default: m.SipLinesTab })),
+);
+const ClientsTab = lazy(() =>
+  import('@/tabs/ClientsTab').then((m) => ({ default: m.ClientsTab })),
+);
+const AgentOnboardingTab = lazy(() =>
+  import('@/tabs/AgentOnboardingTab').then((m) => ({ default: m.AgentOnboardingTab })),
+);
+const AttendanceTab = lazy(() =>
+  import('@/tabs/AttendanceTab').then((m) => ({ default: m.AttendanceTab })),
+);
+const AuditLogsTab = lazy(() =>
+  import('@/tabs/AuditLogsTab').then((m) => ({ default: m.AuditLogsTab })),
+);
+const ChatTab = lazy(() => import('@/tabs/ChatTab').then((m) => ({ default: m.ChatTab })));
+const DIDMappingsTab = lazy(() =>
+  import('@/tabs/DIDMappingsTab').then((m) => ({ default: m.DIDMappingsTab })),
+);
+const SalesAgentSuburbAssignmentTab = lazy(() =>
+  import('@/tabs/sales-workspace/SalesWorkspaceAdminTabs').then((m) => ({
+    default: m.SalesAgentSuburbAssignmentTab,
+  })),
+);
+const SalesCallProgressTab = lazy(() =>
+  import('@/tabs/sales-workspace/SalesWorkspaceAdminTabs').then((m) => ({
+    default: m.SalesCallProgressTab,
+  })),
+);
+const SalesSuburbWorkshopsTab = lazy(() =>
+  import('@/tabs/sales-workspace/SalesWorkspaceAdminTabs').then((m) => ({
+    default: m.SalesSuburbWorkshopsTab,
+  })),
+);
+const AgentFollowUpsTab = lazy(() =>
+  import('@/tabs/sales-workspace/SalesWorkspaceAgentTabs').then((m) => ({
+    default: m.AgentFollowUpsTab,
+  })),
+);
+const AgentMyCallListTab = lazy(() =>
+  import('@/tabs/sales-workspace/SalesWorkspaceAgentTabs').then((m) => ({
+    default: m.AgentMyCallListTab,
+  })),
+);
+const AgentSalesHomeTab = lazy(() =>
+  import('@/tabs/sales-workspace/SalesWorkspaceAgentTabs').then((m) => ({
+    default: m.AgentSalesHomeTab,
+  })),
+);
+const AgentCompletedTab = lazy(() =>
+  import('@/tabs/sales-workspace/SalesWorkspaceAgentTabs').then((m) => ({
+    default: m.AgentCompletedTab,
+  })),
+);
+
 import { fetchClients, createClient, advanceClientStage } from '@/services/dashboardApi';
 import { fetchChats } from '@/services/chatApi';
-import { 
-  fetchAllLeaveRequests, 
+import {
+  fetchAllLeaveRequests,
   subscribeToAllLeaveRequestChanges,
   fetchMyLeaveRequests,
-  subscribeToMyLeaveRequests 
+  subscribeToMyLeaveRequests,
 } from '@/services/leaveRequestsApi';
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { SoftphoneCallLogContext } from '@/services/linkusCallLog';
 import { cacheAgentSession } from '@/services/linkusCallLog';
+import { prefetchDashboardNavTab } from '@/lib/dashboardPrefetch';
 
 interface DashboardPageProps {
   session: UserSession;
@@ -92,16 +123,42 @@ function AgentAttendanceShell({
   return <>{children}</>;
 }
 
+function TabSuspenseFallback() {
+  return (
+    <div className="flex min-h-[220px] items-center justify-center rounded-2xl border border-border/60 bg-white text-sm text-muted-foreground">
+      Loading tab…
+    </div>
+  );
+}
+
 export default function DashboardPage({ session, permissions, onSignOut }: DashboardPageProps) {
   const d = useDashboard();
+  const queryClient = useQueryClient();
+  const setDashboardTab = d.setSelectedTab;
   const { formattedDate: clockDate, formattedTime: clockTime } = useLiveClock();
   const { firebaseUser } = useFirebaseAuth();
   const [clients, setClients] = useState<TenantOnboarding[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (!permissions.canViewClientsTab) return;
+    if (d.selectedTab !== 'clients') return;
+    if (!d.selectedTenant) return;
     fetchClients(d.selectedTenant).then(setClients).catch(() => {});
-  }, [d.selectedTenant]);
+  }, [d.selectedTenant, d.selectedTab, permissions.canViewClientsTab]);
+
+  const handlePrefetchTab = useCallback(
+    (tabKey: string) => {
+      const tenantId = (session.tenantId || d.selectedTenant || d.tenants[0]?.id) ?? null;
+      prefetchDashboardNavTab(queryClient, {
+        tenantId,
+        callDate: d.callDate,
+        tabKey,
+        isAgent: session.role === 'agent',
+      });
+    },
+    [queryClient, session.tenantId, session.role, d.selectedTenant, d.tenants, d.callDate],
+  );
 
   useEffect(() => {
     if (session?.role === 'agent') {
@@ -142,17 +199,17 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     };
 
     if (!isAllowed(d.selectedTab)) {
-      d.setSelectedTab('overview');
+      setDashboardTab('overview');
     }
-  }, [d.selectedTab, d.setSelectedTab, permissions]);
+  }, [d.selectedTab, setDashboardTab, permissions]);
 
   const handleSelectTab = useCallback((tab: string) => {
     if (tab === 'bookings') {
       navigate('/bookings/dashboard');
       return;
     }
-    d.setSelectedTab(tab);
-  }, [d.setSelectedTab, navigate]);
+    setDashboardTab(tab);
+  }, [setDashboardTab, navigate]);
 
   const handleCreateClient = useCallback(async (data: NewClientForm) => {
     if (!session) return;
@@ -219,7 +276,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     };
 
     void run();
-    const id = setInterval(run, 45_000);
+    const id = setInterval(run, 120_000);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -253,7 +310,8 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     };
 
     fetchUnread();
-    const id = setInterval(fetchUnread, 30_000);
+    const pollMs = d.selectedTab === 'chat' ? 30_000 : 90_000;
+    const id = setInterval(fetchUnread, pollMs);
 
     const handleReadEvent = () => fetchUnread();
     window.addEventListener('internal-chat-read', handleReadEvent);
@@ -263,7 +321,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       clearInterval(id);
       window.removeEventListener('internal-chat-read', handleReadEvent);
     };
-  }, [permissions.canViewInternalChat, currentAgentDbId, session.role]);
+  }, [permissions.canViewInternalChat, currentAgentDbId, session.role, d.selectedTab]);
 
   useEffect(() => {
     if (session.role !== 'super-admin') return;
@@ -289,13 +347,23 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
 
     void loadLeaves();
 
-    const unsub = subscribeToAllLeaveRequestChanges((row, event) => {
-      // Re-fetch on any change so we don't have to keep a full list in memory just to maintain the count.
-      void loadLeaves();
+    const debounceMs = 4000;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (reloadTimer) return;
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        void loadLeaves();
+      }, debounceMs);
+    };
+
+    const unsub = subscribeToAllLeaveRequestChanges(() => {
+      scheduleReload();
     });
 
     return () => {
       cancelled = true;
+      if (reloadTimer) clearTimeout(reloadTimer);
       unsub();
     };
   }, [session.role, d.agents]);
@@ -353,6 +421,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       <DashboardSidebar
         selectedTab={d.selectedTab}
         onSelect={handleSelectTab}
+        onPrefetchTab={handlePrefetchTab}
         permissions={permissions}
         displayName={session.displayName}
         currentRole={session.role}
@@ -421,6 +490,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   callDate={d.callDate}
                 />
               )}
+              <Suspense fallback={<TabSuspenseFallback />}>
               {(d.selectedTab === 'attendance' || d.selectedTab === 'leave-requests' || d.selectedTab === 'shift-schedule') && (
                 <AttendanceTab
                   session={session}
@@ -451,6 +521,8 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                 <AgentPerformanceTab
                   agents={d.agents}
                   calls={d.calls}
+                  queues={d.queues}
+                  tenants={d.tenants}
                   tenantId={effectiveSalesTenantId}
                 />
               )}
@@ -481,6 +553,8 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   calls={d.calls}
                   queues={d.queues}
                   tenants={d.tenants}
+                  agents={d.agents}
+                  session={session}
                   permissions={permissions}
                   callDate={d.callDate}
                   onDateChange={d.setCallDate}
@@ -580,6 +654,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                   onRefreshDashboard={d.refresh}
                 />
               )}
+              </Suspense>
             </>
           )}
         </main>

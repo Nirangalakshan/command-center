@@ -5,6 +5,7 @@ import {
   getRecordingDownloadUrl,
   getRecordingPlaybackObjectUrl,
 } from "@/services/yeastarService";
+import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 interface CallRecordingPlayerProps {
@@ -29,11 +30,14 @@ function mediaErrorMessage(el: HTMLAudioElement): string {
 }
 
 export function CallRecordingPlayer({ recordingPath }: CallRecordingPlayerProps) {
+  const { permissions } = useAuth();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   /** `blob:` URL from edge relay — must revoke to avoid leaking memory */
   const objectUrlRef = useRef<string | null>(null);
+
+  const canAccess = permissions.canViewCallRecordings;
 
   const revokeBlob = () => {
     if (objectUrlRef.current) {
@@ -54,6 +58,7 @@ export function CallRecordingPlayer({ recordingPath }: CallRecordingPlayerProps)
   }, [recordingPath]);
 
   const loadRecording = async () => {
+    if (!canAccess) return;
     if (blobUrl && audioRef.current) {
       void audioRef.current.play();
       return;
@@ -77,6 +82,7 @@ export function CallRecordingPlayer({ recordingPath }: CallRecordingPlayerProps)
   };
 
   const handleDownload = async () => {
+    if (!canAccess) return;
     try {
       const url = await getRecordingDownloadUrl(recordingPath);
       window.open(url, "_blank", "noopener,noreferrer");
@@ -85,6 +91,17 @@ export function CallRecordingPlayer({ recordingPath }: CallRecordingPlayerProps)
       toast.error(`Failed to generate download link: ${msg}`);
     }
   };
+
+  if (!canAccess) {
+    return (
+      <span
+        className="text-muted-foreground text-[10px]"
+        title="Recordings are restricted to super admins"
+      >
+        —
+      </span>
+    );
+  }
 
   return (
     <div className="flex min-w-0 flex-col gap-2 py-0.5">

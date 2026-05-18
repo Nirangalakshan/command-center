@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import type { Call, CallResult, Queue, Tenant, Permissions } from '@/services/types';
+import { useState, useEffect, useRef, useMemo, useLayoutEffect, type UIEvent } from 'react';
+import type { Agent, Call, CallResult, Queue, Tenant, Permissions, UserSession } from '@/services/types';
 import { fetchCallerNameByPhone } from '@/services/customersApi';
 import { fetchDIDMappings } from '@/services/dashboardApi';
 import {
@@ -40,6 +40,8 @@ interface CallsTabProps {
   calls: Call[];
   queues: Queue[];
   tenants: Tenant[];
+  agents: Agent[];
+  session: UserSession;
   permissions: Permissions;
   callDate: string;
   onDateChange: (ymd: string) => void;
@@ -204,11 +206,14 @@ function CallStatusBadge({ result }: { result: CallResult }) {
 export function CallsTab({ 
   calls, 
   queues, 
-  tenants, 
+  tenants,
+  agents,
+  session,
   permissions,
   callDate,
   onDateChange 
 }: CallsTabProps) {
+  const isAgentView = session.role === 'agent';
   const [filterResult, setFilterResult] = useState('all');
   const [filterQueue, setFilterQueue] = useState('all');
   const [filterDirection, setFilterDirection] = useState<'all' | 'inbound' | 'outbound'>('all');
@@ -227,15 +232,22 @@ export function CallsTab({
     return merged.filter((c) => getAustralianDateKey(new Date(c.startTime).getTime()) === callDate);
   }, [calls, linkusLog, callDate]);
 
-  const { nameMap, loading: namesLoading, didTenantLabelMap } = useCallerNames(allCalls, tenants);
+  const roleScopedCalls = useMemo(() => {
+    if (!isAgentView) return allCalls;
+    const me = agents.find((a) => a.userId === session.userId);
+    if (!me) return [];
+    return allCalls.filter((c) => c.agentId === me.id && c.result === 'answered');
+  }, [allCalls, agents, isAgentView, session.userId]);
+
+  const { nameMap, loading: namesLoading, didTenantLabelMap } = useCallerNames(roleScopedCalls, tenants);
 
   const availableQueues = useMemo(() => {
-    const qids = new Set(allCalls.map((c) => c.queueId));
+    const qids = new Set(roleScopedCalls.map((c) => c.queueId));
     return queues.filter((q) => qids.has(q.id));
-  }, [allCalls, queues]);
+  }, [roleScopedCalls, queues]);
 
   const filtered = useMemo(() => {
-    let list = allCalls;
+    let list = roleScopedCalls;
     if (filterDirection !== 'all') {
       list = list.filter((c) => c.direction === filterDirection);
     }
@@ -263,7 +275,150 @@ export function CallsTab({
       });
     }
     return list;
-  }, [allCalls, filterDirection, filterResult, filterQueue, searchTerm, nameMap, didTenantLabelMap]);
+  }, [roleScopedCalls, filterDirection, filterResult, filterQueue, searchTerm, nameMap, didTenantLabelMap]);
+
+  const callTableColSpan =
+    8 +
+    (permissions.canViewTenantNames ? 1 : 0) +
+    (permissions.canViewCallRecordings ? 1 : 0);
+  const virtualMinRows = 36;
+  const virtualRowPx = 64;
+  const virtualOverscan = 8;
+  const useVirtualTable = filtered.length >= virtualMinRows;
+
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(560);
+
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+    setScrollTop(0);
+  }, [callDate, filterDirection, filterResult, filterQueue, searchTerm]);
+
+  useLayoutEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const measure = () => setViewportH(el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [filtered.length]);
+
+  const onCallsTableScroll = (e: UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  };
+
+  const { topPad, bottomPad, visibleCalls } = useMemo(() => {
+    if (!useVirtualTable) {
+      return { topPad: 0, bottomPad: 0, visibleCalls: filtered };
+    }
+    const startI = Math.max(0, Math.floor(scrollTop / virtualRowPx) - virtualOverscan);
+    const endI = Math.min(
+      filtered.length,
+      Math.ceil((scrollTop + Math.max(viewportH, 240)) / virtualRowPx) + virtualOverscan,
+    );
+    return {
+      topPad: startI * virtualRowPx,
+      bottomPad: (filtered.length - endI) * virtualRowPx,
+      visibleCalls: filtered.slice(startI, endI),
+    };
+  }, [filtered, scrollTop, viewportH, useVirtualTable, virtualRowPx, virtualOverscan]);
+
+  function renderCallRow(c: Call) {
+    const tenant = tenants.find((t) => t.id === c.tenantId);
+    const brandColor = tenant?.brandColor || 'var(--cc-color-cyan)';
+    const resolvedName = nameMap.get(c.callerNumber) || c.callerName;
+    const mappedTenantLabel = c.dialedNumber
+      ? didTenantLabelMap.get(c.dialedNumber)
+      : undefined;
+    const tenantDisplayName = mappedTenantLabel || c.tenantName;
+
+    return (
+      <TableRow
+        key={c.id}
+        className={useVirtualTable ? 'align-top [&>td]:py-2' : undefined}
+        style={useVirtualTable ? { height: virtualRowPx } : undefined}
+      >
+        <TableCell className="font-mono text-xs">{formatTimeAu(c.startTime)}</TableCell>
+        <TableCell>
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge
+              variant="outline"
+              className={
+                c.direction === 'outbound'
+                  ? 'rounded-full border-violet-300 bg-violet-50 text-[11px] font-semibold text-violet-800'
+                  : 'rounded-full border-sky-300 bg-sky-50 text-[11px] font-semibold text-sky-800'
+              }
+            >
+              {c.direction === 'outbound' ? 'Outbound' : 'Inbound'}
+            </Badge>
+            {c.id.startsWith('linkus-') && (
+              <Badge
+                variant="outline"
+                className="rounded-full border-amber-200 bg-amber-50 text-[10px] font-medium text-amber-900"
+                title="Logged from this browser until PBX CDR appears in Supabase"
+              >
+                Softphone
+              </Badge>
+            )}
+          </div>
+        </TableCell>
+        <TableCell className="text-sm">
+          {resolvedName ? (
+            <span className="font-medium text-foreground">{resolvedName}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </TableCell>
+        <TableCell className="font-mono text-xs tabular-nums">
+          {formatPhone(c.callerNumber)}
+        </TableCell>
+        <TableCell className="font-mono text-xs tabular-nums">
+          {c.dialedNumber ? formatPhone(c.dialedNumber) : '—'}
+        </TableCell>
+        {permissions.canViewTenantNames && (
+          <TableCell>
+            <span
+              className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
+              style={{
+                color: brandColor,
+                borderColor: `${brandColor}40`,
+                background: `${brandColor}12`,
+              }}
+            >
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: brandColor }} />
+              {tenantDisplayName}
+            </span>
+          </TableCell>
+        )}
+        <TableCell className="max-w-[200px]">
+          {(c.result === 'answered' || (c.result as string) === 'rejected') ? (
+            <span className="font-medium text-foreground">{c.agentName}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </TableCell>
+        <TableCell className="font-mono text-xs">
+          {c.durationSeconds > 0 ? formatSeconds(c.durationSeconds) : '—'}
+        </TableCell>
+        <TableCell>
+          <CallStatusBadge result={c.result} />
+        </TableCell>
+        {permissions.canViewCallRecordings && (
+          <TableCell>
+            {c.recordingUrl ? (
+              <CallRecordingPlayer recordingPath={c.recordingUrl} />
+            ) : (
+              <span className="text-muted-foreground text-[10px]">—</span>
+            )}
+          </TableCell>
+        )}
+      </TableRow>
+    );
+  }
 
   return (
     <div className="cc-fade-in space-y-6">
@@ -435,6 +590,11 @@ export function CallsTab({
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-3 text-base">
             Call History
+            {isAgentView && (
+              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-normal text-slate-600">
+                Your answered calls
+              </span>
+            )}
             {namesLoading && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-normal text-slate-500">
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-slate-400" />
@@ -447,7 +607,11 @@ export function CallsTab({
           {filtered.length === 0 ? (
             <EmptyState message="No calls match filters" />
           ) : (
-            <div className="max-h-[min(70vh,560px)] w-full min-w-0 overflow-auto rounded-md border border-border/60">
+            <div
+              ref={tableScrollRef}
+              onScroll={useVirtualTable ? onCallsTableScroll : undefined}
+              className="max-h-[min(70vh,560px)] w-full min-w-0 overflow-auto rounded-md border border-border/60"
+            >
             <Table>
               <TableHeader>
                 <TableRow>
@@ -462,96 +626,31 @@ export function CallsTab({
                   <TableHead>Agent</TableHead>
                   <TableHead>Duration</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Recording</TableHead>
+                  {permissions.canViewCallRecordings && (
+                    <TableHead>Recording</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((c) => {
-                  const tenant = tenants.find((t) => t.id === c.tenantId);
-                  const brandColor = tenant?.brandColor || 'var(--cc-color-cyan)';
-                  const resolvedName = nameMap.get(c.callerNumber) || c.callerName;
-                  const mappedTenantLabel = c.dialedNumber
-                    ? didTenantLabelMap.get(c.dialedNumber)
-                    : undefined;
-                  const tenantDisplayName = mappedTenantLabel || c.tenantName;
-
-                  return (
-                    <TableRow key={c.id}>
-                      <TableCell className="font-mono text-xs">{formatTimeAu(c.startTime)}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <Badge
-                            variant="outline"
-                            className={
-                              c.direction === 'outbound'
-                                ? 'rounded-full border-violet-300 bg-violet-50 text-[11px] font-semibold text-violet-800'
-                                : 'rounded-full border-sky-300 bg-sky-50 text-[11px] font-semibold text-sky-800'
-                            }
-                          >
-                            {c.direction === 'outbound' ? 'Outbound' : 'Inbound'}
-                          </Badge>
-                          {c.id.startsWith('linkus-') && (
-                            <Badge
-                              variant="outline"
-                              className="rounded-full border-amber-200 bg-amber-50 text-[10px] font-medium text-amber-900"
-                              title="Logged from this browser until PBX CDR appears in Supabase"
-                            >
-                              Softphone
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {resolvedName ? (
-                          <span className="font-medium text-foreground">{resolvedName}</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums">
-                        {formatPhone(c.callerNumber)}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs tabular-nums">
-                        {c.dialedNumber ? formatPhone(c.dialedNumber) : '—'}
-                      </TableCell>
-                      {permissions.canViewTenantNames && (
-                        <TableCell>
-                          <span
-                            className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold"
-                            style={{
-                              color: brandColor,
-                              borderColor: `${brandColor}40`,
-                              background: `${brandColor}12`,
-                            }}
-                          >
-                            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: brandColor }} />
-                            {tenantDisplayName}
-                          </span>
-                        </TableCell>
-                      )}
-                      <TableCell className="max-w-[200px]">
-                        {(c.result === 'answered' || (c.result as string) === 'rejected') ? (
-                          <span className="font-medium text-foreground">{c.agentName}</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {c.durationSeconds > 0 ? formatSeconds(c.durationSeconds) : '—'}
-                      </TableCell>
-                      <TableCell>
-                        <CallStatusBadge result={c.result} />
-                      </TableCell>
-                      <TableCell>
-                        {c.recordingUrl ? (
-                          <CallRecordingPlayer recordingPath={c.recordingUrl} />
-                        ) : (
-                          <span className="text-muted-foreground text-[10px]">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {useVirtualTable && topPad > 0 && (
+                  <TableRow className="hover:bg-transparent" aria-hidden>
+                    <TableCell
+                      colSpan={callTableColSpan}
+                      className="border-0 p-0"
+                      style={{ height: topPad }}
+                    />
+                  </TableRow>
+                )}
+                {visibleCalls.map((c) => renderCallRow(c))}
+                {useVirtualTable && bottomPad > 0 && (
+                  <TableRow className="hover:bg-transparent" aria-hidden>
+                    <TableCell
+                      colSpan={callTableColSpan}
+                      className="border-0 p-0"
+                      style={{ height: bottomPad }}
+                    />
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
             </div>
