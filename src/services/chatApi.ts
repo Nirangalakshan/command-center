@@ -127,7 +127,84 @@ export type FetchChatMessagesPage = {
 export type CallCenterChatOptions = {
   /** BMS workshop owner uid — sent as `X-Tenant-Id` on call-center chat routes. */
   workshopOwnerUid?: string | null;
+  farewellMessage?: string | null;
 };
+
+/** Call-center owner chat ids from Black (`start-with-owner`). Not support-chat conversation ids. */
+export function isCallCenterChatId(chatId: string | null | undefined): boolean {
+  return (chatId?.trim() ?? '').startsWith('cc_');
+}
+
+export function isCallCenterThreadId(
+  chatId: string | null | undefined,
+  knownThreadIds?: ReadonlySet<string>,
+): boolean {
+  const id = chatId?.trim() ?? '';
+  if (!id) return false;
+  if (isCallCenterChatId(id)) return true;
+  return knownThreadIds?.has(id) ?? false;
+}
+
+const CALL_CENTER_THREAD_TENANTS_KEY = 'command_center_call_center_thread_tenants';
+
+function readCallCenterThreadTenants(): Record<string, string> {
+  try {
+    const raw = sessionStorage.getItem(CALL_CENTER_THREAD_TENANTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, string> = {};
+    for (const [chatId, ownerUid] of Object.entries(parsed as Record<string, unknown>)) {
+      const id = String(chatId).trim();
+      const uid = String(ownerUid ?? '').trim();
+      if (id && uid) out[id] = uid;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeCallCenterThreadTenants(map: Record<string, string>): void {
+  try {
+    sessionStorage.setItem(CALL_CENTER_THREAD_TENANTS_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function persistCallCenterThreadTenant(chatId: string, workshopOwnerUid: string): void {
+  const id = chatId.trim();
+  const uid = workshopOwnerUid.trim();
+  if (!id || !uid) return;
+  const map = readCallCenterThreadTenants();
+  map[id] = uid;
+  writeCallCenterThreadTenants(map);
+}
+
+export function getCallCenterThreadTenant(chatId: string): string | undefined {
+  const uid = readCallCenterThreadTenants()[chatId.trim()];
+  return uid?.trim() || undefined;
+}
+
+export function clearCallCenterThreadTenant(chatId: string): void {
+  const id = chatId.trim();
+  if (!id) return;
+  const map = readCallCenterThreadTenants();
+  if (!(id in map)) return;
+  delete map[id];
+  writeCallCenterThreadTenants(map);
+}
+
+function isBenignCallCenterCloseFailure(status: number, detail: string): boolean {
+  if (status === 404 || status === 410) return true;
+  const d = detail.toLowerCase();
+  return (
+    d.includes('conversation not found') ||
+    d.includes('chat not found') ||
+    (d.includes('not found') && (d.includes('conversation') || d.includes('chat')))
+  );
+}
 
 async function bmsBlackFetch(
   path: string,
@@ -681,6 +758,8 @@ export async function startCallCenterChatWithOwner(
     return { chatId: '', conversationId: undefined };
   }
 
+  persistCallCenterThreadTenant(chatId, workshopOwnerUid);
+
   const fromApi = collectMessagesArray(parsed).map((row) => toMessage(row, chatId));
   if (fromApi.length > 0) {
     mergeCallCenterMessagesIntoCache(chatId, fromApi);
@@ -790,18 +869,40 @@ export async function postCallCenterChatClose(
   chatId: string,
   options?: CallCenterChatOptions,
 ): Promise<void> {
-  const res = await bmsBlackFetch(
-    `${AGENT_PREFIX}/${encodeURIComponent(chatId)}/close`,
-    { method: 'POST', body: '{}' },
-    options,
+  const body: Record<string, unknown> = {};
+  const farewell = options?.farewellMessage?.trim();
+  if (farewell) body.farewellMessage = farewell;
+
+  const tenant =
+    options?.workshopOwnerUid?.trim() || getCallCenterThreadTenant(chatId) || undefined;
+  const ccOpts: CallCenterChatOptions = tenant
+    ? { ...options, workshopOwnerUid: tenant }
+    : options;
+
+  const res = await bmsBlackFetchWithAuthRetry(
+    `/chats/${encodeURIComponent(chatId)}/close`,
+    { method: 'POST', body: JSON.stringify(body) },
+    ccOpts,
   );
-  if (!res.ok) {
-    const detail = await readHttpErrorDetail(res);
+
+  const detail = res.ok ? '' : await readHttpErrorDetail(res);
+
+  if (res.ok || isBenignCallCenterCloseFailure(res.status, detail)) {
+    clearCachedCallCenterChatMessages(chatId);
+    clearCallCenterThreadTenant(chatId);
+    return;
+  }
+
+  if (res.status === 401) {
     throw new Error(
-      `postCallCenterChatClose failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+      detail
+        ? `${detail} Sign out and sign in again.`
+        : 'Session expired or invalid. Sign out and sign in again.',
     );
   }
-  clearCachedCallCenterChatMessages(chatId);
+  throw new Error(
+    `postCallCenterChatClose failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+  );
 }
 
 // ── Compatibility wrappers (Dashboard sidebar + older hooks) ────────────────

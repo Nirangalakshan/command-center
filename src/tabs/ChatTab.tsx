@@ -47,6 +47,9 @@ import {
   fetchWorkshopNames,
   fetchCallCenterWorkshopOwners,
   startCallCenterChatWithOwner,
+  isCallCenterThreadId,
+  persistCallCenterThreadTenant,
+  getCallCenterThreadTenant,
   type CallCenterWorkshopOwner,
   type Conversation,
   type ChatMessage,
@@ -191,14 +194,24 @@ export function ChatTab({
   /** Thread ids created via call-center `start-with-owner` — use call-center APIs, not support-chat. */
   const callCenterThreadIdsRef = useRef<Set<string>>(loadCallCenterThreadIds());
 
-  const markCallCenterThread = useCallback((chatId: string) => {
+  const markCallCenterThread = useCallback((chatId: string, ownerUid?: string) => {
     if (!chatId.trim()) return;
     callCenterThreadIdsRef.current.add(chatId);
     persistCallCenterThreadIds(callCenterThreadIdsRef.current);
+    const tenant = ownerUid?.trim() || pendingWorkshopOwnerUidRef.current?.trim();
+    if (tenant) persistCallCenterThreadTenant(chatId, tenant);
   }, []);
+
+  const isCcThread = useCallback(
+    (conversationId: string) =>
+      isCallCenterThreadId(conversationId, callCenterThreadIdsRef.current),
+    [],
+  );
 
   const resolveWorkshopOwnerUidForThread = useCallback(
     (conversationId: string): string | undefined => {
+      const fromStored = getCallCenterThreadTenant(conversationId);
+      if (fromStored) return fromStored;
       const fromConv = allRef.current
         .find((c) => c.conversationId === conversationId)
         ?.ownerUid?.trim();
@@ -278,7 +291,7 @@ export function ChatTab({
 
   const refreshThreadMessages = useCallback(async (conversationId: string) => {
     try {
-      const isCallCenter = callCenterThreadIdsRef.current.has(conversationId);
+      const isCallCenter = isCcThread(conversationId);
       const tenant = resolveWorkshopOwnerUidForThread(conversationId);
       const ccOpts = tenant ? { workshopOwnerUid: tenant } : undefined;
       const rows = isCallCenter
@@ -365,7 +378,7 @@ export function ChatTab({
       setThreadLoading(true);
       setThreadError(null);
       try {
-        if (callCenterThreadIdsRef.current.has(selectedId)) {
+        if (isCcThread(selectedId)) {
           const tenant = resolveWorkshopOwnerUidForThread(selectedId);
           const ccOpts = tenant ? { workshopOwnerUid: tenant } : undefined;
           const rows = await fetchCallCenterChatMessages(selectedId, ccOpts);
@@ -531,7 +544,7 @@ export function ChatTab({
       // Owner chat (start-with-owner / POST send): our messages often have no senderId in cache yet
       if (
         selectedId &&
-        callCenterThreadIdsRef.current.has(selectedId) &&
+        isCcThread(selectedId) &&
         !sid
       ) {
         return true;
@@ -646,7 +659,7 @@ export function ChatTab({
         closeStartChat();
         await loadConversations();
         if (started.chatId) {
-          markCallCenterThread(started.chatId);
+          markCallCenterThread(started.chatId, ownerUid);
           await handleSelectConversation(started.chatId);
         } else {
           pendingWorkshopOwnerUidRef.current = null;
@@ -671,8 +684,9 @@ export function ChatTab({
 
   const handleClose = async () => {
     if (!selectedId || closing) return;
-    const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
+    const isCallCenterThread = isCcThread(selectedId);
     setClosing(true);
+    setThreadError(null);
     try {
       if (isCallCenterThread) {
         const tenant = resolveWorkshopOwnerUidForThread(selectedId);
@@ -686,6 +700,8 @@ export function ChatTab({
         await postChatClose(selectedId);
       }
       setSelectedId(null);
+      setMessages([]);
+      setActiveWorkshopOwner(null);
       await loadConversations();
     } catch (err) {
       setThreadError(err instanceof Error ? err.message : 'Failed to close conversation.');
@@ -702,7 +718,7 @@ export function ChatTab({
     setSending(true);
     setThreadError(null);
     try {
-      const isCallCenterThread = callCenterThreadIdsRef.current.has(selectedId);
+      const isCallCenterThread = isCcThread(selectedId);
       const tenant = isCallCenterThread ? resolveWorkshopOwnerUidForThread(selectedId) : undefined;
       const ccOpts = tenant ? { workshopOwnerUid: tenant } : undefined;
       const created = isCallCenterThread

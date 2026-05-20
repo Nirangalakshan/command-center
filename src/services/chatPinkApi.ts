@@ -16,6 +16,9 @@ export {
   fetchWorkshopNames,
   fetchCallCenterWorkshopOwners,
   startCallCenterChatWithOwner,
+  isCallCenterThreadId,
+  persistCallCenterThreadTenant,
+  getCallCenterThreadTenant,
 } from '@/services/chatApi';
 export type {
   CallCenterWorkshopOwner,
