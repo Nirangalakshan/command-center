@@ -21,6 +21,7 @@ import { AgentOnboardingTab } from '@/tabs/AgentOnboardingTab';
 import { AttendanceTab } from '@/tabs/AttendanceTab';
 import { AuditLogsTab } from '@/tabs/AuditLogsTab';
 import { ChatTab } from '@/tabs/ChatTab';
+import { ChatPinkTab } from '@/tabs/ChatPinkTab';
 import { DIDMappingsTab } from '@/tabs/DIDMappingsTab';
 import {
   SalesAgentSuburbAssignmentTab,
@@ -44,6 +45,7 @@ import {
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { SoftphoneCallLogContext } from '@/services/linkusCallLog';
+import { cacheAgentSession } from '@/services/linkusCallLog';
 
 interface DashboardPageProps {
   session: UserSession;
@@ -91,6 +93,7 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
       if (key === 'bookings') return permissions.canViewBookingsTab;
       if (key === 'agents') return permissions.canViewAgentsTab;
       if (key === 'chat') return permissions.canViewChatTab;
+      if (key === 'chat-pink') return permissions.canViewChatTab;
       if (key === 'agent-onboarding') return permissions.canViewAgentOnboardingTab;
       if (key === 'sip') return permissions.canViewSipTab;
       if (key === 'clients') return permissions.canViewClientsTab;
@@ -191,6 +194,19 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
     d.agents,
     d.queues,
   ]);
+
+  useEffect(() => {
+    if (softphoneCallLogContext?.agentId) {
+      cacheAgentSession({
+        agentId: softphoneCallLogContext.agentId,
+        agentName: softphoneCallLogContext.agentName,
+        tenantId: softphoneCallLogContext.tenantId,
+        tenantName: softphoneCallLogContext.tenantName,
+        queueId: softphoneCallLogContext.queueId,
+        queueName: softphoneCallLogContext.queueName,
+      });
+    }
+  }, [softphoneCallLogContext]);
 
   const softphoneIdentityExtension = useMemo(() => {
     if (currentUserExtension) return currentUserExtension;
@@ -479,6 +495,11 @@ export default function DashboardPage({ session, permissions, onSignOut }: Dashb
                       setChatNavUnreadCount(unreadCount)
                     }
                   />
+                </div>
+              )}
+              {d.selectedTab === 'chat-pink' && (
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <ChatPinkTab session={session} permissions={permissions} />
                 </div>
               )}
               {d.selectedTab === 'calls' && (

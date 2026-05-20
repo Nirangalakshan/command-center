@@ -1,9 +1,8 @@
-import { getFirebaseOnlyBmsBearerToken } from '@/services/bmsAuth';
+import { getAuthApiOrigin, getValidSupabaseAccessToken, syncAuthSessionFromSupabase } from '@/services/authApi';
 import { supabase } from '@/integrations/supabase/client';
 
-const BASE_URL =
-  (import.meta.env.VITE_BMS_SUPPORT_CHAT_API_URL as string) ??
-  'https://black.bmspros.com.au/api/support-chat';
+/** BMS Black proxy on the command-center API (Supabase token → Firebase upstream). */
+const BMS_BLACK_BASE_URL = `${getAuthApiOrigin()}/api/bms-black`;
 
 const AGENT_PREFIX = '/agent/conversations';
 
@@ -125,25 +124,42 @@ export type FetchChatMessagesPage = {
   nextBefore: string | null;
 };
 
-async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = await getFirebaseOnlyBmsBearerToken();
+export type CallCenterChatOptions = {
+  /** BMS workshop owner uid — sent as `X-Tenant-Id` on call-center chat routes. */
+  workshopOwnerUid?: string | null;
+};
+
+async function bmsBlackFetch(
+  path: string,
+  init: RequestInit = {},
+  options?: CallCenterChatOptions,
+): Promise<Response> {
+  const token = await getValidSupabaseAccessToken();
   const headers = new Headers(init.headers);
-  if (!headers.has('Content-Type')) {
+  if (!headers.has('Content-Type') && init.body != null) {
     headers.set('Content-Type', 'application/json');
   }
   headers.set('Authorization', `Bearer ${token}`);
-  const url = `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
-
-  // const tokenMasked =
-  //   token && token.length >= 32 ? `${token.slice(0, 10)}...${token.slice(-10)}` : '(empty)';
-  // console.log('[chatApi.authorizedFetch]', {
-  //   path,
-  //   firebaseUid: firebaseUser?.uid ?? null,
-  //   firebaseEmail: firebaseUser?.email ?? null,
-  //   tokenMasked,
-  // });
-
+  const tenant = options?.workshopOwnerUid?.trim();
+  if (tenant) headers.set('X-Tenant-Id', tenant);
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  const url = `${BMS_BLACK_BASE_URL}${suffix}`;
   return fetch(url, { ...init, headers });
+}
+
+async function bmsBlackFetchWithAuthRetry(
+  path: string,
+  init: RequestInit = {},
+  options?: CallCenterChatOptions,
+): Promise<Response> {
+  let res = await bmsBlackFetch(path, init, options);
+  if (res.status !== 401) return res;
+
+  const { data, error } = await supabase.auth.refreshSession();
+  if (error || !data.session?.access_token) return res;
+
+  syncAuthSessionFromSupabase(data.session);
+  return bmsBlackFetch(path, init, options);
 }
 
 async function readHttpErrorDetail(res: Response): Promise<string> {
@@ -305,7 +321,7 @@ function toMessage(raw: unknown, fallbackConversationId: string): ChatMessage {
     messageId: String(r.messageId ?? r.id ?? ''),
     conversationId: convId,
     chatId: convId,
-    senderId: String(r.senderId ?? r.userId ?? ''),
+    senderId: String(r.senderId ?? r.userId ?? r.agentUid ?? r.sender_uid ?? ''),
     text: extractMessageText(raw),
     createdAt: extractMessageCreatedAt(r),
     senderRole: r.senderRole != null ? String(r.senderRole) : undefined,
@@ -318,11 +334,19 @@ function collectMessagesArray(json: unknown): unknown[] {
   if (Array.isArray(json)) return json;
   if (json && typeof json === 'object') {
     const o = json as Record<string, unknown>;
-    if (Array.isArray(o.messages)) return o.messages;
+    for (const key of ['messages', 'chatMessages', 'items', 'results'] as const) {
+      if (Array.isArray(o[key])) return o[key] as unknown[];
+    }
+    const chat = o.chat;
+    if (chat && typeof chat === 'object' && Array.isArray((chat as Record<string, unknown>).messages)) {
+      return (chat as Record<string, unknown>).messages as unknown[];
+    }
     const data = o.data;
     if (data && typeof data === 'object') {
       const d = data as Record<string, unknown>;
-      if (Array.isArray(d.messages)) return d.messages;
+      for (const key of ['messages', 'chatMessages', 'items', 'results'] as const) {
+        if (Array.isArray(d[key])) return d[key] as unknown[];
+      }
     }
   }
   return [];
@@ -349,7 +373,7 @@ export async function fetchConversations(
   const qs = params.toString();
   const path = `${AGENT_PREFIX}${qs ? `?${qs}` : ''}`;
 
-  const res = await authorizedFetch(path, { headers: tenantScopedHeaders(ou) });
+  const res = await bmsBlackFetch(path, { headers: tenantScopedHeaders(ou) });
 
   if (!res.ok) {
     const detail = await readHttpErrorDetail(res);
@@ -376,7 +400,7 @@ export async function postConversationMessage(
   text: string,
 ): Promise<ChatMessage | null> {
   const path = `${AGENT_PREFIX}/${encodeURIComponent(conversationId)}/messages`;
-  const res = await authorizedFetch(path, {
+  const res = await bmsBlackFetch(path, {
     method: 'POST',
     body: JSON.stringify({ message: text }),
   });
@@ -410,7 +434,7 @@ export async function postConversationMessage(
 }
 
 export async function postConversationClaim(conversationId: string): Promise<void> {
-  const res = await authorizedFetch(
+  const res = await bmsBlackFetch(
     `${AGENT_PREFIX}/${encodeURIComponent(conversationId)}/claim`,
     { method: 'POST', body: '{}' },
   );
@@ -421,7 +445,7 @@ export async function postConversationClaim(conversationId: string): Promise<voi
 }
 
 export async function postConversationRead(conversationId: string): Promise<void> {
-  const res = await authorizedFetch(
+  const res = await bmsBlackFetch(
     `${AGENT_PREFIX}/${encodeURIComponent(conversationId)}/read`,
     { method: 'POST', body: '{}' },
   );
@@ -432,7 +456,7 @@ export async function postConversationRead(conversationId: string): Promise<void
 }
 
 export async function postConversationClose(conversationId: string): Promise<void> {
-  const res = await authorizedFetch(
+  const res = await bmsBlackFetch(
     `${AGENT_PREFIX}/${encodeURIComponent(conversationId)}/close`,
     { method: 'POST', body: '{}' },
   );
@@ -470,6 +494,316 @@ export async function fetchWorkshopNames(ownerUids: string[]): Promise<Record<st
   return map;
 }
 
+// ── Public API (call-center chats) ─────────────────────────────────────────
+
+export type CallCenterWorkshopOwner = {
+  ownerUid: string;
+  name: string;
+  slug: string;
+  logoUrl: string;
+  contactPhone: string;
+  email: string;
+  timezone: string;
+  state: string;
+  accountStatus: string;
+};
+
+function collectWorkshopOwnersArray(json: unknown): unknown[] {
+  if (Array.isArray(json)) return json;
+  if (json && typeof json === 'object') {
+    const o = json as Record<string, unknown>;
+    if (Array.isArray(o.workshopOwners)) return o.workshopOwners;
+    const data = o.data;
+    if (data && typeof data === 'object') {
+      const d = data as Record<string, unknown>;
+      if (Array.isArray(d.workshopOwners)) return d.workshopOwners;
+    }
+  }
+  return [];
+}
+
+function toCallCenterWorkshopOwner(raw: unknown): CallCenterWorkshopOwner {
+  const r = asRecord(raw);
+  return {
+    ownerUid: String(r.ownerUid ?? ''),
+    name: String(r.name ?? ''),
+    slug: String(r.slug ?? ''),
+    logoUrl: String(r.logoUrl ?? ''),
+    contactPhone: String(r.contactPhone ?? ''),
+    email: String(r.email ?? ''),
+    timezone: String(r.timezone ?? ''),
+    state: String(r.state ?? ''),
+    accountStatus: String(r.accountStatus ?? ''),
+  };
+}
+
+export async function fetchCallCenterWorkshopOwners(): Promise<CallCenterWorkshopOwner[]> {
+  const res = await bmsBlackFetch('/chats/workshop-owners');
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `fetchCallCenterWorkshopOwners failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+  const json = (await res.json()) as unknown;
+  return collectWorkshopOwnersArray(json).map(toCallCenterWorkshopOwner);
+}
+
+export type StartCallCenterChatResponse = {
+  chatId: string;
+  conversationId?: string;
+};
+
+/** Client cache until auth server exposes GET /api/bms-black/chats/:chatId/messages */
+const CALL_CENTER_MESSAGES_CACHE_KEY = 'command_center_call_center_chat_messages';
+
+function readCallCenterMessagesCache(): Record<string, ChatMessage[]> {
+  try {
+    const raw = localStorage.getItem(CALL_CENTER_MESSAGES_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, ChatMessage[]> = {};
+    for (const [chatId, rows] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(rows)) continue;
+      out[chatId] = rows.filter((r) => r && typeof r === 'object') as ChatMessage[];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeCallCenterMessagesCache(cache: Record<string, ChatMessage[]>): void {
+  try {
+    localStorage.setItem(CALL_CENTER_MESSAGES_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    /* ignore */
+  }
+}
+
+function sortChatMessages(rows: ChatMessage[]): ChatMessage[] {
+  return [...rows].sort((a, b) => {
+    const ta = Date.parse(a.createdAt) || 0;
+    const tb = Date.parse(b.createdAt) || 0;
+    return ta !== tb ? ta - tb : (a.messageId || '').localeCompare(b.messageId || '');
+  });
+}
+
+export function getCachedCallCenterChatMessages(chatId: string): ChatMessage[] {
+  return readCallCenterMessagesCache()[chatId] ?? [];
+}
+
+function setCachedCallCenterChatMessages(chatId: string, messages: ChatMessage[]): void {
+  const cache = readCallCenterMessagesCache();
+  cache[chatId] = sortChatMessages(messages);
+  writeCallCenterMessagesCache(cache);
+}
+
+function mergeCallCenterMessagesIntoCache(chatId: string, incoming: ChatMessage[]): void {
+  if (incoming.length === 0) return;
+  const cache = readCallCenterMessagesCache();
+  const existing = cache[chatId] ?? [];
+  const byKey = new Map<string, ChatMessage>();
+  for (const m of [...existing, ...incoming]) {
+    const key = m.messageId?.trim() || `${m.createdAt}|${m.text}|${m.senderId}`;
+    byKey.set(key, m);
+  }
+  cache[chatId] = sortChatMessages([...byKey.values()]);
+  writeCallCenterMessagesCache(cache);
+}
+
+export function clearCachedCallCenterChatMessages(chatId: string): void {
+  const cache = readCallCenterMessagesCache();
+  delete cache[chatId];
+  writeCallCenterMessagesCache(cache);
+}
+
+function extractChatId(json: unknown): string {
+  const seen = new Set<unknown>();
+
+  const walk = (v: unknown, depth: number): string => {
+    if (!v || depth > 6) return '';
+    if (typeof v === 'string') return v.trim();
+    if (typeof v !== 'object') return '';
+    if (seen.has(v)) return '';
+    seen.add(v);
+
+    const r = v as Record<string, unknown>;
+    for (const k of ['chatId', 'conversationId', 'id'] as const) {
+      const direct = r[k];
+      if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    }
+
+    for (const wrap of ['chat', 'conversation', 'thread', 'data', 'result', 'payload'] as const) {
+      const inner = walk(r[wrap], depth + 1);
+      if (inner) return inner;
+    }
+
+    // fallback: scan a few top-level object values
+    for (const value of Object.values(r)) {
+      const inner = walk(value, depth + 1);
+      if (inner) return inner;
+    }
+    return '';
+  };
+
+  return walk(json, 0);
+}
+
+export async function startCallCenterChatWithOwner(
+  workshopOwnerUid: string,
+  text?: string,
+): Promise<StartCallCenterChatResponse> {
+  const body: Record<string, unknown> = { workshopOwnerUid };
+  if (text != null && text.trim()) body.text = text.trim();
+
+  const res = await bmsBlackFetch(
+    '/chats/start-with-owner',
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+    { workshopOwnerUid },
+  );
+
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `startCallCenterChatWithOwner failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+
+  const rawText = await res.text();
+  const parsed: unknown = rawText.trim() ? (JSON.parse(rawText) as unknown) : rawText;
+  const chatId = extractChatId(parsed);
+  if (!chatId) {
+    return { chatId: '', conversationId: undefined };
+  }
+
+  const fromApi = collectMessagesArray(parsed).map((row) => toMessage(row, chatId));
+  if (fromApi.length > 0) {
+    mergeCallCenterMessagesIntoCache(chatId, fromApi);
+  } else if (text?.trim()) {
+    mergeCallCenterMessagesIntoCache(chatId, [
+      {
+        messageId: '',
+        conversationId: chatId,
+        chatId,
+        senderId: '',
+        text: text.trim(),
+        createdAt: new Date().toISOString(),
+        senderRole: 'agent',
+      },
+    ]);
+  }
+
+  return {
+    chatId,
+    conversationId: chatId,
+  };
+}
+
+export async function postCallCenterChatMessage(
+  chatId: string,
+  text: string,
+  options?: CallCenterChatOptions,
+): Promise<ChatMessage | null> {
+  const res = await bmsBlackFetch(
+    `/chats/${encodeURIComponent(chatId)}/messages`,
+    { method: 'POST', body: JSON.stringify({ text }) },
+    options,
+  );
+
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `postCallCenterChatMessage failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+
+  const rawText = await res.text();
+  const fallback: ChatMessage = {
+    messageId: '',
+    conversationId: chatId,
+    chatId,
+    senderId: '',
+    text,
+    createdAt: new Date().toISOString(),
+    senderRole: 'agent',
+  };
+
+  if (!rawText.trim()) {
+    mergeCallCenterMessagesIntoCache(chatId, [fallback]);
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(rawText) as Record<string, unknown>;
+    const payload = parsed.message ?? parsed.data ?? parsed;
+    const msg = toMessage(payload, chatId);
+    mergeCallCenterMessagesIntoCache(chatId, [msg]);
+    return msg;
+  } catch {
+    mergeCallCenterMessagesIntoCache(chatId, [fallback]);
+    return fallback;
+  }
+}
+
+export async function fetchCallCenterChatMessages(
+  chatId: string,
+  options?: CallCenterChatOptions,
+): Promise<ChatMessage[]> {
+  const msgPath = `/chats/${encodeURIComponent(chatId)}/messages`;
+  const res = await bmsBlackFetchWithAuthRetry(msgPath, { method: 'GET' }, options);
+
+  if (res.ok) {
+    const json = (await res.json()) as unknown;
+    const rows = collectMessagesArray(json).map((row) => toMessage(row, chatId));
+    setCachedCallCenterChatMessages(chatId, rows);
+    return rows;
+  }
+
+  // Auth server may only have POST /chats/:id/messages today — use client cache from start + sends
+  if (res.status === 404) {
+    return getCachedCallCenterChatMessages(chatId);
+  }
+
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    if (res.status === 401) {
+      throw new Error(
+        detail
+          ? `${detail} Sign out and sign in again.`
+          : 'Session expired or invalid. Sign out and sign in again.',
+      );
+    }
+    throw new Error(
+      `fetchCallCenterChatMessages failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+
+  return getCachedCallCenterChatMessages(chatId);
+}
+
+export async function postCallCenterChatClose(
+  chatId: string,
+  options?: CallCenterChatOptions,
+): Promise<void> {
+  const res = await bmsBlackFetch(
+    `${AGENT_PREFIX}/${encodeURIComponent(chatId)}/close`,
+    { method: 'POST', body: '{}' },
+    options,
+  );
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `postCallCenterChatClose failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
+  }
+  clearCachedCallCenterChatMessages(chatId);
+}
+
 // ── Compatibility wrappers (Dashboard sidebar + older hooks) ────────────────
 
 export async function fetchChats(options?: FetchChatsOptions): Promise<ChatItem[]> {
@@ -490,7 +824,7 @@ export async function fetchChatMessagesPage(
   const qs = params.toString();
   const path = `${AGENT_PREFIX}/${encodeURIComponent(conversationId)}/messages${qs ? `?${qs}` : ''}`;
 
-  const res = await authorizedFetch(path);
+  const res = await bmsBlackFetch(path);
   if (!res.ok) {
     const detail = await readHttpErrorDetail(res);
     throw new Error(
@@ -536,7 +870,7 @@ export async function postChatClose(
   opts?: { farewellMessage?: string },
 ): Promise<void> {
   const farewell = opts?.farewellMessage?.trim();
-  const res = await authorizedFetch(
+  const res = await bmsBlackFetch(
     `${AGENT_PREFIX}/${encodeURIComponent(conversationId)}/close`,
     {
       method: 'POST',

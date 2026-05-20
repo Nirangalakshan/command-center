@@ -1,22 +1,36 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
+import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, type Auth } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// Prevent re-initialising during hot-reload in dev
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+export function isFirebaseConfigured(): boolean {
+  return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
+}
 
-export const db   = getFirestore(app);
-export const auth = getAuth(app);
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
+
+if (isFirebaseConfigured()) {
+  app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app);
+} else if (import.meta.env.DEV) {
+  console.warn(
+    '[firebase] Missing VITE_FIREBASE_API_KEY / VITE_FIREBASE_PROJECT_ID — uncomment Firebase vars in .env. Chat/BMS Firestore features are disabled.',
+  );
+}
+
+export { app, db, auth };
 
 // ─── Auth-ready gate ────────────────────────────────────────────────────────
 
@@ -31,20 +45,16 @@ function _settle() {
   _pendingResolvers = [];
 }
 
-/** Called by FirebaseAuthProvider once auth state is fully settled (including auto-login). */
+/** Called by FirebaseAuthProvider once auth state is fully settled. */
 export function signalAuthReady(): void {
   _settle();
 }
 
 /**
- * Blocks until Firebase auth is fully initialised.
- * Resolves via whichever fires first:
- *  1. signalAuthReady() from FirebaseAuthProvider
- *  2. onAuthStateChanged reporting a signed-in user
- *  3. 10-second safety timeout
+ * Blocks until Firebase auth is initialised (or skipped when Firebase is not configured).
  */
 export function waitForAuth(): Promise<void> {
-  if (_authReady || auth.currentUser) return Promise.resolve();
+  if (!auth || _authReady || auth.currentUser) return Promise.resolve();
 
   if (!_waitPromise) {
     _waitPromise = new Promise<void>((resolve) => {
@@ -58,14 +68,17 @@ export function waitForAuth(): Promise<void> {
 
       _pendingResolvers.push(done);
 
-      const unsub = onAuthStateChanged(auth, (user) => {
+      const unsub = onAuthStateChanged(auth!, (user) => {
         if (user) {
           unsub();
           done();
         }
       });
 
-      setTimeout(() => { unsub(); done(); }, 10_000);
+      setTimeout(() => {
+        unsub();
+        done();
+      }, 10_000);
     });
   }
 

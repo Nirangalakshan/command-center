@@ -1,5 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
-import { getBmsBearerToken } from '@/services/bmsAuth';
+import { getAuthApiOrigin, getValidSupabaseAccessToken } from '@/services/authApi';
 import type { UserRole } from '@/services/types';
 import { getServiceById } from '@/services/servicesApi';
 
@@ -163,18 +163,25 @@ export type GetBookingsParams =
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-/** Call-centre REST root. Booking list is always `${BASE_URL}/bookings` → e.g.
- * https://black.bmspros.com.au/api/call-center/bookings
- * (In dev use `VITE_BMS_API_URL=/api/call-center` so Vite proxies to the same host.) */
-const BASE_URL =
-  (import.meta.env.VITE_BMS_API_URL as string) ??
+/** BMS Black proxy (`Authorization: Supabase access_token`, optional `X-Tenant-Id`). */
+const BMS_BLACK_BASE_URL = `${getAuthApiOrigin()}/api/bms-black`;
+
+/** Direct call-center routes not on the bms-black proxy (services staff, call-logs, webhooks). */
+const CALL_CENTER_BASE_URL =
+  (import.meta.env.VITE_BMS_API_URL as string)?.replace(/\/$/, '') ??
   'https://black.bmspros.com.au/api/call-center';
 
-/** Build path + query — avoids `new URL('/relative')` throwing when BASE_URL is `/api/...` (dev proxy). */
-function ccPathWithSearch(path: string, search?: URLSearchParams): string {
+function bmsBlackPath(path: string, search?: URLSearchParams): string {
   const q = search?.toString();
   const p = path.startsWith('/') ? path : `/${path}`;
-  const base = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+  const base = BMS_BLACK_BASE_URL.endsWith('/') ? BMS_BLACK_BASE_URL.slice(0, -1) : BMS_BLACK_BASE_URL;
+  return `${base}${p}${q ? `?${q}` : ''}`;
+}
+
+function callCenterPath(path: string, search?: URLSearchParams): string {
+  const q = search?.toString();
+  const p = path.startsWith('/') ? path : `/${path}`;
+  const base = CALL_CENTER_BASE_URL.endsWith('/') ? CALL_CENTER_BASE_URL.slice(0, -1) : CALL_CENTER_BASE_URL;
   return `${base}${p}${q ? `?${q}` : ''}`;
 }
 
@@ -192,7 +199,7 @@ function extractBookingsListRows(json: unknown): Record<string, unknown>[] {
 // ─── Headers Helper ──────────────────────────────────────────────────────────
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
-  const token = await getBmsBearerToken({ waitForFirebaseInit: true });
+  const token = await getValidSupabaseAccessToken();
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
@@ -200,9 +207,9 @@ async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
   };
 }
 
-/** Call-center JWT only — omit `X-Tenant-Id` (all-workshop bookings list). */
+/** Supabase JWT only — omit `X-Tenant-Id` (all-workshop bookings via GET /getallbooking). */
 async function bearerOnlyHeaders(): Promise<HeadersInit> {
-  const token = await getBmsBearerToken({ waitForFirebaseInit: true });
+  const token = await getValidSupabaseAccessToken();
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
@@ -261,7 +268,7 @@ export async function getBookingAvailability(
     date,
     serviceIds: serviceIds.join(','),
   });
-  const url = ccPathWithSearch('/bookings/availability', search);
+  const url = bmsBlackPath('/bookings/availability', search);
 
   const res = await bookingsApiFetch('getBookingAvailability', url, {
     headers: await apiHeaders(ownerUid),
@@ -319,8 +326,6 @@ export async function getBookings(params: GetBookingsParams): Promise<Booking[]>
   const limit = params.limit ?? 25;
   const branchId = params.branchId;
 
-  const qs = new URLSearchParams({ limit: String(limit) });
-
   let headers: HeadersInit;
   let fallbackOwnerUid: string;
 
@@ -330,7 +335,6 @@ export async function getBookings(params: GetBookingsParams): Promise<Booking[]>
       console.warn('[getBookings] tenant scope requires ownerUid — returning empty.');
       return [];
     }
-    qs.set('ownerUid', ownerUid);
     headers = await apiHeaders(ownerUid);
     fallbackOwnerUid = ownerUid;
   } else {
@@ -338,7 +342,7 @@ export async function getBookings(params: GetBookingsParams): Promise<Booking[]>
     fallbackOwnerUid = '';
   }
 
-  const fetchUrl = ccPathWithSearch('/bookings', qs);
+  const fetchUrl = bmsBlackPath('/getallbooking');
   const res = await bookingsApiFetch('getBookings', fetchUrl, { headers });
 
   if (!res.ok) {
@@ -363,8 +367,16 @@ export async function getBookings(params: GetBookingsParams): Promise<Booking[]>
     normalizeBookingListItem(row, fallbackOwnerUid),
   );
 
+  if (params.scope === 'tenant' && fallbackOwnerUid) {
+    bookings = bookings.filter((b) => b.ownerUid === fallbackOwnerUid);
+  }
+
   if (branchId) {
     bookings = bookings.filter((b) => b.branchId === branchId);
+  }
+
+  if (limit > 0 && bookings.length > limit) {
+    bookings = bookings.slice(0, limit);
   }
 
   return bookings;
@@ -385,7 +397,7 @@ export async function getWorkshopStaff(
   if (options?.role) qs.set('role', options.role);
   if (options?.status) qs.set('status', options.status);
 
-  const fetchUrl = ccPathWithSearch('/staff', qs);
+  const fetchUrl = bmsBlackPath('/staff', qs);
 
   const res = await bookingsApiFetch('getWorkshopStaff', fetchUrl, {
     headers: await apiHeaders(ownerUid),
@@ -515,7 +527,7 @@ export async function getStaffForService(
     branchId: options.branchId,
     date: options.date,
   });
-  const fetchUrl = ccPathWithSearch(
+  const fetchUrl = bmsBlackPath(
     `/services/${encodeURIComponent(serviceId)}/staff`,
     qs,
   );
@@ -610,7 +622,7 @@ export async function createBooking(data: {
   vehicleDetails?: VehicleDetails;
   notes?: string;
 }): Promise<{ bookingId: string }> {
-  const fetchUrl = `${BASE_URL}/bookings`;
+  const fetchUrl = bmsBlackPath('/bookings');
   const res = await bookingsApiFetch('createBooking', fetchUrl, {
     method: 'POST',
     headers: await apiHeaders(data.ownerUid),
@@ -832,7 +844,7 @@ export async function getBookingById(
   ownerUid: string,
   bookingId: string,
 ): Promise<BookingDetail> {
-  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`;
+  const fetchUrl = bmsBlackPath(`/bookings/${encodeURIComponent(bookingId)}`);
   const res = await bookingsApiFetch('getBookingById', fetchUrl, {
     headers: await apiHeaders(ownerUid),
   });
@@ -872,7 +884,7 @@ export async function patchBookingWorkflowStatus(
   bookingId: string,
   status: BmsBookingWorkflowStatus,
 ): Promise<unknown> {
-  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}`;
+  const fetchUrl = bmsBlackPath(`/bookings/${encodeURIComponent(bookingId)}`);
   const res = await bookingsApiFetch('patchBookingWorkflowStatus', fetchUrl, {
     method: 'PATCH',
     headers: await apiHeaders(ownerUid),
@@ -906,7 +918,7 @@ export async function confirmBookingWithStaff(
   bookingId: string,
   staffAssignments: BookingConfirmStaffAssignments,
 ): Promise<unknown> {
-  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/confirm`;
+  const fetchUrl = bmsBlackPath(`/bookings/${encodeURIComponent(bookingId)}/confirm`);
   const res = await bookingsApiFetch('confirmBookingWithStaff', fetchUrl, {
     method: 'POST',
     headers: await apiHeaders(ownerUid),
@@ -959,7 +971,7 @@ export async function patchBookingReschedule(
     }
   }
 
-  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/reschedule`;
+  const fetchUrl = bmsBlackPath(`/bookings/${encodeURIComponent(bookingId)}/reschedule`);
   const res = await bookingsApiFetch('patchBookingReschedule', fetchUrl, {
     method: 'PATCH',
     headers: await apiHeaders(ownerUid),
@@ -983,7 +995,7 @@ export async function cancelBooking(
   reason?: string,
 ): Promise<unknown> {
   const payload = reason?.trim() ? { reason: reason.trim() } : {};
-  const fetchUrl = `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/cancel`;
+  const fetchUrl = bmsBlackPath(`/bookings/${encodeURIComponent(bookingId)}/cancel`);
   const res = await bookingsApiFetch('cancelBooking', fetchUrl, {
     method: 'POST',
     headers: await apiHeaders(ownerUid),
@@ -1003,7 +1015,7 @@ export async function getAdditionalIssues(
   ownerUid: string,
   bookingId: string,
 ): Promise<any> {
-  const fetchUrl = `${BASE_URL}/bookings/${bookingId}/additional-issues`;
+  const fetchUrl = bmsBlackPath(`/bookings/${encodeURIComponent(bookingId)}/additional-issues`);
   const res = await bookingsApiFetch('getAdditionalIssues', fetchUrl, {
     headers: await apiHeaders(ownerUid),
   });
@@ -1021,7 +1033,9 @@ export async function updateIssueDecision(
   issueId: string,
   customerResponse: 'accept' | 'reject',
 ): Promise<any> {
-  const fetchUrl = `${BASE_URL}/bookings/${bookingId}/additional-issues/${issueId}`;
+  const fetchUrl = bmsBlackPath(
+    `/bookings/${encodeURIComponent(bookingId)}/additional-issues/${encodeURIComponent(issueId)}`,
+  );
   const res = await bookingsApiFetch('updateIssueDecision', fetchUrl, {
     method: 'PATCH',
     headers: await apiHeaders(ownerUid),
@@ -1202,7 +1216,7 @@ export async function createCallLog(data: {
   bookingId?: string;
   callCenterCallId?: string;
 }): Promise<{ callLogId: string }> {
-  const fetchUrl = `${BASE_URL}/call-logs`;
+  const fetchUrl = callCenterPath('/call-logs');
   const res = await bookingsApiFetch('createCallLog', fetchUrl, {
     method: 'POST',
     headers: await apiHeaders(data.ownerUid),
@@ -1231,11 +1245,10 @@ export async function getCallLogs(
   ownerUid: string,
   limit: number = 10,
 ): Promise<CallLog[]> {
-  const fetchUrl = `${BASE_URL}/call-logs?ownerUid=${ownerUid}&limit=${limit}`;
+  const qs = new URLSearchParams({ ownerUid, limit: String(limit) });
+  const fetchUrl = callCenterPath('/call-logs', qs);
   const res = await bookingsApiFetch('getCallLogs', fetchUrl, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: await apiHeaders(ownerUid),
   });
 
   if (!res.ok) {
@@ -1249,11 +1262,9 @@ export async function getCallLogs(
 // ─── 7. Webhooks ─────────────────────────────────────────────────────────────
 
 export async function getWebhooks(): Promise<Record<string, unknown>[]> {
-  const fetchUrl = `${BASE_URL}/webhooks`;
+  const fetchUrl = callCenterPath('/webhooks');
   const res = await bookingsApiFetch('getWebhooks', fetchUrl, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: await bearerOnlyHeaders(),
   });
 
   if (!res.ok) {

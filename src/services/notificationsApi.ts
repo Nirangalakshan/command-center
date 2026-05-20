@@ -1,14 +1,10 @@
-import { getBmsBearerToken } from "@/services/bmsAuth";
+import { getAuthApiOrigin, getValidSupabaseAccessToken } from "@/services/authApi";
 
-const BASE_URL =
-  (import.meta.env.VITE_BMS_API_URL as string) ??
-  "https://black.bmspros.com.au/api/call-center";
+/** BMS Black proxy on the command-center API (uses Supabase token → Firebase upstream). */
+const BMS_BLACK_BASE_URL = `${getAuthApiOrigin()}/api/bms-black`;
 
-async function apiHeaders(): Promise<HeadersInit> {
-  const token = await getBmsBearerToken({
-    waitForFirebaseInit: true,
-    forceRefreshFirebase: true,
-  });
+async function bmsBlackHeaders(): Promise<HeadersInit> {
+  const token = await getValidSupabaseAccessToken();
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
@@ -57,8 +53,8 @@ export type CustomerNotification = {
 export async function fetchCustomerNotifications(): Promise<
   CustomerNotification[]
 > {
-  const res = await fetch(`${BASE_URL}/customer-notifications?all=1`, {
-    headers: await apiHeaders(),
+  const res = await fetch(`${BMS_BLACK_BASE_URL}/customer-notifications?all=1`, {
+    headers: await bmsBlackHeaders(),
   });
 
   if (!res.ok) {
@@ -136,10 +132,10 @@ export async function markNotificationReviewed(
 ): Promise<void> {
   // console.log("[markNotificationReviewed] calling →", notificationId);
   await fetch(
-    `${BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
+    `${BMS_BLACK_BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
     {
       method: "POST",
-      headers: await apiHeaders(),
+      headers: await bmsBlackHeaders(),
     },
   );
 }
@@ -149,10 +145,10 @@ export async function markNotificationReviewedClosed(
 ): Promise<void> {
   // console.log("[markNotificationReviewedClosed] calling →", notificationId);
   await fetch(
-    `${BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
+    `${BMS_BLACK_BASE_URL}/customer-notifications/${notificationId}/notification-reviewed`,
     {
       method: "POST",
-      headers: await apiHeaders(),
+      headers: await bmsBlackHeaders(),
       body: JSON.stringify({ notificationReviewed: false }),
     },
   );
@@ -164,8 +160,8 @@ export async function markCalledCustomer(
   notificationId: string,
 ): Promise<void> {
   await fetch(
-    `${BASE_URL}/customer-notifications/${notificationId}/called-customer`,
-    { method: "POST", headers: await apiHeaders() },
+    `${BMS_BLACK_BASE_URL}/customer-notifications/${notificationId}/called-customer`,
+    { method: "POST", headers: await bmsBlackHeaders() },
   );
 }
 
@@ -209,14 +205,14 @@ export async function patchBookingAdditionalIssueCustomerResponse(
   options?: { ownerUid?: string | null },
 ): Promise<PatchAdditionalIssueCustomerResponseResult> {
   const headers: HeadersInit = {
-    ...(await apiHeaders()),
+    ...(await bmsBlackHeaders()),
     ...(options?.ownerUid?.trim()
       ? { "X-Tenant-Id": options.ownerUid.trim() }
       : {}),
   };
 
   const res = await fetch(
-    `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/additional-issues/${encodeURIComponent(issueId)}`,
+    `${BMS_BLACK_BASE_URL}/bookings/${encodeURIComponent(bookingId)}/additional-issues/${encodeURIComponent(issueId)}`,
     {
       method: "PATCH",
       headers,
@@ -301,14 +297,14 @@ export async function patchBookingAdditionalIssuePrice(
   }
 
   const headers: HeadersInit = {
-    ...(await apiHeaders()),
+    ...(await bmsBlackHeaders()),
     ...(options?.ownerUid?.trim()
       ? { "X-Tenant-Id": options.ownerUid.trim() }
       : {}),
   };
 
   const res = await fetch(
-    `${BASE_URL}/bookings/${encodeURIComponent(bookingId)}/additional-issues/${encodeURIComponent(issueId)}/price`,
+    `${BMS_BLACK_BASE_URL}/bookings/${encodeURIComponent(bookingId)}/additional-issues/${encodeURIComponent(issueId)}/price`,
     {
       method: "PATCH",
       headers,

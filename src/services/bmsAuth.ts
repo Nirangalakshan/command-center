@@ -19,7 +19,7 @@ export async function getBmsBearerToken(options?: {
     await waitForAuth();
   }
 
-  const user = auth.currentUser;
+  const user = auth?.currentUser;
   if (user) {
     return getIdToken(user, options?.forceRefreshFirebase ?? false);
   }
@@ -40,7 +40,7 @@ export async function getBmsBearerToken(options?: {
  */
 export async function getFirebaseOnlyBmsBearerToken(): Promise<string> {
   await waitForAuth();
-  const user = auth.currentUser;
+  const user = auth?.currentUser;
   if (!user) {
     throw new Error(SIGN_IN_REQUIRED);
   }

@@ -1008,7 +1008,7 @@ export default function BookingPage() {
       // ── Save a local copy to Supabase with agent details ──
       try {
         const { supabase } = await import("@/integrations/supabase/client");
-        const firebaseUser = auth.currentUser;
+        const firebaseUser = auth?.currentUser;
 
         await (supabase as any).from("bms_bookings").insert({
           bms_booking_id: result.bookingId ?? null,

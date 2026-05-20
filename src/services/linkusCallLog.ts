@@ -3,6 +3,29 @@ import { supabase } from '@/integrations/supabase/client';
 
 const STORAGE_KEY = 'cc_linkus_call_log_v1';
 const MAX_ENTRIES = 80;
+const AGENT_SESSION_KEY = 'cc_agent_session_v1';
+
+export type CachedAgentSession = {
+  agentId: string;
+  agentName: string;
+  tenantId: string;
+  queueId: string;
+  queueName: string;
+  tenantName: string;
+};
+
+export function cacheAgentSession(info: CachedAgentSession): void {
+  try { localStorage.setItem(AGENT_SESSION_KEY, JSON.stringify(info)); } catch { /* private mode */ }
+}
+
+export function getCachedAgentSession(): CachedAgentSession | null {
+  try {
+    const raw = localStorage.getItem(AGENT_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedAgentSession;
+    return parsed.agentId && parsed.agentName ? parsed : null;
+  } catch { return null; }
+}
 
 export const LINKUS_CALL_LOG_EVENT = 'cc:linkus-call-log-updated';
 
@@ -60,8 +83,12 @@ export async function syncLinkusCallDispositionToSupabase(
   ctx: SoftphoneCallLogContext,
   p: LinkusCallDispositionPayload,
 ): Promise<void> {
-  const agentId = ctx.agentId?.trim();
-  if (!agentId || !ctx.tenantId || !ctx.queueId) return;
+  const cached = getCachedAgentSession();
+  const agentId = ctx.agentId?.trim() || cached?.agentId?.trim();
+  const agentName = ctx.agentName || cached?.agentName || '';
+  const tenantId = ctx.tenantId || cached?.tenantId || '';
+  const queueId = ctx.queueId || cached?.queueId || '';
+  if (!agentId || !tenantId || !queueId) return;
 
   const linkusKey = p.callId.split('@')[0]?.trim() || p.callId;
   const callerDigits =
@@ -73,7 +100,8 @@ export async function syncLinkusCallDispositionToSupabase(
     {
       linkus_call_id: linkusKey,
       agent_id: agentId,
-      tenant_id: ctx.tenantId,
+      agent_name: agentName,
+      tenant_id: tenantId,
       action: p.action,
       caller_number: callerDigits,
       updated_at: new Date().toISOString(),
@@ -106,21 +134,21 @@ export async function syncLinkusCallDispositionToSupabase(
 
   const { error: insErr } = await supabase.from('calls').insert({
     id: rowId,
-    tenant_id: ctx.tenantId,
-    queue_id: ctx.queueId,
+    tenant_id: tenantId,
+    queue_id: queueId,
     agent_id: agentId,
     caller_number: callerDigits,
     caller_name: p.name?.trim() || null,
     direction: 'inbound',
     start_time: new Date().toISOString(),
     duration_seconds: 0,
-    result: 'missed',
+    result: p.action === 'answered' ? 'answered' : 'missed',
     transcript_status: 'none',
     summary_status: 'none',
   });
 
   if (insErr && insErr.code === '23505') {
-    await supabase.from('calls').update({ agent_id: agentId }).eq('id', rowId);
+    await supabase.from('calls').update({ agent_id: agentId, result: p.action === 'answered' ? 'answered' : 'missed' }).eq('id', rowId);
   } else if (insErr) {
     console.warn('[linkusCallLog] calls stub insert failed', insErr.message);
   }
@@ -141,6 +169,7 @@ export function buildCallFromLinkusSessionEnd(
   ctx: SoftphoneCallLogContext,
   p: LinkusSessionEndPayload,
 ): Call {
+  const cached = getCachedAgentSession();
   const answered = p.lastCallStatus === 'talking';
   const durationSeconds = Math.max(
     0,
@@ -151,9 +180,9 @@ export function buildCallFromLinkusSessionEnd(
 
   return {
     id: `linkus-${p.callId}-${p.endTimeMs}`,
-    tenantId: ctx.tenantId,
-    queueId: ctx.queueId,
-    agentId: ctx.agentId,
+    tenantId: ctx.tenantId || cached?.tenantId || '',
+    queueId: ctx.queueId || cached?.queueId || '',
+    agentId: ctx.agentId || cached?.agentId || null,
     direction: p.direction,
     callerNumber,
     callerName: p.name?.trim() ? p.name : null,
@@ -166,9 +195,9 @@ export function buildCallFromLinkusSessionEnd(
     recordingUrl: null,
     transcriptStatus: 'none',
     summaryStatus: 'none',
-    agentName: ctx.agentName,
-    queueName: ctx.queueName,
-    tenantName: ctx.tenantName,
+    agentName: ctx.agentName || cached?.agentName || '',
+    queueName: ctx.queueName || cached?.queueName || '',
+    tenantName: ctx.tenantName || cached?.tenantName || '',
   };
 }
 

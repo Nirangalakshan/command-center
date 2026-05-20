@@ -12,6 +12,7 @@ import {
   Clock3,
   Loader2,
   MessageSquare,
+  Pin,
   Search,
   Send,
   User,
@@ -50,7 +51,7 @@ import {
   type CallCenterWorkshopOwner,
   type Conversation,
   type ChatMessage,
-} from '@/services/chatApi';
+} from '@/services/chatPinkApi';
 import {
   isChatSoundMuted,
   playNewChatChime,
@@ -64,7 +65,7 @@ import {
   AUDIT_RESOURCE_BMS_CHAT,
 } from '@/services/auditLogApi';
 
-interface ChatTabProps {
+interface ChatPinkTabProps {
   session: UserSession;
   permissions: Permissions;
   listTenantId?: string | null;
@@ -74,9 +75,9 @@ interface ChatTabProps {
 
 /** Sent automatically when opening a workshop thread from the picker (POST start-with-owner `text`). */
 const WORKSHOP_AUTO_OPEN_MESSAGE =
-  "Hello — we're contacting you from the Front Office.";
+  "Hello — we're contacting you from the call center. Please let us know how we can help.";
 
-const CALL_CENTER_THREADS_STORAGE = 'command_center_call_center_thread_ids';
+const CALL_CENTER_THREADS_STORAGE = 'command_center_call_center_thread_ids_pink';
 
 function loadCallCenterThreadIds(): Set<string> {
   try {
@@ -145,13 +146,13 @@ function isLastMessageFromCustomer(
   return true;
 }
 
-export function ChatTab({
+export function ChatPinkTab({
   session,
   permissions,
   listTenantId = null,
   workshopOwnerUid = null,
   onInboxStatsChange,
-}: ChatTabProps) {
+}: ChatPinkTabProps) {
   const { firebaseUser } = useFirebaseAuth();
 
   const [queue, setQueue] = useState<Conversation[]>([]);
@@ -528,12 +529,7 @@ export function ChatTab({
       const aid = selectedConversation?.agentId?.trim();
       if (aid && sid === aid) return true;
 
-      // Owner chat (start-with-owner / POST send): our messages often have no senderId in cache yet
-      if (
-        selectedId &&
-        callCenterThreadIdsRef.current.has(selectedId) &&
-        !sid
-      ) {
+      if (selectedId && callCenterThreadIdsRef.current.has(selectedId) && !sid) {
         return true;
       }
 
@@ -589,7 +585,7 @@ export function ChatTab({
           await postConversationClaim(conversationId);
           await loadConversations();
         } catch {
-          // console.warn('[ChatTab] claim failed', e);
+          // console.warn('[ChatPinkTab] claim failed', e);
         } finally {
           setClaiming(false);
         }
@@ -766,14 +762,14 @@ export function ChatTab({
           <CardHeader className="shrink-0 pb-3">
             <CardTitle className="flex items-center justify-between gap-2 text-base">
               <span className="flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-sky-600" />
-                Chat Inbox
+                <Pin className="h-4 w-4 text-pink-500" />
+                Chat Pink Inbox
               </span>
               <div className="flex shrink-0 items-center gap-1.5">
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-8 border-sky-200 bg-sky-50 px-2.5 text-xs text-sky-700 hover:bg-sky-100"
+                  className="h-8 border-pink-200 bg-pink-50 px-2.5 text-xs text-pink-700 hover:bg-pink-100"
                   onClick={() => void openStartChat()}
                 >
                   Chat with owner
@@ -803,7 +799,7 @@ export function ChatTab({
                     'tabular-nums',
                     totalUnread > 0
                       ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                      : 'border-sky-200 bg-sky-50 text-sky-700',
+                      : 'border-pink-200 bg-pink-50 text-pink-700',
                   )}
                 >
                   {totalUnread} unread
@@ -1055,12 +1051,12 @@ export function ChatTab({
                               {activeWorkshopOwner.email}
                             </span>
                           )}
-                          {/* {activeWorkshopOwner.contactPhone && (
+                          {activeWorkshopOwner.contactPhone && (
                             <span className="flex items-center gap-1">
                               <User className="h-3 w-3" />
                               {activeWorkshopOwner.contactPhone}
                             </span>
-                          )} */}
+                          )}
                           {(activeWorkshopOwner.state || activeWorkshopOwner.timezone) && (
                             <span className="flex items-center gap-1">
                               <Clock3 className="h-3 w-3" />
@@ -1181,7 +1177,7 @@ export function ChatTab({
                   <Button
                     type="submit"
                     disabled={sending || threadLoading || claiming || !draft.trim()}
-                    className="shrink-0 gap-1.5 bg-sky-600 hover:bg-sky-700"
+                    className="shrink-0 gap-1.5 bg-pink-600 hover:bg-pink-700"
                   >
                     {sending ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -1201,7 +1197,7 @@ export function ChatTab({
                     ) : (
                       <X className="h-4 w-4" />
                     )}
-                    <span className="hidden sm:inline">End Chat</span>
+                    <span className="hidden sm:inline">Close</span>
                   </Button>
                 </form>
               </CardContent>
@@ -1228,7 +1224,7 @@ function ConversationRow({ conversation: c, workshopName, selected, onSelect }: 
       className={cn(
         'w-full rounded-xl border p-3 text-left shadow-sm transition-colors',
         selected
-          ? 'border-sky-400 bg-sky-50/80 ring-1 ring-sky-200/60'
+          ? 'border-pink-400 bg-pink-50/80 ring-1 ring-pink-200/60'
           : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/80',
         c.unreadForAgent > 0 && !selected && 'border-l-4 border-l-emerald-500 pl-2.5',
       )}
@@ -1252,7 +1248,7 @@ function ConversationRow({ conversation: c, workshopName, selected, onSelect }: 
             </Badge>
           )}
           {c.claimedAt && c.status !== 'closed' && (
-            <Badge className="border border-sky-200 bg-sky-100 text-[10px] text-sky-700">
+            <Badge className="border border-pink-200 bg-pink-100 text-[10px] text-pink-700">
               Claimed
             </Badge>
           )}

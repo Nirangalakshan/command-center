@@ -1,4 +1,5 @@
 import { db } from '@/lib/firebase';
+import { getAuthApiOrigin, getValidSupabaseAccessToken } from '@/services/authApi';
 import {
   addDoc,
   arrayRemove,
@@ -344,24 +345,29 @@ export function subscribeServices(
   );
 }
 
-// ─── REST API helpers ─────────────────────────────────────────────────────────
+// ─── REST API helpers (bms-black proxy) ──────────────────────────────────────
 
-import { getBmsBearerToken } from '@/services/bmsAuth';
+const BMS_BLACK_BASE_URL = `${getAuthApiOrigin()}/api/bms-black`;
 
-const BASE_URL = import.meta.env.VITE_BMS_API_URL as string ?? 'https://black.bmspros.com.au/api/call-center';
+function bmsBlackPath(path: string, search?: URLSearchParams): string {
+  const q = search?.toString();
+  const p = path.startsWith('/') ? path : `/${path}`;
+  const base = BMS_BLACK_BASE_URL.endsWith('/') ? BMS_BLACK_BASE_URL.slice(0, -1) : BMS_BLACK_BASE_URL;
+  return `${base}${p}${q ? `?${q}` : ''}`;
+}
 
 async function apiHeaders(ownerUid: string): Promise<HeadersInit> {
-  const token = await getBmsBearerToken({ waitForFirebaseInit: true });
+  const token = await getValidSupabaseAccessToken();
   return {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`,
+    Authorization: `Bearer ${token}`,
     'X-Tenant-Id': ownerUid,
   };
 }
 
-/** GET /services — all services for a workshop */
+/** GET /api/bms-black/services — all services for a workshop */
 export async function getServices(ownerUid: string): Promise<WorkshopService[]> {
-  const res = await fetch(`${BASE_URL}/services`, { headers: await apiHeaders(ownerUid) });
+  const res = await fetch(bmsBlackPath('/services'), { headers: await apiHeaders(ownerUid) });
   if (!res.ok) throw new Error(`getServices failed: ${res.status}`);
   const json = (await res.json()) as { services?: unknown[] };
   const rows = json.services;
@@ -369,10 +375,12 @@ export async function getServices(ownerUid: string): Promise<WorkshopService[]> 
   return rows.map((row) => mapApiServiceToWorkshopService(row, ownerUid));
 }
 
-/** GET /services?branchId=X — services filtered to a specific branch */
+/** GET /api/bms-black/services-by-branch?branchId= — branch-filtered services */
 export async function getServicesByBranch(ownerUid: string, branchId: string): Promise<WorkshopService[]> {
-  const url = `${BASE_URL}/services?branchId=${encodeURIComponent(branchId)}`;
-  const res = await fetch(url, { headers: await apiHeaders(ownerUid) });
+  const search = new URLSearchParams({ branchId });
+  const res = await fetch(bmsBlackPath('/services-by-branch', search), {
+    headers: await apiHeaders(ownerUid),
+  });
   if (!res.ok) throw new Error(`getServicesByBranch failed: ${res.status}`);
   const json = (await res.json()) as { services?: unknown[] };
   const rows = json.services;
@@ -380,9 +388,11 @@ export async function getServicesByBranch(ownerUid: string, branchId: string): P
   return rows.map((row) => mapApiServiceToWorkshopService(row, ownerUid));
 }
 
-/** GET /services/:id — full service detail with checklist, branches, staff */
+/** GET /api/bms-black/services/:id — full service detail with checklist, branches, staff */
 export async function getServiceById(ownerUid: string, serviceId: string): Promise<WorkshopService | null> {
-  const res = await fetch(`${BASE_URL}/services/${encodeURIComponent(serviceId)}`, { headers: await apiHeaders(ownerUid) });
+  const res = await fetch(bmsBlackPath(`/services/${encodeURIComponent(serviceId)}`), {
+    headers: await apiHeaders(ownerUid),
+  });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`getServiceById failed: ${res.status}`);
   const json = (await res.json()) as { service?: unknown };
