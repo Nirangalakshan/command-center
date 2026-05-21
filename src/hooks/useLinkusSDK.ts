@@ -113,7 +113,7 @@ function getOrCreateRingtone(): HTMLAudioElement {
   if (!el) {
     el = document.createElement('audio');
     el.id = RINGTONE_ELEMENT_ID;
-    el.src = '/ringtone.mp3'; // Expecting a ringtone file in the public/ folder
+    el.src = ''; // Expecting a ringtone file in the public/ folder
     el.loop = true;
     el.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;';
     document.body.appendChild(el);
