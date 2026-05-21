@@ -90,6 +90,14 @@ export function yeastarCallRowId(linkusCallId: string): string {
   return `yeastar-${base}`;
 }
 
+function yeastarRowIdFromLocalLinkusCallId(localId: string): string | null {
+  if (localId.startsWith('yeastar-')) return localId;
+  if (!localId.startsWith('linkus-')) return null;
+  const withoutPrefix = localId.slice('linkus-'.length);
+  const linkusCallId = withoutPrefix.replace(/-\d{10,}$/, '').trim();
+  return linkusCallId ? yeastarCallRowId(linkusCallId) : null;
+}
+
 type UntypedSb = {
   from: (table: string) => {
     upsert: (
@@ -264,7 +272,9 @@ export async function appendLinkusCallToSupabase(entry: Call): Promise<void> {
     return;
   }
 
+  const rowId = yeastarRowIdFromLocalLinkusCallId(entry.id);
   const payload: Record<string, unknown> = {
+    ...(rowId ? { id: rowId } : {}),
     tenant_id: tenantId,
     queue_id: queueId,
     agent_id: entry.agentId ?? null,
@@ -275,7 +285,7 @@ export async function appendLinkusCallToSupabase(entry: Call): Promise<void> {
     start_time: entry.startTime,
     answer_time: entry.answerTime ?? null,
     end_time: entry.endTime ?? null,
-    duration_seconds: entry.duration_seconds ?? 0,
+    duration_seconds: entry.durationSeconds ?? 0,
     result: entry.result,
     recording_url: entry.recordingUrl ?? null,
     transcript_status: entry.transcriptStatus,

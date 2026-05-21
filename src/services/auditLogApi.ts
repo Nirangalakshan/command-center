@@ -1,6 +1,31 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { UserSession } from './types';
 
+const SYSTEM_AUDIT_LOGS_API_URL =
+  (import.meta.env.VITE_SYSTEM_AUDIT_LOGS_API_URL as string | undefined)?.trim() ||
+  'http://127.0.0.1:5050/api/system-audit-logs';
+
+type SupabaseAuditQueryResult = {
+  data: unknown;
+  error: unknown;
+};
+
+type SupabaseAuditInsertResult = {
+  error: unknown;
+};
+
+type SupabaseAuditQuery = PromiseLike<SupabaseAuditQueryResult> & {
+  select(columns?: string): SupabaseAuditQuery;
+  insert(values: unknown): PromiseLike<SupabaseAuditInsertResult>;
+  eq(column: string, value: unknown): SupabaseAuditQuery;
+  not(column: string, operator: string, value: unknown): SupabaseAuditQuery;
+  order(column: string, options?: { ascending?: boolean }): SupabaseAuditQuery;
+};
+
+type SupabaseDynamicClient = {
+  from(table: string): SupabaseAuditQuery;
+};
+
 export interface AuditLogEntry {
   id?: string;
   created_at?: string;
@@ -10,7 +35,7 @@ export interface AuditLogEntry {
   action: string;
   resource_type: string;
   resource_id?: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
 }
 
 /** Resource type recorded for support / BMS chat threads in {@link logSystemActivity}. */
@@ -40,15 +65,112 @@ function parseAuditDetails(raw: unknown): Record<string, unknown> {
   return {};
 }
 
+function asRecord(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+}
+
+function pickString(
+  row: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (value == null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function auditLogsTable(): SupabaseAuditQuery {
+  return (supabase as unknown as SupabaseDynamicClient).from('system_audit_logs');
+}
+
 /** Normalize DB / client variants so UI matching stays stable. */
-export function normalizeAuditLogEntry(row: AuditLogEntry): AuditLogEntry {
-  const details = parseAuditDetails(row.details) as Record<string, any>;
+export function normalizeAuditLogEntry(raw: unknown): AuditLogEntry {
+  const row = asRecord(raw);
+  const user = asRecord(row.user);
+  const actor = asRecord(row.actor);
+  const details = parseAuditDetails(
+    row.details ?? row.metadata ?? row.meta ?? row.data,
+  );
+
   return {
-    ...row,
+    id: pickString(row, ['id', '_id']),
+    created_at: pickString(row, ['created_at', 'createdAt', 'timestamp']),
+    user_id:
+      pickString(row, ['user_id', 'userId', 'actor_id', 'actorId']) ??
+      pickString(user, ['id', 'uid']) ??
+      pickString(actor, ['id', 'uid']) ??
+      '',
+    user_name:
+      pickString(row, ['user_name', 'userName', 'actor_name', 'actorName']) ??
+      pickString(user, ['name', 'displayName', 'email']) ??
+      pickString(actor, ['name', 'displayName', 'email']) ??
+      '',
+    user_role:
+      pickString(row, ['user_role', 'userRole', 'role']) ??
+      pickString(user, ['role']) ??
+      pickString(actor, ['role']) ??
+      '',
     action: String(row.action ?? '').trim(),
-    resource_type: String(row.resource_type ?? '').trim(),
+    resource_type: String(
+      row.resource_type ?? row.resourceType ?? row.resource ?? row.entityType ?? '',
+    ).trim(),
+    resource_id: pickString(row, [
+      'resource_id',
+      'resourceId',
+      'entity_id',
+      'entityId',
+      'targetId',
+    ]),
     details,
   };
+}
+
+async function getSuperAdminAuditBearerToken(): Promise<string> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (session?.access_token) {
+    return session.access_token;
+  }
+
+  throw new Error('Sign in as super-admin to load audit logs.');
+}
+
+function auditLogsUrl(limit: number): string {
+  const url = new URL(SYSTEM_AUDIT_LOGS_API_URL, window.location.origin);
+  if (limit > 0) {
+    url.searchParams.set('limit', String(limit));
+  }
+  return url.toString();
+}
+
+async function readHttpErrorDetail(res: Response): Promise<string> {
+  const text = await res.text();
+  if (!text.trim()) return '';
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const body = asRecord(parsed);
+    const detail = body.message ?? body.error ?? body.detail;
+    return typeof detail === 'string' ? detail : text.slice(0, 400);
+  } catch {
+    return text.slice(0, 400);
+  }
+}
+
+function extractAuditRows(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  const body = asRecord(raw);
+  for (const key of ['logs', 'auditLogs', 'data', 'items', 'results']) {
+    const value = body[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [];
 }
 
 function normKey(s: string | undefined | null): string {
@@ -74,7 +196,7 @@ export async function logSystemActivity(
   action: string,
   resourceType: string,
   resourceId?: string | null,
-  details?: Record<string, any>
+  details?: Record<string, unknown>
 ) {
   if (!session) {
     // console.warn('[AuditLog] No session provided, skipping audit log for action:', action);
@@ -82,7 +204,7 @@ export async function logSystemActivity(
   }
   
   try {
-    const { error } = await (supabase as any).from('system_audit_logs').insert({
+    const { error } = await auditLogsTable().insert({
       user_id: session.userId,
       user_name: session.displayName,
       user_role: session.role,
@@ -109,8 +231,7 @@ export async function logSystemActivity(
 export async function fetchAgentAnsweredNotificationIds(
   userId: string,
 ): Promise<Set<string>> {
-  const { data, error } = await (supabase as any)
-    .from('system_audit_logs')
+  const { data, error } = await auditLogsTable()
     .select('resource_id')
     .eq('user_id', userId)
     .eq('action', 'notification_customer_answered')
@@ -122,7 +243,9 @@ export async function fetchAgentAnsweredNotificationIds(
   }
 
   return new Set(
-    (data as { resource_id: string }[]).map((r) => r.resource_id),
+    (Array.isArray(data) ? data : [])
+      .map((row) => pickString(asRecord(row), ['resource_id', 'resourceId']))
+      .filter((resourceId): resourceId is string => Boolean(resourceId)),
   );
 }
 
@@ -132,8 +255,7 @@ export async function fetchAgentAnsweredNotificationIds(
  * When multiple agents called the same notification, the most recent caller wins.
  */
 export async function fetchCallCustomerAgentMap(): Promise<Map<string, string>> {
-  const { data, error } = await (supabase as any)
-    .from('system_audit_logs')
+  const { data, error } = await auditLogsTable()
     .select('resource_id, user_name, created_at')
     .eq('action', 'notification_call_customer')
     .not('resource_id', 'is', null)
@@ -145,9 +267,12 @@ export async function fetchCallCustomerAgentMap(): Promise<Map<string, string>> 
   }
 
   const map = new Map<string, string>();
-  for (const row of data as { resource_id: string; user_name: string }[]) {
-    if (!map.has(row.resource_id)) {
-      map.set(row.resource_id, row.user_name);
+  for (const raw of Array.isArray(data) ? data : []) {
+    const row = asRecord(raw);
+    const resourceId = pickString(row, ['resource_id', 'resourceId']);
+    const userName = pickString(row, ['user_name', 'userName']) ?? '';
+    if (resourceId && !map.has(resourceId)) {
+      map.set(resourceId, userName);
     }
   }
   return map;
@@ -159,8 +284,7 @@ export async function fetchCallCustomerAgentMap(): Promise<Map<string, string>> 
  * When multiple agents interacted, the most recent interaction wins.
  */
 export async function fetchAnsweredCustomerAgentMap(): Promise<Map<string, string>> {
-  const { data, error } = await (supabase as any)
-    .from('system_audit_logs')
+  const { data, error } = await auditLogsTable()
     .select('resource_id, user_name, created_at')
     .eq('action', 'notification_customer_answered')
     .not('resource_id', 'is', null)
@@ -172,9 +296,12 @@ export async function fetchAnsweredCustomerAgentMap(): Promise<Map<string, strin
   }
 
   const map = new Map<string, string>();
-  for (const row of data as { resource_id: string; user_name: string }[]) {
-    if (!map.has(row.resource_id)) {
-      map.set(row.resource_id, row.user_name);
+  for (const raw of Array.isArray(data) ? data : []) {
+    const row = asRecord(raw);
+    const resourceId = pickString(row, ['resource_id', 'resourceId']);
+    const userName = pickString(row, ['user_name', 'userName']) ?? '';
+    if (resourceId && !map.has(resourceId)) {
+      map.set(resourceId, userName);
     }
   }
   return map;
@@ -184,17 +311,21 @@ export async function fetchAnsweredCustomerAgentMap(): Promise<Map<string, strin
  * Fetches recent audit logs for the dashboard.
  */
 export async function fetchSystemAuditLogs(limit: number = 100): Promise<AuditLogEntry[]> {
-  const { data, error } = await (supabase as any)
-    .from('system_audit_logs')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-    
-  if (error) {
-    // console.error('[AuditLog] Error fetching audit logs:', error);
-    return [];
+  const token = await getSuperAdminAuditBearerToken();
+  const res = await fetch(auditLogsUrl(limit), {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!res.ok) {
+    const detail = await readHttpErrorDetail(res);
+    throw new Error(
+      `fetchSystemAuditLogs failed: ${res.status}${detail ? ` - ${detail}` : ''}`,
+    );
   }
 
-  const rows = data as AuditLogEntry[];
+  const rows = extractAuditRows(await res.json());
   return rows.map(normalizeAuditLogEntry);
 }

@@ -403,10 +403,20 @@ export async function fetchCalls(
     let score = 0;
     if (disp) score += 1000;                         // softphone disposition found
     if (row.result === "answered") score += 100;
+    if (row.recording_url?.trim()) score += 80;      // answered agent leg (Linkus desktop has no browser disposition)
     if (row.dialed_number) score += 50;
     if ((row.duration_seconds ?? 0) > 0) score += 10;
     score += Math.min(row.duration_seconds ?? 0, 9); // tie-break by duration (cap at 9)
     return score;
+  }
+
+  /** Yeastar emits one CDR per leg; only the answered leg usually has `recording_url`. */
+  function recordingUrlFromCluster(cluster: RawRow[]): string | null {
+    for (const row of cluster) {
+      const url = row.recording_url?.trim();
+      if (url) return url;
+    }
+    return null;
   }
 
   // Build clusters: each cluster = one "real" call
@@ -468,7 +478,13 @@ export async function fetchCalls(
         : best;
     });
 
-    return { winner, disposition: clusterDisp };
+    const clusterRecording = recordingUrlFromCluster(cluster);
+    const winnerWithRecording =
+      clusterRecording && !winner.recording_url?.trim()
+        ? { ...winner, recording_url: clusterRecording }
+        : winner;
+
+    return { winner: winnerWithRecording, disposition: clusterDisp };
   });
 
   const winners = clusterData.map(d => d.winner);

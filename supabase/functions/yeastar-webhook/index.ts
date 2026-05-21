@@ -38,10 +38,12 @@ Deno.serve(async (req) => {
 
   const normalized = normalizeYeastarPayload(body);
   const { action, payload } = normalized;
-  // console.log(
-  //   `[yeastar-webhook] Received action: ${action ?? 'unknown'} type: ${normalized.type ?? 'n/a'}`,
-  //   JSON.stringify(body),
-  // );
+  if (action === 'NewCdr') {
+    console.log(
+      `[yeastar-webhook] Received action: ${action} type: ${normalized.type ?? 'n/a'}`,
+      JSON.stringify(body),
+    );
+  }
 
   try {
     switch (action) {
@@ -115,13 +117,56 @@ function extensionLookupCandidates(raw: string): string[] {
 
 /** P-Series / S-Series CDR call leg type (not the numeric webhook event id). */
 function readYeastarCdrCallType(body: Record<string, unknown>): 'inbound' | 'outbound' | 'internal' | null {
-  const fields = [body.call_type, body.communication_type, body.type];
+  const fields = [
+    body.call_type,
+    body.calltype,
+    body.callType,
+    body.communication_type,
+    body.cdr_type,
+    body.direction,
+    body.type,
+  ];
   for (const f of fields) {
     if (typeof f !== 'string') continue;
     const s = f.trim().toLowerCase();
     if (s === 'inbound' || s === 'outbound' || s === 'internal') return s;
+    if (s.includes('outbound') || s.includes('outgoing')) return 'outbound';
+    if (s.includes('inbound') || s.includes('incoming')) return 'inbound';
+    if (s.includes('internal')) return 'internal';
   }
   return null;
+}
+
+function readYeastarRecording(body: Record<string, unknown>): string | null {
+  const fields = [
+    body.recording,
+    body.recording_file,
+    body.recordingfile,
+    body.record_file,
+    body.recordfile,
+    body.recording_name,
+    body.recordingname,
+    body.recording_path,
+    body.recordingpath,
+  ];
+  for (const f of fields) {
+    if (typeof f !== 'string') continue;
+    const s = f.trim();
+    if (s) return s;
+  }
+  return null;
+}
+
+/** Build the stored recording_url tolerating absolute http(s) URLs and leading slashes. */
+function buildRecordingUrl(recording: string | null): string | null {
+  if (!recording) return null;
+  const trimmed = recording.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (!RECORDING_BASE_URL) return trimmed;
+  const base = RECORDING_BASE_URL.replace(/\/+$/, '');
+  const rel = trimmed.replace(/^\/+/, '');
+  return `${base}/${rel}`;
 }
 
 async function findAgentByPartyRaw(rawParty: string): Promise<{ id: string; tenant_id: string; queue_ids: unknown } | null> {
@@ -303,6 +348,9 @@ async function handleNewCdr(body: Record<string, unknown>) {
     console.warn('[yeastar-webhook] NewCdr skipped: missing call_id or start time', { callid, timestart });
     return;
   }
+  const cdrRowId = `yeastar-${callid}`;
+  const linkusKey = callid.split('@')[0]?.trim() || callid;
+  const linkusBase = linkusKey.split('-')[0].split('_')[0].trim();
   const rawFrom = String(body.callfrom ?? body.call_from ?? body.call_from_number ?? '');
   const rawTo = String(body.callto ?? body.call_to ?? body.call_to_number ?? '');
   const callduraction = Number(body.callduraction ?? body.call_duration ?? 0);
@@ -311,14 +359,27 @@ async function handleNewCdr(body: Record<string, unknown>) {
   const didFromPayload = String(
     body.did ?? body.did_number ?? body.didnumber ?? body.didNumber ?? body.did_num ?? body.didnum ?? '',
   ).trim();
-  const recording = body.recording ? String(body.recording) : null;
+  const recording = readYeastarRecording(body);
 
   const cdrKind = readYeastarCdrCallType(body);
+
+  console.log('[yeastar-webhook][NewCdr] received', {
+    callid,
+    cdrKind,
+    status,
+    recording,
+    rawFrom,
+    rawTo,
+    keys: Object.keys(body),
+  });
 
   const [agentTo, agentFrom] = await Promise.all([
     findAgentByPartyRaw(rawTo),
     findAgentByPartyRaw(rawFrom),
   ]);
+  const outboundAgentHint = agentFrom
+    ? null
+    : await firstMatchingAgentFromRaws(cdrAnswerPartyRawsFirst(body, 'outbound'));
 
   let direction: 'inbound' | 'outbound';
   if (cdrKind === 'outbound') {
@@ -331,7 +392,7 @@ async function handleNewCdr(body: Record<string, unknown>) {
     else direction = 'inbound';
   } else {
     /** No explicit type: callee extension ⇒ inbound; caller extension only ⇒ outbound (S-Series style). */
-    direction = agentTo ? 'inbound' : agentFrom ? 'outbound' : 'inbound';
+    direction = agentTo ? 'inbound' : (agentFrom || outboundAgentHint) ? 'outbound' : 'inbound';
   }
 
   const agentRow = await resolveAnsweredAgentFromCdr(
@@ -360,15 +421,33 @@ async function handleNewCdr(body: Record<string, unknown>) {
       .maybeSingle()
     : { data: null };
 
+  const [existingCallRes, dispositionRes] = await Promise.all([
+    supabase.from('calls').select('agent_id, tenant_id, queue_id').eq('id', cdrRowId).maybeSingle(),
+    supabase.from('softphone_call_dispositions')
+      .select('agent_id')
+      .in('linkus_call_id', [linkusKey, linkusBase])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  ]);
+
   const tenantIdFromAgent = agentRow?.tenant_id;
   const queueIdFromAgent = Array.isArray(agentRow?.queue_ids) && agentRow.queue_ids.length > 0
     ? String(agentRow.queue_ids[0])
-    : 'unknown';
+    : null;
 
   const trunkTenantId = direction === 'outbound' ? await resolveTenantIdFromOutboundTrunk(body) : null;
+  const existingTenantId =
+    existingCallRes.data?.tenant_id && existingCallRes.data.tenant_id !== 'unknown'
+      ? existingCallRes.data.tenant_id
+      : null;
+  const existingQueueId =
+    existingCallRes.data?.queue_id && existingCallRes.data.queue_id !== 'unknown'
+      ? existingCallRes.data.queue_id
+      : null;
 
-  const tenantId = mapping?.tenant_id ?? tenantIdFromAgent ?? trunkTenantId ?? 'unknown';
-  const queueId = mapping?.queue_id ?? queueIdFromAgent;
+  const tenantId = mapping?.tenant_id ?? tenantIdFromAgent ?? trunkTenantId ?? existingTenantId ?? 'unknown';
+  const queueId = mapping?.queue_id ?? queueIdFromAgent ?? existingQueueId ?? 'unknown';
   const callerName = await lookupCustomerName(tenantId, customerNumber);
 
   // Parse times
@@ -382,20 +461,6 @@ async function handleNewCdr(body: Record<string, unknown>) {
     direction === 'inbound'
       ? inboundDid
       : customerNumber;
-
-  const cdrRowId = `yeastar-${callid}`;
-  const linkusKey = callid.split('@')[0]?.trim() || callid;
-  const linkusBase = linkusKey.split('-')[0].split('_')[0].trim();
-  
-  const [existingCallRes, dispositionRes] = await Promise.all([
-    supabase.from('calls').select('agent_id').eq('id', cdrRowId).maybeSingle(),
-    supabase.from('softphone_call_dispositions')
-      .select('agent_id')
-      .in('linkus_call_id', [linkusKey, linkusBase])
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-  ]);
 
   const preLinkedAgentId = existingCallRes.data?.agent_id && String(existingCallRes.data.agent_id).trim()
     ? String(existingCallRes.data.agent_id)
@@ -421,7 +486,7 @@ async function handleNewCdr(body: Record<string, unknown>) {
     end_time: endTime.toISOString(),
     duration_seconds: callduraction,
     result: mapYeastarStatus(status),
-    recording_url: recording ? `${RECORDING_BASE_URL}/${recording}` : null,
+    recording_url: buildRecordingUrl(recording),
     transcript_status: 'none',
     summary_status: 'none',
   }, { onConflict: 'id' });
